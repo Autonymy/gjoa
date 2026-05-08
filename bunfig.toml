@@ -1,0 +1,6 @@
+# Constrain `bun test` discovery to our tests/ directory. Without this,
+# bun walks the entire repo (including engine/, which is 5GB of
+# mozilla-central source containing thousands of *.test.js files for
+# Firefox internals — none of which we want to run).
+[test]
+root = "tests"

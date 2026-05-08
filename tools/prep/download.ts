@@ -24,10 +24,12 @@ async function fetchSha256(version: string): Promise<string> {
   const res = await fetch(checksumUrl(version));
   if (!res.ok) throw new Error(`failed to fetch SHA256SUMS: ${res.status}`);
   const text = await res.text();
+  // Mozilla's SHA256SUMS lists files with subdirectory prefixes, e.g.
+  // `source/firefox-150.0.source.tar.xz`. Match by basename.
   const want = tarballName(version);
   for (const line of text.split("\n")) {
     const [hash, file] = line.trim().split(/\s+/);
-    if (file === want) return hash;
+    if (file && (file === want || file.endsWith(`/${want}`))) return hash;
   }
   throw new Error(`SHA256SUMS does not list ${want}`);
 }

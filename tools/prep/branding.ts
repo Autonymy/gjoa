@@ -26,21 +26,41 @@ function isTextFile(path: string): boolean {
   return TEXT_EXTS.has(extname(path).toLowerCase());
 }
 
-// Substitution map. Order matters where overlapping strings exist —
-// longer/more-specific replacements must run before shorter/generic ones.
+// Substitution map. Each pattern is INTENTIONALLY narrow — never substitute
+// bare "Mozilla" or "Firefox" as that breaks MPL headers ("Mozilla Public
+// License"), URLs (mozilla.org/MPL/2.0), file paths (firefox-branding.js),
+// and generic comments. Only swap brand strings inside specific structured
+// patterns we recognize.
 function substitutions(cfg: SkiffConfig): Array<[RegExp, string]> {
   const b = cfg.branding;
   const u = cfg.urls;
 
   return [
-    // Brand strings — long forms first so we don't accidentally substring-match
-    // "Firefox Nightly" -> "Skiff Nightly".
-    [/Firefox Nightly/g, b.fullName],
-    [/Mozilla Firefox/g, b.fullName],
-    [/Nightly/g, b.shortName],
-    [/Firefox/g, b.productName],
-    [/Mozilla/g, b.vendorName],
+    // ---- brand.ftl entries (Fluent localization format) ----
+    [/^-brand-shorter-name\s*=.*$/m, `-brand-shorter-name = ${b.shorterName}`],
+    [/^-brand-short-name\s*=.*$/m, `-brand-short-name = ${b.shortName}`],
+    [/^-brand-shortcut-name\s*=.*$/m, `-brand-shortcut-name = ${b.shortName}`],
+    [/^-brand-full-name\s*=.*$/m, `-brand-full-name = ${b.fullName}`],
+    [/^-brand-product-name\s*=.*$/m, `-brand-product-name = ${b.productName}`],
+    [/^-vendor-short-name\s*=.*$/m, `-vendor-short-name = ${b.vendorName}`],
 
+    // ---- brand.dtd entries (XML entity format) ----
+    [/<!ENTITY brandShorterName ".*?">/g, `<!ENTITY brandShorterName "${b.shorterName}">`],
+    [/<!ENTITY brandShortName ".*?">/g, `<!ENTITY brandShortName "${b.shortName}">`],
+    [/<!ENTITY brandShortcutName ".*?">/g, `<!ENTITY brandShortcutName "${b.shortName}">`],
+    [/<!ENTITY brandFullName ".*?">/g, `<!ENTITY brandFullName "${b.fullName}">`],
+    [/<!ENTITY brandProductName ".*?">/g, `<!ENTITY brandProductName "${b.productName}">`],
+    [/<!ENTITY vendorShortName ".*?">/g, `<!ENTITY vendorShortName "${b.vendorName}">`],
+
+    // ---- brand.properties entries (key=value format) ----
+    [/^brandShorterName\s*=.*$/m, `brandShorterName=${b.shorterName}`],
+    [/^brandShortName\s*=.*$/m, `brandShortName=${b.shortName}`],
+    [/^brandShortcutName\s*=.*$/m, `brandShortcutName=${b.shortName}`],
+    [/^brandFullName\s*=.*$/m, `brandFullName=${b.fullName}`],
+    [/^brandProductName\s*=.*$/m, `brandProductName=${b.productName}`],
+    [/^vendorShortName\s*=.*$/m, `vendorShortName=${b.vendorName}`],
+
+    // ---- firefox-branding.js prefs ----
     // Welcome/whatsnew URLs (the ones that opened "Welcome to Zen!" pre-fix).
     [
       /pref\("startup\.homepage_override_url",\s*".*?"\);/,
@@ -54,9 +74,8 @@ function substitutions(cfg: SkiffConfig): Array<[RegExp, string]> {
       /pref\("startup\.homepage_welcome_url\.additional",\s*".*?"\);/,
       `pref("startup.homepage_welcome_url.additional", "${u.welcomeAdditional}");`,
     ],
-
     // Update + release-notes URLs. Catches both nightly.mozilla.org and
-    // www.mozilla.org/firefox/* templates.
+    // www.mozilla.org/firefox/* upstream templates.
     [
       /pref\("app\.update\.url\.manual",\s*".*?"\);/,
       `pref("app.update.url.manual", "${u.updateManual}");`,
@@ -78,10 +97,28 @@ function substitutions(cfg: SkiffConfig): Array<[RegExp, string]> {
       `pref("app.releaseNotesURL.prompt", "${u.releaseNotesPrompt}");`,
     ],
 
-    // configure.sh: MOZ_APP_DISPLAYNAME=<whatever> -> our display name.
+    // ---- configure.sh ----
     [
-      /MOZ_APP_DISPLAYNAME=.*/,
+      /^MOZ_APP_DISPLAYNAME=.*$/m,
       `MOZ_APP_DISPLAYNAME=${b.displayName}`,
+    ],
+
+    // ---- branding.nsi (Windows NSIS installer defines) ----
+    [
+      /^!define BrandShortName ".*?"$/m,
+      `!define BrandShortName "${b.shortName}"`,
+    ],
+    [
+      /^!define BrandFullName ".*?"$/m,
+      `!define BrandFullName "${b.fullName}"`,
+    ],
+    [
+      /^!define BrandFullNameInternal ".*?"$/m,
+      `!define BrandFullNameInternal "${b.fullName}"`,
+    ],
+    [
+      /^!define CompanyName ".*?"$/m,
+      `!define CompanyName "${b.vendorName}"`,
     ],
   ];
 }

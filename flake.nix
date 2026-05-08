@@ -161,6 +161,9 @@
             ccache
             mold
 
+            # SVG → PNG icon rendering (used by tools/icons/generate.ts)
+            librsvg
+
             # Native deps Firefox links against (mach build needs at link time)
             gtk3
             glib

@@ -9,6 +9,7 @@
     "download": "bun tools/prep/cli.ts download",
     "import": "bun tools/prep/cli.ts import",
     "clean": "bun tools/prep/cli.ts clean",
+    "icons": "bun tools/icons/generate.ts",
     "test": "bun test"
   }
 }

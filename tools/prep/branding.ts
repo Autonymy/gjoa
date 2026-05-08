@@ -200,7 +200,24 @@ export async function branding(): Promise<void> {
   }
   log.info(`installed ${iconCount} desktop icons`);
 
-  // 3. Sanity check: assert no zen-browser.app substring leaked through. If
+  // 3. Overlay our content/ directory wholesale onto engine/.../skiff/content/.
+  //    Replaces the Firefox-logo PNGs/SVGs that copied through from the
+  //    unofficial template (about-logo*, about-wordmark, etc.) with ours.
+  const ourContent = join(BRANDING_SRC, "content");
+  const targetContent = join(target, "content");
+  if (existsSync(ourContent)) {
+    let contentCount = 0;
+    for (const name of readdirSync(ourContent)) {
+      const src = join(ourContent, name);
+      if (!statSync(src).isFile()) continue;
+      const dst = join(targetContent, name);
+      await $`cp ${src} ${dst}`.quiet();
+      contentCount += 1;
+    }
+    log.info(`overlaid ${contentCount} content/ files (about-logo, wordmarks)`);
+  }
+
+  // 4. Sanity check: assert no zen-browser.app substring leaked through. If
   //    mozilla ships a future template that references zen, our regex won't
   //    catch it — fail loud rather than silently shipping it.
   const written = await walkFiles(target);

@@ -6,6 +6,55 @@ help me NOT make the same mistake twice."
 
 ---
 
+## SKIFF DEVELOPMENT PROTOCOL — read this first, every session
+
+Firefox rebuilds are expensive (30-60 min cold; 30 sec for omni.ja-only).
+The build is too expensive to be part of the thinking loop. Do not use
+full rebuilds as a normal feedback loop.
+
+### Classify EVERY change before acting
+
+Before making any change, declare which lane it belongs to:
+
+**Lane 1 — Hot iteration** (no rebuild)
+- chrome JS behavior, tab tree logic, command palette
+- CSS/layout, prefs, autoconfig/bootstrap loading
+- Anything testable via Browser Toolbox or by editing the running profile's chrome/
+
+**Lane 2 — Restart iteration** (`mach build faster` ~30 sec, omni.ja re-zip)
+- chrome JS files in src/skiff/ (after `bun run import`)
+- branding text strings (about-logo, brand.ftl, firefox-branding.js)
+- about: page logos in omni.ja
+
+**Lane 3 — Full rebuild** (`mach build` 30-60 min, or `nix build .#skiff` 30-45 min)
+- C++/Rust source changes
+- New configure flags, mozconfig changes
+- Desktop integration icons (default*.png in install tree)
+- Binary name, distribution-id
+- New patches/ files
+
+### Hard rules
+
+1. **Never run `mach build`, `nix build`, or any full rebuild without an explicit user prompt of the form "run the full rebuild now" or equivalent.** `mach build faster` is fine to run freely.
+
+2. **Do not rebuild to verify.** Verify by reading files, tracing load paths, and checking whether the changed asset is consumed at runtime, package time, or build time. If unsure which lane a change belongs to: investigate first, do not rebuild to find out.
+
+3. **Maintain a rebuild queue.** Track Lane 3 changes in a list. Don't trigger a build per item — batch them. Surface the queue to the user when proposing the next rebuild.
+
+4. **Audit-before-modify on big tasks.** For port/migration work, start with: "Do not modify files. Do not run builds. Produce: (1) files that can be mechanically renamed without rebuild concern, (2) Lane 1+2 candidates, (3) Lane 3 candidates, (4) unknowns needing investigation, (5) proposed first batch."
+
+### Rebuild queue
+
+Pending Lane 3 changes get tracked here (or in TaskCreate). Empty when no work is pending. User reviews and approves before any rebuild runs.
+
+```
+[ pending Lane 3 changes — currently empty ]
+```
+
+When the user says "kick off the build" / "run the full rebuild now" / equivalent: flush the queue into one rebuild covering all queued changes.
+
+---
+
 ## What this is
 
 Skiff is a Firefox fork. Source overlays in `src/skiff/`, branding

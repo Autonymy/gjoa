@@ -1,0 +1,585 @@
+/* ==UserScript==
+// @name           palefox-tabs
+// @description    Sidebar tab panel styles
+// @include        main
+// ==/UserScript== */
+
+/* Tab-panel styles. Loaded by palefox loader; targets DOM built by
+ * palefox-tabs.uc.js. Overwritten on update — do not edit. */
+
+
+/* #region sidebar containers */
+
+/* Hide native vertical tab strip — we render our own panel. */
+#vertical-tabs { display: none !important; }
+
+/* `#sidebar-main > sidebar-main` styling lives in palefox.css under
+ * #region sidebar-main — kept there because it's chrome restructuring,
+ * not tab-panel concern. */
+
+/* #endregion sidebar containers */
+
+
+/* #region tab panel */
+
+#pfx-tab-panel {
+  flex: 1 !important;
+  max-height: 74%;
+  overflow-y: auto !important;
+  overflow-x: hidden !important;
+  scrollbar-width: thin;
+  /* Explicit opaque bg so a translucent ancestor / compositor blur can't
+   * paint through the panel even if #sidebar-main's bg got clobbered. */
+  background-color: var(--pfx-bg);
+}
+#pfx-tab-panel:focus { outline: none; }
+
+/* Icons-only mode (collapsed sidebar layout) */
+/* Icons-only sidebar (collapsed): force both the pinned and panel containers
+ * to flex-column with explicit width so 24px children center reliably. The
+ * min-width pushes the parent #sidebar-main wider than the bare 32px row, so
+ * the strip has breathing room — this is what the old icon-grid CSS used to
+ * give us via horizontal padding. :not([hidden]) so an empty pinned
+ * container actually stays hidden when there are no pinned tabs. */
+:is(#pfx-pinned-container, #pfx-tab-panel)[pfx-icons-only]:not([hidden]) {
+  display: flex !important;
+  flex-direction: column !important;
+  align-items: center !important;
+  width: 100% !important;
+  min-width: 50px !important;
+}
+
+#pfx-tab-panel[pfx-icons-only] .pfx-tab-label,
+#pfx-tab-panel[pfx-icons-only] .pfx-tab-chevron {
+  display: none !important;
+}
+#pfx-tab-panel[pfx-icons-only] .pfx-group-row {
+  display: none !important;
+}
+#pfx-tab-panel[pfx-icons-only] .pfx-tab-row {
+  width: 24px;
+  height: 24px;
+  padding: 4px !important;
+  padding-inline-start: 4px !important;
+  justify-content: center;
+  margin: 2px 0;
+  min-height: unset;
+  box-sizing: content-box;
+}
+#pfx-tab-panel[pfx-icons-only] .pfx-tab-icon {
+  margin: 0;
+}
+
+#pfx-tab-spacer {
+  min-height: 20px;
+  -moz-window-dragging: drag;
+}
+
+/* #endregion tab panel */
+
+
+/* #region pinned tabs — vertical list above the unpinned tree, floating divider */
+
+/* No `display: flex` here — keep the XUL vbox default so the container
+ * stretches to the full sidebar width like #pfx-tab-panel does. Rows center
+ * themselves via `margin: 2px auto` in icons-only mode (see below).
+ * Horizontal mode and empty-zone state override `display` explicitly. */
+#pfx-pinned-container {
+  /* No padding. The urlbar-toolbar (palefox.css) owns the gap above the
+   * first row; the divider's `::after` y-margin owns the gap below. So
+   * showing/hiding the pinned container can't shift the tab list. */
+  padding: 0;
+  background-color: var(--pfx-bg);
+}
+#pfx-pinned-container[hidden] {
+  display: none !important;
+}
+/* Floating divider: thin inset line between pinned and unpinned tab
+ * areas. Hidden when the pinned container has no rows — there's nothing
+ * to separate. (Active during drag the container is un-hidden as a
+ * thin hot-strip; the divider would visually duplicate that line.) */
+#pfx-pinned-container:has(.pfx-tab-row)::after {
+  content: "";
+  display: block;
+  height: 1px;
+  /* Y-margin matches the urlbar-toolbar's 12px so the divider sits at a
+   * consistent rhythm; X-margin stays at the sidebar inset. */
+  margin: 12px var(--pfx-sidebar-inset);
+  background: color-mix(in srgb, currentColor 15%, transparent);
+}
+/* In icons-only mode the container is `align-items: center` so flex items
+ * size to content — the empty ::after would be 0-width. Stretch it back. */
+#pfx-pinned-container[pfx-icons-only]::after {
+  align-self: stretch;
+}
+
+/* (Drop-zone "drop to pin" / "drop to unpin" affordances removed —
+ * pin/unpin is reachable via right-click context menu and by dragging
+ * onto an existing pinned row when at least one pinned tab exists.) */
+
+/* Icons-only sidebar — match the tree panel's icons-only treatment so pinned
+ * and unpinned rows collapse identically. */
+#pfx-pinned-container[pfx-icons-only] .pfx-tab-label,
+#pfx-pinned-container[pfx-icons-only] .pfx-tab-chevron {
+  display: none !important;
+}
+#pfx-pinned-container[pfx-icons-only] .pfx-tab-row {
+  width: 24px;
+  height: 24px;
+  padding: 4px !important;
+  padding-inline-start: 4px !important;
+  justify-content: center;
+  margin: 2px 0;
+  min-height: unset;
+  box-sizing: content-box;
+}
+#pfx-pinned-container[pfx-icons-only] .pfx-tab-icon {
+  margin: 0;
+}
+
+
+/* #endregion pinned tabs */
+
+
+/* #region rows */
+
+/* Shared row base */
+.pfx-tab-row, .pfx-group-row {
+  padding: 6px 8px;
+  padding-inline-end: 6px;
+  border-radius: 4px;
+  margin: 2px var(--pfx-sidebar-inset);
+  min-height: 28px;
+  cursor: default;
+  transition: padding-inline-start 0.15s ease;
+}
+
+/* Horizontal mode: bump horizontal gap between adjacent tabs (axis flips —
+ * stacking is left-to-right, so spacing lives on the inline axis). */
+:is(#pfx-tab-panel, #pfx-pinned-container)[pfx-horizontal] :is(.pfx-tab-row, .pfx-group-row) {
+  margin: 0 2px;
+}
+/* Visual states (intentionally distinct from each other so ambiguous
+ * "is that selected or just hovered?" reads can't happen):
+ *
+ *   :hover       — 5% currentColor overlay. Subtle, transient mouse cue.
+ *   [selected]   — elevated surface + accent left-edge stripe. The
+ *                  Firefox selectedTab; one row at a time.
+ *   [pfx-cursor] — 1px outline (defined further down). The vim cursor;
+ *                  follows selection by default but can decouple via
+ *                  panel-mode j/k navigation that doesn't commit.
+ */
+.pfx-tab-row:hover, .pfx-group-row:hover {
+  background: color-mix(in srgb, currentColor 5%, transparent);
+}
+.pfx-tab-row[selected] {
+  background: var(--pfx-bg-elevated);
+}
+
+/* Favicon */
+.pfx-tab-icon {
+  width: 16px; height: 16px;
+  margin-inline-end: 6px;
+  flex-shrink: 0;
+}
+.pfx-tab-row[busy] .pfx-tab-icon { opacity: 0.4; }
+
+/* Label */
+.pfx-tab-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+
+/* Group rows */
+.pfx-group-row {
+  font-weight: 600;
+  opacity: 0.85;
+}
+.pfx-group-marker {
+  margin-inline-end: 6px;
+  font-size: 8px;
+  opacity: 0.5;
+  flex-shrink: 0;
+}
+
+/* Collapse indicator — real XUL <image> child anchored to the row's far
+ * right edge. margin-inline-start: auto pushes it past the label's flex:1
+ * so the chevron always sits flush right with breathing room. */
+.pfx-tab-chevron {
+  width: 12px; height: 12px;
+  margin-inline-start: auto;
+  margin-inline-end: 4px;
+  flex-shrink: 0;
+  display: none;
+  list-style-image: url("chrome://global/skin/icons/arrow-right.svg");
+  -moz-context-properties: fill;
+  fill: currentColor;
+  opacity: 0.5;
+}
+[pfx-collapsed] .pfx-tab-chevron {
+  display: inline-block;
+}
+
+/* #endregion rows */
+
+
+/* #region vim cursor */
+
+[pfx-cursor] {
+  outline: 1px solid color-mix(in srgb, currentColor 35%, transparent);
+  outline-offset: -1px;
+}
+:root[pfx-mode="insert"] [pfx-cursor] {
+  outline-color: color-mix(in srgb, currentColor 10%, transparent);
+}
+
+/* #endregion vim cursor */
+
+
+/* #region modeline — absolute overlay at bottom, hidden by default */
+
+#pfx-modeline {
+  position: fixed;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  height: 20px;
+  padding: 0 8px;
+  font-family: monospace;
+  font-size: 11px;
+  line-height: 20px;
+  background: color-mix(in srgb, currentColor 8%, transparent);
+  border-top: 1px solid color-mix(in srgb, currentColor 12%, transparent);
+  z-index: 100;
+  display: none;
+}
+#pfx-modeline[pfx-visible] {
+  display: flex;
+}
+#pfx-modeline-mode {
+  font-weight: bold;
+  margin-inline-end: 12px;
+}
+#pfx-modeline-chord {
+  opacity: 0.6;
+}
+#pfx-modeline-msg {
+  opacity: 0.5;
+  margin-inline-start: 8px;
+}
+:root[pfx-mode="normal"] #pfx-modeline-mode { color: #7aa2f7; }
+:root[pfx-mode="insert"] #pfx-modeline-mode { color: #9ece6a; }
+
+/* Search input (in modeline) */
+.pfx-search-prefix {
+  font-family: monospace;
+  font-size: 11px;
+  font-weight: bold;
+  opacity: 0.6;
+  margin: 0 !important;
+  padding: 0 !important;
+}
+.pfx-search-input {
+  flex: 1;
+  min-width: 0;
+  padding: 0 !important;
+  margin: 0 !important;
+  border: none;
+  font-family: monospace;
+  font-size: 11px;
+  line-height: 20px;
+  background: transparent;
+  color: inherit;
+  outline: none;
+}
+
+/* #endregion modeline */
+
+
+/* #region rename input */
+
+/* Rename mode — vim.ts toggles `contenteditable` on the existing
+ * .pfx-tab-label and adds .pfx-renaming. No new element enters the DOM,
+ * so the row's box is unchanged: same font, same line-height, same flex
+ * slot. The teal focus ring lives on the row via :focus-within. */
+.pfx-tab-label.pfx-renaming {
+  overflow: visible;
+  text-overflow: clip;
+  white-space: nowrap;
+  outline: none;
+  cursor: text;
+  user-select: text;
+  -moz-user-select: text;
+}
+
+.pfx-tab-row:focus-within,
+.pfx-group-row:focus-within {
+  outline: 2px solid var(--pfx-accent);
+  outline-offset: -1px;
+  border-radius: 4px;
+}
+
+/* #endregion rename input */
+
+
+/* #region multi-select */
+
+[pfx-multi] {
+  background: color-mix(in srgb, currentColor 10%, transparent);
+}
+
+/* #endregion multi-select */
+
+
+/* #region drag and drop */
+
+/* No source-row indicator. Firefox's native drag preview already shows
+ * the dragged element's ghost while in flight. Painting our own outline
+ * adds nothing visually but introduces a stuck-attribute bug class
+ * whenever dragend fails to fire (source row destroyed mid-drop, etc.) —
+ * the row keeps the outline indefinitely and looks selected. By having
+ * no [pfx-dragging] CSS, the attribute can stick harmlessly. */
+#pfx-drop-indicator {
+  height: 2px;
+  background: color-mix(in srgb, currentColor 50%, transparent);
+  margin: 0 var(--pfx-sidebar-inset);
+  border-radius: 1px;
+}
+#pfx-drop-indicator[pfx-drop-child] {
+  height: 0;
+  border: 1px dashed color-mix(in srgb, currentColor 35%, transparent);
+  margin-top: -1px;
+  margin-bottom: -1px;
+}
+/* Horizontal-mode indicator is fixed-positioned by JS; ignore the in-flow
+ * margin/border-radius and just paint a solid bar. */
+#pfx-drop-indicator[pfx-fixed] {
+  margin: 0;
+  border: none;
+  z-index: 9999;
+}
+#pfx-drop-indicator[pfx-fixed][pfx-drop-child] {
+  height: 2px;
+  border: none;
+}
+
+/* #endregion drag and drop */
+
+
+/* #region horizontal mode — replace native tab strip */
+
+:root[pfx-horizontal-tabs] #tabbrowser-tabs {
+  display: none !important;
+}
+:root[pfx-horizontal-tabs] #TabsToolbar {
+  position: relative !important;
+  z-index: 100 !important;
+  /* Popout cells extend below TabsToolbar's row 1 height. overflow:visible
+   * + isolation lets them escape and paint above nav-bar via z-index. */
+  overflow: visible !important;
+  isolation: isolate !important;
+  margin-top: 6px;
+}
+
+/* Opt-in: place the tab strip BELOW nav-bar in horizontal mode (default
+ * Firefox order has tabs on top). Set pfx.toolbar.tabsBelowNavBar = true
+ * in about:config to flip. */
+@media -moz-pref("pfx.toolbar.tabsBelowNavBar") {
+  :root[pfx-horizontal-tabs] #navigator-toolbox {
+    display: flex !important;
+    flex-direction: column !important;
+  }
+  :root[pfx-horizontal-tabs] #TabsToolbar { order: 1; }
+  :root[pfx-horizontal-tabs] #PersonalToolbar { order: 2; }
+}
+/* Don't let navigator-toolbox clip TabsToolbar's popouts. */
+:root[pfx-horizontal-tabs] #navigator-toolbox {
+  overflow: visible !important;
+}
+
+/* Horizontal-mode grid layout — both the panel and the pinned container
+ * render as grids of tab cells. Pinned sits before panel, separated by a
+ * vertical divider (border-right on the pinned container).
+ * `:not([hidden])` keeps an empty pinned container hidden (no rows = no
+ * grid to lay out). */
+:is(#pfx-tab-panel, #pfx-pinned-container)[pfx-horizontal]:not([hidden]) {
+  display: grid !important;
+  /* No min — columns shrink infinitely small as more tabs arrive,
+   * rather than scrolling offscreen. */
+  grid-auto-columns: minmax(0, 200px);
+  grid-auto-rows: auto;
+  justify-content: start;
+  align-content: start;
+  min-width: 0 !important;
+  min-height: unset !important;
+  overflow: visible !important;
+  z-index: 2;
+}
+/* Panel fills the remaining toolbar width; pinned sizes to its contents. */
+#pfx-tab-panel[pfx-horizontal] {
+  flex: 1 1 0 !important;
+}
+#pfx-pinned-container[pfx-horizontal] {
+  flex: 0 0 auto !important;
+  padding: 0;
+  margin-right: 6px;
+  padding-right: 6px;
+  border-right: 1px solid color-mix(in srgb, currentColor 15%, transparent);
+}
+/* Vertical divider replaces the horizontal one in horizontal mode. */
+#pfx-pinned-container[pfx-horizontal]::after {
+  display: none;
+}
+
+:is(#pfx-tab-panel, #pfx-pinned-container)[pfx-horizontal] .pfx-tab-row,
+:is(#pfx-tab-panel, #pfx-pinned-container)[pfx-horizontal] .pfx-group-row {
+  margin: 1px;
+  position: relative;
+}
+
+/* Popout children — solid background so they obscure whatever paints
+ * underneath. Applies to popouts in BOTH the panel and pinned containers.
+ * `var(--pfx-bg-popout)` defaults to an opaque literal so this can't bleed
+ * the toolbar / urlbar / page through (see palefox.css palette region). */
+:is(#pfx-tab-panel, #pfx-pinned-container)[pfx-horizontal] [pfx-popout-child] {
+  background: var(--pfx-bg-popout) !important;
+  background-image: none !important;
+  margin-top: 0;
+  margin-bottom: 0;
+}
+/* Shadow on the last child in each popout column */
+#pfx-tab-panel[pfx-horizontal] [pfx-popout-child]:not(:has(+ [pfx-popout-child])) {
+  box-shadow: 0 2px 8px rgba(0,0,0,0.25);
+}
+
+#pfx-tab-panel[pfx-horizontal] #pfx-tab-spacer {
+  display: none !important;
+}
+
+/* #endregion horizontal mode */
+
+
+/* #region picker — fzf-style overlay for :history / :sessions / :restore
+ *
+ * Built lazily by src/tabs/vim.ts:ensurePickerBuilt(). One picker
+ * element lives in the chrome doc; show/hide via .hidden. Position is
+ * fixed, anchored to bottom-center, fits in the viewport with sane
+ * max-height + scrollable list. */
+
+/* Anchored to TOP edge (bottom: auto) so the input row stays put and
+ * the result list resizes from the bottom as filtering narrows results.
+ * The top position equals (viewport-height − max-height − bottom-margin)
+ * so a full-height picker still has ~32px breathing room from the
+ * viewport bottom. Shorter result sets just leave whitespace below
+ * instead of yanking the input down. */
+#pfx-picker {
+  position: fixed !important;
+  left: 50% !important;
+  top: calc(100vh - 60vh - 32px) !important;
+  bottom: auto !important;
+  transform: translateX(-50%) !important;
+  z-index: 9999 !important;
+  width: min(720px, 90vw) !important;
+  max-height: 60vh !important;
+  background: var(--pfx-bg-elevated) !important;
+  color: var(--pfx-fg) !important;
+  border: 1px solid var(--pfx-border) !important;
+  border-radius: 8px !important;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.32) !important;
+  font-family: var(--pfx-font, system-ui, sans-serif) !important;
+  font-size: 13px !important;
+  display: flex !important;
+  flex-direction: column !important;
+  overflow: hidden !important;
+}
+
+#pfx-picker[hidden] { display: none !important; }
+
+#pfx-picker .pfx-picker-input-box {
+  display: flex !important;
+  align-items: center !important;
+  gap: 8px !important;
+  padding: 10px 14px !important;
+  border-bottom: 1px solid var(--pfx-border) !important;
+}
+
+#pfx-picker .pfx-picker-prompt {
+  color: var(--pfx-accent) !important;
+  font-weight: 600 !important;
+}
+
+#pfx-picker .pfx-picker-input {
+  flex: 1 !important;
+  background: transparent !important;
+  border: none !important;
+  outline: none !important;
+  color: var(--pfx-fg) !important;
+  font: inherit !important;
+}
+
+#pfx-picker .pfx-picker-list {
+  flex: 1 !important;
+  overflow-y: auto !important;
+  padding: 4px 0 !important;
+  display: flex !important;
+  flex-direction: column !important;
+}
+
+#pfx-picker .pfx-picker-row {
+  padding: 6px 14px !important;
+  cursor: pointer !important;
+  display: flex !important;
+  align-items: center !important;
+  gap: 8px !important;
+}
+
+#pfx-picker .pfx-picker-row[pfx-picker-selected="true"] {
+  background: color-mix(in srgb, var(--pfx-accent) 15%, transparent) !important;
+}
+
+#pfx-picker .pfx-picker-row:hover:not([pfx-picker-selected="true"]) {
+  background: color-mix(in srgb, var(--pfx-fg) 6%, transparent) !important;
+}
+
+/* Tree context rows — dim text so direct matches stand out. */
+#pfx-picker .pfx-picker-row[pfx-picker-context="true"] .pfx-picker-label,
+#pfx-picker .pfx-picker-row[pfx-picker-context="true"] .pfx-picker-secondary {
+  opacity: 0.5 !important;
+}
+
+#pfx-picker .pfx-picker-icon {
+  width: 16px !important;
+  height: 16px !important;
+  flex: none !important;
+  object-fit: contain !important;
+}
+
+#pfx-picker .pfx-picker-icon-text {
+  width: 16px !important;
+  text-align: center !important;
+  flex: none !important;
+}
+
+#pfx-picker .pfx-picker-text {
+  display: flex !important;
+  align-items: baseline !important;
+  gap: 12px !important;
+  min-width: 0 !important;
+  flex: 1 !important;
+}
+
+#pfx-picker .pfx-picker-secondary {
+  color: var(--pfx-fg-muted) !important;
+  font-size: 0.85em !important;
+  margin-inline-start: auto !important;
+}
+
+#pfx-picker .pfx-picker-empty {
+  padding: 16px 14px !important;
+  color: var(--pfx-fg-muted) !important;
+  font-style: italic !important;
+}
+
+/* #endregion picker */

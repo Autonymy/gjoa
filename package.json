@@ -10,6 +10,10 @@
     "import": "bun tools/prep/cli.ts import",
     "clean": "bun tools/prep/cli.ts clean",
     "icons": "bun tools/icons/generate.ts",
+    "chrome:bundle": "bun tools/chrome-bundle/build.ts",
+    "chrome:watch": "bun --watch tools/chrome-bundle/build.ts",
+    "chrome:dist": "bun tools/chrome-bundle/dist.ts",
+    "chrome:install": "bun tools/chrome-bundle/install.ts",
     "test": "bun test"
   }
 }

@@ -1,0 +1,34 @@
+# mach build artifacts (mozilla-central source + per-build state)
+engine/
+.dotbuild/
+firefox-*/
+__pycache__/
+dist/
+target/
+mozconfig
+
+# Bun / Node
+node_modules/
+
+# Nix dev shells / direnv
+.devenv/
+.direnv/
+
+# Nix build output symlink
+result
+result-*
+
+# Build acceleration caches
+.sccache/
+
+# Skiff prep tool source cache (downloaded firefox tarballs)
+.cache/
+
+# IDE / OS
+.vscode/
+.DS_Store
+
+# Distribution artifacts
+*.mar
+*.dmg
+*.tar.bz2

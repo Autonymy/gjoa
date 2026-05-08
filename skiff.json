@@ -1,0 +1,38 @@
+{
+  "$schema": "./tools/prep/schema.json",
+  "name": "Skiff",
+  "binaryName": "skiff",
+  "appId": "skiff",
+  "vendor": "tompassarelli",
+  "displayVersion": "0.1.0",
+  "license": "MPL-2.0",
+  "github": "tompassarelli/skiff",
+
+  "firefox": {
+    "version": "150.0",
+    "candidate": "150.0",
+    "candidateBuild": 1
+  },
+
+  "branding": {
+    "shortName": "Skiff",
+    "shorterName": "Skiff",
+    "fullName": "Skiff",
+    "productName": "Skiff",
+    "vendorName": "tompassarelli",
+    "backgroundColor": "#1e1e2e",
+    "displayName": "Skiff"
+  },
+
+  "urls": {
+    "homepageOverride": "",
+    "welcome": "",
+    "welcomeAdditional": "",
+    "updateManual": "https://github.com/tompassarelli/skiff/releases",
+    "updateDetails": "https://github.com/tompassarelli/skiff/releases",
+    "releaseNotes": "https://github.com/tompassarelli/skiff/releases",
+    "releaseNotesAboutDialog": "https://github.com/tompassarelli/skiff/releases",
+    "releaseNotesPrompt": "https://github.com/tompassarelli/skiff/releases",
+    "updateHostname": "updates.skiff.invalid"
+  }
+}

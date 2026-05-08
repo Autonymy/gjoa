@@ -1,0 +1,14 @@
+{
+  "name": "skiff",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Skiff — a Firefox fork.",
+  "scripts": {
+    "init": "bun run download && bun run import",
+    "download": "bun tools/prep/cli.ts download",
+    "import": "bun tools/prep/cli.ts import",
+    "clean": "bun tools/prep/cli.ts clean",
+    "test": "bun test"
+  }
+}

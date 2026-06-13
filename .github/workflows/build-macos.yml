@@ -22,18 +22,15 @@ jobs:
         run: |
           brew install llvm@19 nasm yasm mercurial
 
-      - name: Download Firefox source
-        run: bun run download
-
-      - name: Apply overlays and patches
+      - name: Download and prepare source
         env:
           LIBCLANG_PATH: /opt/homebrew/opt/llvm@19/lib
-        run: bun run import
-
-      - name: Remove generated mozconfig
         run: |
-          # The prep tool writes a mozconfig tuned for NixOS dev builds.
-          # macOS mach needs its own configure flags.
+          bun run init
+          ls -la engine/ | head -5
+
+      - name: Write mozconfig
+        run: |
           rm -f engine/mozconfig
           cat > engine/mozconfig <<'MOZCONFIG'
           ac_add_options --with-branding=browser/branding/gjoa
@@ -50,21 +47,19 @@ jobs:
           export CXX=/opt/homebrew/opt/llvm@19/bin/clang++
           ac_add_options --with-libclang-path=/opt/homebrew/opt/llvm@19/lib
           MOZCONFIG
+          sed -i '' 's/^          //' engine/mozconfig
 
       - name: Bootstrap mach
         working-directory: engine
-        run: |
-          ./mach bootstrap --application-choice=browser --no-interactive
+        run: ./mach bootstrap --application-choice=browser --no-interactive
 
       - name: Build
         working-directory: engine
-        run: |
-          ./mach build
+        run: ./mach build
 
       - name: Package
         working-directory: engine
-        run: |
-          ./mach package
+        run: ./mach package
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4

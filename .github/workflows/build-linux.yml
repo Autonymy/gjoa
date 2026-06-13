@@ -5,7 +5,7 @@ on:
 
 jobs:
   build:
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
     timeout-minutes: 180
     steps:
       - uses: actions/checkout@v4
@@ -33,18 +33,16 @@ jobs:
             libclang-dev pkg-config \
             nodejs
 
-      - name: Download Firefox source
-        run: bun run download
+      - name: Download and prepare source
+        run: |
+          bun run init
+          ls -la engine/ | head -5
 
-      - name: Apply overlays and patches
-        env:
-          LIBCLANG_PATH: /usr/lib/llvm-14/lib
-        run: bun run import
-
-      - name: Remove generated mozconfig
+      - name: Write mozconfig
         run: |
           rm -f engine/mozconfig
-          cat > engine/mozconfig <<'MOZCONFIG'
+          LIBCLANG=$(find /usr/lib/llvm-*/lib -name 'libclang*.so*' -print -quit 2>/dev/null | xargs dirname)
+          cat > engine/mozconfig <<MOZCONFIG
           ac_add_options --with-branding=browser/branding/gjoa
           ac_add_options --with-distribution-id=org.gjoa
           ac_add_options --with-app-name=gjoa
@@ -56,22 +54,21 @@ jobs:
           ac_add_options --enable-release
           export CC=clang
           export CXX=clang++
+          ac_add_options --with-libclang-path=${LIBCLANG}
           MOZCONFIG
+          sed -i 's/^          //' engine/mozconfig
 
       - name: Bootstrap mach
         working-directory: engine
-        run: |
-          ./mach bootstrap --application-choice=browser --no-interactive
+        run: ./mach bootstrap --application-choice=browser --no-interactive
 
       - name: Build
         working-directory: engine
-        run: |
-          ./mach build
+        run: ./mach build
 
       - name: Package
         working-directory: engine
-        run: |
-          ./mach package
+        run: ./mach package
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4

@@ -29,9 +29,12 @@ export const state: {
   panel: HTMLElement;
   spacer: HTMLElement;
   pinnedContainer: HTMLElement;
+  /** Active-space header rendered above the tab list. Created in init,
+   *  positioned alongside panel/pinnedContainer by layout.positionPanel. */
+  spaceHeader: HTMLElement;
   contextTab: Tab | null;
   /** Currently right-clicked group row — set by createGroupRow's contextmenu
-   *  listener before opening the pfx-group-menu. Null otherwise. */
+   *  listener before opening the gjoa-group-menu. Null otherwise. */
   contextGroupRow: Row | null;
   cursor: Row | null;
   nextTabId: number;
@@ -47,6 +50,7 @@ export const state: {
   panel: null as unknown as HTMLElement,
   spacer: null as unknown as HTMLElement,
   pinnedContainer: null as unknown as HTMLElement,
+  spaceHeader: null as unknown as HTMLElement,
   contextTab: null,
   contextGroupRow: null,
   cursor: null,
@@ -61,7 +65,7 @@ export const state: {
  *  handlers and persist's applySavedToTab. */
 export const treeOf = new WeakMap<Tab, TreeData>();
 
-/** Tab → palefox row element. Set by createTabRow, deleted by onTabClose. */
+/** Tab → gjoa row element. Set by createTabRow, deleted by onTabClose. */
 export const rowOf = new WeakMap<Tab, Row>();
 
 /** Row → tab whose visuals to show (used in horizontal-mode collapse, where a
@@ -84,7 +88,7 @@ export const closedTabs: SavedNode[] = [];
  *  range-ops, and clearSelection on context changes. */
 export const selection = new Set<Row>();
 
-/** Tabs currently being moved by palefox via gBrowser.moveTabTo. During a move,
+/** Tabs currently being moved by gjoa via gBrowser.moveTabTo. During a move,
  *  Firefox transiently toggles `busy` on the tab — we suppress the busy-sync and
  *  tree-resync for tabs in this set, then do one clean resync after the move
  *  settles. Pattern cribbed from Sidebery (src/services/tabs.fg.move.ts). */

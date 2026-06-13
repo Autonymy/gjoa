@@ -1,5 +1,5 @@
 // Row creation, sync, visibility — the rendering layer between Firefox tabs
-// and the palefox panel DOM.
+// and the gjoa panel DOM.
 //
 // Public API is the factory's return value:
 //   createTabRow / createGroupRow — element factories with listeners attached
@@ -22,7 +22,7 @@ import {
   allRows,
 } from "./helpers.ts";
 import { createLogger } from "./log.ts";
-import { hzDisplay, movingTabs, rowOf, state, treeOf } from "./state.ts";
+import { hzDisplay, movingTabs, rowOf, state } from "./state.ts";
 import type { Group, Row, Tab } from "./types.ts";
 
 declare const document: Document;
@@ -45,6 +45,16 @@ export type RowsDeps = {
   readonly startRename: (row: Row) => void;
   // From persist factory.
   readonly scheduleSave: () => void;
+  /** From spaces. Pure predicate — true iff `tab` is in the active space.
+   *  Defaults to "always visible" if not supplied (back-compat). */
+  readonly isTabInActiveSpace?: (tab: Tab) => boolean;
+  /** From spaces. Returns the current active space id — captured at group
+   *  creation time so each new group is scoped to whatever space the user
+   *  was in when they created it. */
+  readonly getActiveSpaceId?: () => string;
+  /** From spaces. Pure predicate — true iff `group` belongs to the active
+   *  space. Same fallback policy as isTabInActiveSpace. */
+  readonly isGroupInActiveSpace?: (group: Group) => boolean;
 };
 
 export type RowsAPI = {
@@ -80,23 +90,23 @@ export function makeRows(deps: RowsDeps): RowsAPI {
 
   function createTabRow(tab: Tab): Row {
     const row = document.createXULElement("hbox") as Row;
-    row.className = "pfx-tab-row";
+    row.className = "gjoa-tab-row";
     row.setAttribute("align", "center");
 
     const icon = document.createXULElement("image") as HTMLElement;
-    icon.className = "pfx-tab-icon";
+    icon.className = "gjoa-tab-icon";
 
     // HTML span (not XUL <label>) so contentEditable works cleanly during
     // rename. CSS handles ellipsis cropping (was XUL `crop="end"`).
     const label = document.createElement("span");
-    label.className = "pfx-tab-label";
+    label.className = "gjoa-tab-label";
 
     const chevron = document.createXULElement("image") as HTMLElement;
-    chevron.className = "pfx-tab-chevron";
+    chevron.className = "gjoa-tab-chevron";
 
     // Clicking the chevron toggles the tree-collapse state for this row
     // instead of activating the tab. The chevron is only visually present
-    // when the row has [pfx-collapsed] (CSS-gated), so this is the "click
+    // when the row has [gjoa-collapsed] (CSS-gated), so this is the "click
     // the right caret to expand" affordance. stopPropagation prevents the
     // general row click from also firing (which would re-select the tab).
     chevron.addEventListener("click", (e) => {
@@ -106,6 +116,8 @@ export function makeRows(deps: RowsDeps): RowsAPI {
       toggleCollapse(row);
     });
 
+    // DOM order: [icon] [label] [chevron]. Close-tab is right-click only —
+    // no inline X (2026-05-29 user spec).
     row.append(icon, label, chevron);
     row._tab = tab;
     rowOf.set(tab, row);
@@ -143,7 +155,7 @@ export function makeRows(deps: RowsDeps): RowsAPI {
       e.preventDefault();
       e.stopPropagation();
       state.contextTab = tab;
-      const menu = document.getElementById("pfx-tab-menu") as any;
+      const menu = document.getElementById("gjoa-tab-menu") as any;
       menu?.openPopupAtScreen(me.screenX, me.screenY, true);
     });
 
@@ -162,12 +174,12 @@ export function makeRows(deps: RowsDeps): RowsAPI {
     const showTd = showTab === tab ? td : treeData(showTab);
 
     const img = showTab.getAttribute("image");
-    const iconEl = row.querySelector<HTMLElement>(".pfx-tab-icon");
+    const iconEl = row.querySelector<HTMLElement>(".gjoa-tab-icon");
     iconEl?.setAttribute(
       "src",
       img || "chrome://global/skin/icons/defaultFavicon.svg",
     );
-    const labelEl = row.querySelector<HTMLElement>(".pfx-tab-label");
+    const labelEl = row.querySelector<HTMLElement>(".gjoa-tab-label");
     if (labelEl) labelEl.textContent = showTd.name || showTab.label || "New Tab";
 
     row.toggleAttribute("selected", tab.selected);
@@ -178,7 +190,7 @@ export function makeRows(deps: RowsDeps): RowsAPI {
     }
     row.toggleAttribute("pinned", tab.pinned);
     row.toggleAttribute(
-      "pfx-collapsed",
+      "gjoa-collapsed",
       !!td.collapsed && hasChildren(row),
     );
 
@@ -195,27 +207,30 @@ export function makeRows(deps: RowsDeps): RowsAPI {
       level,
       state: null,
       collapsed: false,
+      // Capture the active space at creation time. Loader overrides this
+      // after createGroupRow when restoring from a snapshot.
+      spaceId: deps.getActiveSpaceId?.() ?? "",
     };
 
     const row = document.createXULElement("hbox") as Row;
-    row.className = "pfx-group-row";
+    row.className = "gjoa-group-row";
     row.setAttribute("align", "center");
     row._group = group;
 
     const marker = document.createElement("span");
-    marker.className = "pfx-group-marker";
+    marker.className = "gjoa-group-marker";
     marker.textContent = "●";
 
     const label = document.createElement("span");
-    label.className = "pfx-tab-label";
+    label.className = "gjoa-tab-label";
     label.textContent = group.name;
 
     // Mirror the tab-row chevron: shown only when this group has
-    // children and is collapsed (CSS-gated via [pfx-collapsed]). Click
+    // children and is collapsed (CSS-gated via [gjoa-collapsed]). Click
     // toggles the group's collapsed state. stopPropagation so the
     // row-level click handler (which activates vim) doesn't fire too.
     const chevron = document.createXULElement("image") as HTMLElement;
-    chevron.className = "pfx-tab-chevron";
+    chevron.className = "gjoa-tab-chevron";
     chevron.addEventListener("click", (e) => {
       const me = e as MouseEvent;
       if (me.button !== 0) return;
@@ -249,7 +264,7 @@ export function makeRows(deps: RowsDeps): RowsAPI {
       e.preventDefault();
       e.stopPropagation();
       state.contextGroupRow = row;
-      const menu = document.getElementById("pfx-group-menu") as any;
+      const menu = document.getElementById("gjoa-group-menu") as any;
       menu?.openPopupAtScreen(me.screenX, me.screenY, true);
     });
 
@@ -262,7 +277,7 @@ export function makeRows(deps: RowsDeps): RowsAPI {
     const g = row._group;
     if (!g) return;
 
-    const label = row.querySelector<HTMLElement>(".pfx-tab-label");
+    const label = row.querySelector<HTMLElement>(".gjoa-tab-label");
     const statePrefix = g.state === "todo"
       ? "[ ] "
       : g.state === "wip"
@@ -273,7 +288,7 @@ export function makeRows(deps: RowsDeps): RowsAPI {
     if (label) label.textContent = statePrefix + g.name;
 
     row.toggleAttribute(
-      "pfx-collapsed",
+      "gjoa-collapsed",
       !!g.collapsed && hasChildren(row),
     );
     row.style.paddingInlineStart = (g.level * INDENT + 8) + "px";
@@ -282,6 +297,8 @@ export function makeRows(deps: RowsDeps): RowsAPI {
   // ------- visibility / collapse -------
 
   function updateVisibility(): void {
+    const spaceFilter = deps.isTabInActiveSpace;
+    const groupFilter = deps.isGroupInActiveSpace;
     let hideBelow = -1;
     for (const row of allRows()) {
       const d = dataOf(row);
@@ -289,6 +306,19 @@ export function makeRows(deps: RowsDeps): RowsAPI {
       const lv = levelOfRow(row);
       if (hideBelow >= 0 && lv > hideBelow) {
         row.hidden = true;
+        continue;
+      }
+      // Spaces filter — tabs and groups are independently space-scoped.
+      // When a group is hidden by space, its descendants also hide (set
+      // hideBelow to the group's level) so child tabs don't leak through
+      // a different-space group header.
+      if (spaceFilter && row._tab && !spaceFilter(row._tab)) {
+        row.hidden = true;
+        continue;
+      }
+      if (groupFilter && row._group && !groupFilter(row._group)) {
+        row.hidden = true;
+        hideBelow = lv;
         continue;
       }
       row.hidden = false;
@@ -307,7 +337,7 @@ export function makeRows(deps: RowsDeps): RowsAPI {
     const containers = [state.pinnedContainer, state.panel].filter(Boolean) as HTMLElement[];
     for (const container of containers) {
       const rowsInContainer = [
-        ...container.querySelectorAll<HTMLElement>(".pfx-tab-row, .pfx-group-row"),
+        ...container.querySelectorAll<HTMLElement>(".gjoa-tab-row, .gjoa-group-row"),
       ] as Row[];
       let col = 0;
       let rowInCol = 0;
@@ -316,7 +346,7 @@ export function makeRows(deps: RowsDeps): RowsAPI {
         const d = dataOf(row);
         if (!d) continue;
         if (row.hidden) {
-          row.removeAttribute("pfx-popout-child");
+          row.removeAttribute("gjoa-popout-child");
           continue;
         }
         if (levelOfRow(row) === 0 || col === 0) {
@@ -326,7 +356,7 @@ export function makeRows(deps: RowsDeps): RowsAPI {
         rowInCol++;
         row.style.gridColumn = String(col);
         row.style.gridRow = String(rowInCol);
-        row.toggleAttribute("pfx-popout-child", rowInCol > 1);
+        row.toggleAttribute("gjoa-popout-child", rowInCol > 1);
         if (row.hasAttribute("selected")) selectedCol = col;
       }
       if (col > 0) {
@@ -345,7 +375,7 @@ export function makeRows(deps: RowsDeps): RowsAPI {
       if (!isHorizontal()) return;
       for (const container of containers) {
         const firstRow = container.querySelector<HTMLElement>(
-          ".pfx-tab-row:not([hidden]), .pfx-group-row:not([hidden])",
+          ".gjoa-tab-row:not([hidden]), .gjoa-group-row:not([hidden])",
         );
         if (firstRow) {
           container.style.maxHeight = (firstRow.offsetHeight + 2) + "px";
@@ -356,8 +386,8 @@ export function makeRows(deps: RowsDeps): RowsAPI {
       // close. This duplicates vim's setUrlbarTopLayer call to handle paths
       // (e.g. cursor on pinned root) where vim's expand path didn't fire.
       const totalPopouts =
-        (state.panel?.querySelectorAll("[pfx-popout-child]").length ?? 0)
-        + (state.pinnedContainer?.querySelectorAll("[pfx-popout-child]").length ?? 0);
+        (state.panel?.querySelectorAll("[gjoa-popout-child]").length ?? 0)
+        + (state.pinnedContainer?.querySelectorAll("[gjoa-popout-child]").length ?? 0);
       const urlbar = document.getElementById("urlbar");
       if (urlbar) {
         const before = {
@@ -377,7 +407,7 @@ export function makeRows(deps: RowsDeps): RowsAPI {
       // attempt didn't work.
       for (const container of containers) {
         const allRowsInContainer = container.querySelectorAll<HTMLElement>(
-          ".pfx-tab-row, .pfx-group-row",
+          ".gjoa-tab-row, .gjoa-group-row",
         );
         for (const p of allRowsInContainer) {
           if (p.style.position === "fixed") {
@@ -388,7 +418,7 @@ export function makeRows(deps: RowsDeps): RowsAPI {
             p.style.zIndex = "";
           }
         }
-        const popouts = [...container.querySelectorAll<HTMLElement>("[pfx-popout-child]")];
+        const popouts = [...container.querySelectorAll<HTMLElement>("[gjoa-popout-child]")];
         if (popouts.length) {
           void container.offsetHeight;
           const rects = popouts.map(p => p.getBoundingClientRect());
@@ -406,7 +436,7 @@ export function makeRows(deps: RowsDeps): RowsAPI {
         }
       }
       // Diagnostic log — keep so future regressions are easy to chase.
-      const popout = state.panel?.querySelector<HTMLElement>("[pfx-popout-child]");
+      const popout = state.panel?.querySelector<HTMLElement>("[gjoa-popout-child]");
       if (popout) {
         const cs = (el: Element | null) => {
           if (!el) return null;
@@ -443,7 +473,7 @@ export function makeRows(deps: RowsDeps): RowsAPI {
       row.style.top = "";
       row.style.width = "";
       row.style.zIndex = "";
-      row.removeAttribute("pfx-popout-child");
+      row.removeAttribute("gjoa-popout-child");
     }
   }
 

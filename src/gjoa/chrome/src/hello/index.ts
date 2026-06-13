@@ -1,1 +1,1 @@
-console.log("palefox: fx-autoconfig loaded successfully");
+console.log("gjoa: chrome loader working");

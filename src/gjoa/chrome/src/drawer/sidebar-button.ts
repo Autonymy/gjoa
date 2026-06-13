@@ -1,9 +1,9 @@
 // Custom sidebar button + context menu.
 //
-// Replaces Firefox's native #sidebar-button with our own #pfx-sidebar-button:
+// Replaces Firefox's native #sidebar-button with our own #gjoa-sidebar-button:
 //   - left-click: toggle compact mode for whichever layout (vertical /
 //     horizontal) is currently active
-//   - right-click: opens our own #pfx-sidebar-button-menu (we own the
+//   - right-click: opens our own #gjoa-sidebar-button-menu (we own the
 //     popup completely; previous overload-Firefox's-menu approach
 //     fought UA popupshowing handlers and made items morph mid-paint)
 //
@@ -56,11 +56,31 @@ export function makeSidebarButton(deps: SidebarButtonDeps): SidebarButtonAPI {
   const xul = (tag: string): HTMLElement =>
     (document as Document & { createXULElement(t: string): HTMLElement }).createXULElement(tag);
 
-  const sidebarButton = document.getElementById("sidebar-button");
-  if (!sidebarButton) {
-    log("init:no-sidebar-button");
-    return { destroy: () => {} };
+  // In Firefox 151 sidebar-revamp + vertical-tabs mode, the native
+  // #sidebar-button widget is NOT registered in nav-bar. Verified by
+  // tests/integration/nav-bar-layout.ts diagnostic: nav-bar in vertical
+  // mode contains only back/forward/vertical-spacer/extensions, with
+  // PanelUI-button (hamburger) as a sibling of customization-target.
+  //
+  // For horizontal-tabs (legacy) mode, native #sidebar-button DOES
+  // exist. Keep the swap-the-native code path for that case; in
+  // vertical mode we'd need a different approach (synthesize our own
+  // toggle button from scratch) — TODO for next session.
+  const native = document.getElementById("sidebar-button");
+  if (native) {
+    return install(native, sidebarMain, compact);
   }
+  log("init:no native #sidebar-button (vertical-tabs+revamp mode) — skipping custom-button swap");
+  return { destroy: () => {} };
+}
+
+function install(
+  sidebarButton: HTMLElement,
+  sidebarMain: HTMLElement,
+  compact: CompactAPI,
+): SidebarButtonAPI {
+  const xul = (tag: string): HTMLElement =>
+    (document as Document & { createXULElement(t: string): HTMLElement }).createXULElement(tag);
 
   // Snapshot the icon style before hiding the native button.
   const ogIcon = sidebarButton.querySelector(".toolbarbutton-icon");
@@ -68,10 +88,10 @@ export function makeSidebarButton(deps: SidebarButtonDeps): SidebarButtonAPI {
 
   sidebarButton.style.display = "none";
 
-  const pfxButton = xul("toolbarbutton");
-  pfxButton.id = "pfx-sidebar-button";
-  pfxButton.className = sidebarButton.className;
-  pfxButton.setAttribute(
+  const button = xul("toolbarbutton");
+  button.id = "gjoa-sidebar-button";
+  button.className = sidebarButton.className;
+  button.setAttribute(
     "tooltiptext",
     "Toggle compact mode (right-click for more)",
   );
@@ -85,21 +105,41 @@ export function makeSidebarButton(deps: SidebarButtonDeps): SidebarButtonAPI {
     "overflows",
   ]) {
     if (sidebarButton.hasAttribute(attr)) {
-      pfxButton.setAttribute(attr, sidebarButton.getAttribute(attr) ?? "");
+      button.setAttribute(attr, sidebarButton.getAttribute(attr) ?? "");
     }
   }
-  if (ogIconStyle) pfxButton.style.listStyleImage = ogIconStyle;
-  sidebarButton.after(pfxButton);
+  if (ogIconStyle) button.style.listStyleImage = ogIconStyle;
+  // Native #sidebar-button may live inside #nav-bar-customization-target
+  // (depending on profile customization). Reparent our replacement to be
+  // a direct child of #nav-bar, immediately after #PanelUI-button — that
+  // way the `order: -9` rule on `#nav-bar > #gjoa-sidebar-button` (see
+  // gjoa.uc.css nav-bar layout region) places it visually adjacent to
+  // the hamburger, NOT inside the right-anchored customization-target.
+  //
+  // Fallback: if for any reason nav-bar / PanelUI-button isn't there,
+  // keep the original `sidebarButton.after(button)` placement.
+  const navBar = document.getElementById("nav-bar");
+  const panelUI = document.getElementById("PanelUI-button");
+  if (navBar && panelUI && panelUI.parentNode === navBar) {
+    panelUI.after(button);
+  } else {
+    sidebarButton.after(button);
+  }
+
+  // Nav-bar reflow uses CSS `order` (CustomizableUI fights DOM moves but
+  // doesn't observe CSS order). In expanded-sidebar mode the flex spring
+  // between left icon-group and CT is a `::before` pseudo on CT (see
+  // gjoa.uc.css). No DOM spring needed in any mode.
 
   function onClick(e: Event): void {
     if ((e as MouseEvent).button !== 0) return;
     compact.toggle();
   }
-  pfxButton.addEventListener("click", onClick);
+  button.addEventListener("click", onClick);
 
   // --- Custom context menu ---
-  const pfxMenu = xul("menupopup");
-  pfxMenu.id = "pfx-sidebar-button-menu";
+  const menu = xul("menupopup");
+  menu.id = "gjoa-sidebar-button-menu";
 
   function mi(id: string, label: string, onCommand: () => void): HTMLElement {
     const item = xul("menuitem");
@@ -109,44 +149,44 @@ export function makeSidebarButton(deps: SidebarButtonDeps): SidebarButtonAPI {
     return item;
   }
 
-  const compactItem = mi("pfx-toggle-compact", "Enable Compact",
+  const compactItem = mi("gjoa-toggle-compact", "Enable Compact",
     () => compact.toggle());
 
-  const collapseItem = mi("pfx-collapse-layout", "Collapse Layout", () => {
+  const collapseItem = mi("gjoa-collapse-layout", "Collapse Layout", () => {
     try {
       const prevDisplay = sidebarButton!.style.display;
       sidebarButton!.style.display = "";
       (sidebarButton as HTMLElement).click();
       sidebarButton!.style.display = prevDisplay;
     } catch (e) {
-      console.error("[PFX:drawer] collapse layout failed", e);
+      console.error("[GJOA:drawer] collapse layout failed", e);
     }
   });
 
-  const sidebarItem = mi("pfx-toggle-sidebar", "Enable Sidebar", () => {
+  const sidebarItem = mi("gjoa-toggle-sidebar", "Enable Sidebar", () => {
     try {
       if (window.SidebarController?.toggle) { window.SidebarController.toggle(); return; }
       if (window.SidebarUI?.toggle) { window.SidebarUI.toggle(); return; }
       const cmd = document.getElementById("cmd_toggleSidebar") as (HTMLElement & { doCommand?: () => void }) | null;
       if (cmd?.doCommand) { cmd.doCommand(); return; }
-      console.error("[PFX:drawer] no sidebar-toggle API available");
-    } catch (e) { console.error("[PFX:drawer] sidebar toggle failed", e); }
+      console.error("[GJOA:drawer] no sidebar-toggle API available");
+    } catch (e) { console.error("[GJOA:drawer] sidebar toggle failed", e); }
   });
 
-  const layoutItem = mi("pfx-toggle-tab-layout", "Horizontal Tabs", () => {
+  const layoutItem = mi("gjoa-toggle-tab-layout", "Horizontal Tabs", () => {
     const vertical = Services.prefs.getBoolPref("sidebar.verticalTabs", true);
     Services.prefs.setBoolPref("sidebar.verticalTabs", !vertical);
   });
 
-  const customizeItem = mi("pfx-customize-sidebar", "Customize Sidebar", () => {
+  const customizeItem = mi("gjoa-customize-sidebar", "Customize Sidebar", () => {
     try {
       const native = document.getElementById("toolbar-context-customize-sidebar") as (HTMLElement & { doCommand?: () => void }) | null;
       native?.doCommand?.();
       if (!native?.doCommand) native?.click?.();
-    } catch (e) { console.error("palefox: customize sidebar failed", e); }
+    } catch (e) { console.error("gjoa: customize sidebar failed", e); }
   });
 
-  pfxMenu.append(
+  menu.append(
     compactItem,
     collapseItem,
     sidebarItem,
@@ -158,11 +198,11 @@ export function makeSidebarButton(deps: SidebarButtonDeps): SidebarButtonAPI {
   // Append to mainPopupSet so it's at the document root (rendered in the
   // top layer like all chrome popups).
   const popupSet = document.getElementById("mainPopupSet");
-  popupSet?.appendChild(pfxMenu);
+  popupSet?.appendChild(menu);
 
   // Wire the button to our menu. Firefox's context-menu plumbing reads
   // the `context` attribute and opens the named popup on right-click.
-  pfxButton.setAttribute("context", "pfx-sidebar-button-menu");
+  button.setAttribute("context", "gjoa-sidebar-button-menu");
 
   // Update labels / hidden state on every open. With our own menu
   // there's no fight with Firefox's UA handler.
@@ -195,20 +235,20 @@ export function makeSidebarButton(deps: SidebarButtonDeps): SidebarButtonAPI {
     if (compact.isCompactVertical()) compact.pinSidebar();
     if (compact.isCompactHorizontal()) compact.pinToolbox();
   }
-  pfxMenu.addEventListener("popupshowing", onPopupShowing);
+  menu.addEventListener("popupshowing", onPopupShowing);
 
   function onPopupHidden(): void {
-    compact.reconcile("pfxMenu:popuphidden");
-    compact.reconcileHorizontal("pfxMenu:popuphidden");
+    compact.reconcile("menu:popuphidden");
+    compact.reconcileHorizontal("menu:popuphidden");
   }
-  pfxMenu.addEventListener("popuphidden", onPopupHidden);
+  menu.addEventListener("popuphidden", onPopupHidden);
 
   function destroy(): void {
-    pfxButton.removeEventListener("click", onClick);
-    pfxMenu.removeEventListener("popupshowing", onPopupShowing);
-    pfxMenu.removeEventListener("popuphidden", onPopupHidden);
-    pfxMenu.remove();
-    pfxButton.remove();
+    button.removeEventListener("click", onClick);
+    menu.removeEventListener("popupshowing", onPopupShowing);
+    menu.removeEventListener("popuphidden", onPopupHidden);
+    menu.remove();
+    button.remove();
     sidebarButton!.style.display = "";
   }
 

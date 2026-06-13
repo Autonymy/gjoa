@@ -2,7 +2,7 @@ import { existsSync, mkdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { $ } from "bun";
 import { loadConfig } from "./config";
-import { CACHE_DIR, ENGINE_DIR, REPO_ROOT, SOURCES_CACHE } from "./paths";
+import { ENGINE_DIR, REPO_ROOT, SOURCES_CACHE } from "./paths";
 import { log } from "./log";
 
 // Mirrors Mozilla's release URL convention. Used for both .source.tar.xz and

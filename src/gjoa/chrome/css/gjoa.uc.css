@@ -1,0 +1,826 @@
+/* ==UserScript==
+// @name           gjoa-core
+// @description    Core gjoa theme: palette, nav-bar, urlbar, sidebar-main
+// @include        main
+// ==/UserScript== */
+
+/* Core theme. This file is loaded into the chrome window by the gjoa
+ * loader (hash-pinned variant of fx-autoconfig) and is overwritten on
+ * update — do not edit. Companion sheets gjoa-tabs.uc.css and
+ * gjoa-which-key.uc.css load independently from the same directory.
+ *
+ * Requires: gjoa-drawer.uc.js (DOM restructuring).
+ * Target:   Firefox with native vertical tabs enabled. */
+
+
+/* #region palette
+ *
+ * Gjoa paints chrome surfaces with these `--gjoa-*` variables. Defaults
+ * are LITERAL `light-dark()` colors — NOT Firefox system tokens — because:
+ *
+ *   1. On Linux, Firefox's `--sidebar-background-color` falls back to the
+ *      `-moz-sidebar` system token, which GTK derives from TextView's
+ *      background. On non-Adwaita / minimal compositor setups that's
+ *      transparent (alpha 0). The `var(...)` expression resolves
+ *      successfully — so our `light-dark()` fallback never fires — and
+ *      KWin / Hyprland / Sway blur composites the desktop through.
+ *   2. Sidebar revamp + verticalTabs is a known regression magnet for
+ *      this exact symptom (Bugzilla 1971487, 2006091, 1860392).
+ *
+ * Two escape hatches:
+ *   - `gjoa.theme.useSystem = true` in about:config → use Firefox's
+ *     theme variables when they resolve (still falls back to our literal
+ *     palette so transparent tokens can't bleed through).
+ *   - Override any `--gjoa-*` in `chrome/user.css` (not overwritten on
+ *     update). See docs/colors.md.
+ *
+ * `color-scheme: light dark` on `:root` ensures `light-dark()` works and
+ * defends against ancestor color-scheme inversion.
+ */
+
+:root {
+  color-scheme: light dark;
+
+  --gjoa-bg:           light-dark(#f9f9fb, #1c1b22);
+  --gjoa-bg-elevated:  light-dark(#ffffff, #2b2a33);
+  --gjoa-bg-popout:    light-dark(#f9f9fb, #1c1b22);
+  --gjoa-fg:           light-dark(#15141a, #fbfbfe);
+  --gjoa-fg-muted:     light-dark(#5b5b66, #b0b0bb);
+  --gjoa-border:       light-dark(rgba(0, 0, 0, 0.12), rgba(255, 255, 255, 0.12));
+  --gjoa-accent:       light-dark(#0061e0, #00ddff);
+}
+
+/* Opt-in: route the gjoa palette through Firefox's theme variables
+ * (stylix, installed theme, system colors). Each falls back to our
+ * literal palette so transparent / unset tokens can't paint nothing. */
+@media -moz-pref("gjoa.theme.useSystem") {
+  :root {
+    --gjoa-bg:           var(--sidebar-background-color, light-dark(#f9f9fb, #1c1b22));
+    --gjoa-bg-popout:    var(--sidebar-background-color, light-dark(#f9f9fb, #1c1b22));
+    --gjoa-bg-elevated:  var(--toolbar-field-background-color, light-dark(#ffffff, #2b2a33));
+    --gjoa-fg:           var(--sidebar-text-color, light-dark(#15141a, #fbfbfe));
+  }
+}
+
+/* SHIELD: when gjoa owns the theme (default), stamp our palette over
+ * every Firefox / LWT theme variable that the chrome reads — so a system
+ * theme (stylix, GNOME, Zen, etc.) or installed Firefox theme cannot
+ * leak into the chrome. The full inventory of overridden variables was
+ * audited from Zen / gwfox / FF-ULTIMA + Firefox source.
+ *
+ * The shield is gated on `not -moz-pref("gjoa.theme.useSystem")` so users
+ * who want Firefox's theme cascade can opt in (see below).
+ *
+ * Variables intentionally LEFT UNTOUCHED: tab grouping internals
+ * (#tabbrowser-tabs is hidden by gjoa anyway), accentcolor /
+ * accent-color-inactive (titlebar; controlled by OS chrome).
+ */
+@media not -moz-pref("gjoa.theme.useSystem") {
+  :root {
+    /* Toolbar surfaces */
+    --toolbar-bgcolor:                          var(--gjoa-bg) !important;
+    --toolbar-color:                            var(--gjoa-fg) !important;
+    --toolbar-color-scheme:                     light dark !important;
+    --lwt-accent-color:                         var(--gjoa-bg) !important;
+    --lwt-accent-color-inactive:                var(--gjoa-bg) !important;
+    --lwt-text-color:                           var(--gjoa-fg) !important;
+
+    /* Toolbar buttons */
+    --toolbarbutton-icon-fill:                  var(--gjoa-fg) !important;
+    --toolbarbutton-icon-fill-attention:        var(--gjoa-accent) !important;
+    --toolbarbutton-hover-background:           var(--gjoa-bg-elevated) !important;
+    --toolbarbutton-active-background:          color-mix(in srgb, var(--gjoa-fg) 15%, transparent) !important;
+    --lwt-toolbarbutton-icon-fill:              var(--gjoa-fg) !important;
+    --lwt-toolbarbutton-hover-background:       var(--gjoa-bg-elevated) !important;
+    --lwt-toolbarbutton-active-background:      color-mix(in srgb, var(--gjoa-fg) 15%, transparent) !important;
+
+    /* Urlbar / search field */
+    --toolbar-field-background-color:           var(--gjoa-bg-elevated) !important;
+    --toolbar-field-color:                      var(--gjoa-fg) !important;
+    --toolbar-field-border-color:               var(--gjoa-border) !important;
+    --toolbar-field-focus-background-color:     var(--gjoa-bg-elevated) !important;
+    --toolbar-field-focus-color:                var(--gjoa-fg) !important;
+    --toolbar-field-focus-border-color:         var(--gjoa-accent) !important;
+    --lwt-toolbar-field-background-color:       var(--gjoa-bg-elevated) !important;
+    --lwt-toolbar-field-color:                  var(--gjoa-fg) !important;
+    --lwt-toolbar-field-border-color:           var(--gjoa-border) !important;
+    --lwt-toolbar-field-focus:                  var(--gjoa-bg-elevated) !important;
+    --lwt-toolbar-field-focus-color:            var(--gjoa-fg) !important;
+    --urlbar-box-bgcolor:                       var(--gjoa-bg-elevated) !important;
+    --urlbar-box-hover-bgcolor:                 color-mix(in srgb, var(--gjoa-fg) 8%, transparent) !important;
+
+    /* Urlbar dropdown row colors. Variables are LOWERCASE per Firefox source
+     * (browser/themes/shared/urlbar/tokens.css:23 + view-nova.css:74) — earlier
+     * camelCase overrides were silently ignored. Selected row tracks the
+     * hover color so Ctrl+J/K navigation matches mouse hover exactly. */
+    --urlbarview-background-color-hover:        color-mix(in srgb, var(--gjoa-fg) 8%, transparent) !important;
+    --urlbarview-background-color-selected:     color-mix(in srgb, var(--gjoa-fg) 8%, transparent) !important;
+    --urlbarview-text-color-selected:           var(--gjoa-fg) !important;
+
+    /* Sidebar */
+    --sidebar-background-color:                 var(--gjoa-bg) !important;
+    --sidebar-text-color:                       var(--gjoa-fg) !important;
+    --sidebar-border-color:                     var(--gjoa-border) !important;
+    --tabpanel-background-color:                var(--gjoa-bg) !important;
+
+    /* Tabs (gjoa hides the native strip but Firefox still reads these
+     * for the tab-switcher previews etc.) */
+    --tab-selected-bgcolor:                     var(--gjoa-bg-elevated) !important;
+    --tab-selected-textcolor:                   var(--gjoa-fg) !important;
+    --tab-loading-fill:                         var(--gjoa-accent) !important;
+    --lwt-tab-line-color:                       transparent !important;
+    --lwt-background-tab-separator-color:       transparent !important;
+
+    /* Separators / chrome-content seams */
+    --toolbarseparator-color:                   var(--gjoa-border) !important;
+    --tabs-navbar-separator-color:              transparent !important;
+    --chrome-content-separator-color:           transparent !important;
+
+    /* Popups / autocomplete */
+    --arrowpanel-background:                    var(--gjoa-bg-elevated) !important;
+    --arrowpanel-color:                         var(--gjoa-fg) !important;
+    --arrowpanel-border-color:                  var(--gjoa-border) !important;
+  }
+}
+
+/* #endregion palette */
+
+
+/* #region vars */
+
+:root {
+  --gjoa-gap: 6px;
+  --gjoa-sidebar-inset: 10px;
+  --gjoa-compact-trigger-width: 8px;
+  --gjoa-transition-duration: 0.25s;
+  --gjoa-transition-easing: linear(
+    0 0%, 0.003 1%, 0.011 2%, 0.023 3%, 0.039 4%, 0.058 5%, 0.08 6%,
+    0.105 7%, 0.131 8%, 0.159 9%, 0.189 10%, 0.219 11%, 0.25 12%,
+    0.281 13%, 0.313 14%, 0.344 15%, 0.376 16%, 0.407 17%, 0.437 18%,
+    0.468 19%, 0.497 20%, 0.526 21%, 0.554 22%, 0.581 23%, 0.607 24%,
+    0.632 25%, 0.656 26%, 0.68 27%, 0.702 28%, 0.723 29%, 0.743 30%,
+    0.763 31%, 0.781 32%, 0.798 33%, 0.815 34%, 0.83 35%, 0.845 36%,
+    0.859 37%, 0.871 38%, 0.883 39%, 0.895 40%, 0.905 41%, 0.915 42%,
+    0.924 43%, 0.933 44%, 0.941 45%, 0.948 46%, 0.954 47%, 0.961 48%,
+    0.966 49%, 0.971 50%, 0.976 51%, 0.98 52%, 0.984 53%, 0.988 54%,
+    0.991 55%, 0.994 56%, 0.996 57%, 0.999 58%, 1.001 59%, 1.002 60%,
+    1.004 61%, 1.005 62%, 1.007 63%, 1.008 64%, 1.008 65%, 1.009 66%,
+    1.01 67%, 1.01 68%, 1.01 69%, 1.011 70%, 1.011 71%, 1.011 72%,
+    1.011 73%, 1.011 74%, 1.011 75%, 1.011 76%, 1.01 77%, 1.01 78%,
+    1.01 79%, 1.01 80%, 1.009 81%, 1.009 82%, 1.009 83%, 1.008 84%,
+    1.008 85%, 1.008 86%, 1.007 87%, 1.007 88%, 1.007 89%, 1.006 90%,
+    1.006 91%, 1.006 92%, 1.005 93%, 1.005 94%, 1.005 95%, 1.004 96%,
+    1.004 97%, 1.004 98%, 1.004 99%, 1.003 100%
+  );
+}
+
+/* #endregion vars */
+
+
+/* #region sidebar-main — the drawer container */
+
+#sidebar-main {
+  overflow: visible !important;
+  flex-direction: column !important;
+  background-color: var(--gjoa-bg) !important;
+  background-image: none !important;
+}
+
+#sidebar-main > sidebar-main {
+  /* Footer pinned to the bottom of #sidebar-main's flex column.
+   * Mode-conditional rules below — these are the shared bits. */
+  margin-top: auto !important;
+  box-sizing: border-box !important;
+  transform: translateX(-2px) !important;
+}
+
+/* EXPANDED mode (sidebar wide, inner buttons horizontal): fixed-60 slot
+ * with `padding-top` symmetric trick driven by --gjoa-symmetric-footer.
+ * `overflow: hidden` clips any layout flicker during the feedback loop. */
+#sidebar-main[sidebar-launcher-expanded] > sidebar-main {
+  flex: 0 0 60px !important;
+  min-height: 0 !important;
+  overflow: hidden !important;
+  padding-top: var(--gjoa-symmetric-footer, 0px) !important;
+  padding-bottom: 0 !important;
+}
+
+/* COLLAPSED mode (sidebar narrow, inner buttons stacked vertically): let
+ * wrapper grow to fit content. Locking it at 60px + overflow:hidden was
+ * clipping all-but-one button (2026-05-27 regression). No symmetric
+ * trick needed here — vertical stack already extends near the bottom. */
+#sidebar-main:not([sidebar-launcher-expanded]) > sidebar-main {
+  flex: 0 0 auto !important;
+  min-height: 60px !important;
+  padding: 0 !important;
+}
+
+
+/* #endregion sidebar-main */
+
+
+/* #region sidebar — Firefox's secondary sidebar (history / bookmarks panel)
+ *
+ * Firefox sets inline `margin-top: 4px; margin-right: 10px;` on the
+ * <browser id="sidebar"> element. In HORIZONTAL tabs mode we override
+ * those to match gjoa's inset rhythm — 1px top + sidebar-inset on
+ * the OUTSIDE edge (whichever edge is the chrome boundary based on
+ * sidebar.position_start). In VERTICAL tabs mode the secondary sidebar
+ * gets a top padding on its wrapping box (#sidebar-box) instead, so
+ * content sits flush with gjoa's nav-bar rhythm. */
+
+@media not -moz-pref("sidebar.verticalTabs") {
+  #sidebar {
+    margin-top: 1px !important;
+  }
+
+  @media -moz-pref("sidebar.position_start") {
+    #sidebar {
+      margin-left: var(--gjoa-sidebar-inset) !important;
+      margin-right: 0 !important;
+    }
+  }
+
+  @media not -moz-pref("sidebar.position_start") {
+    #sidebar {
+      margin-right: var(--gjoa-sidebar-inset) !important;
+      margin-left: 0 !important;
+    }
+  }
+}
+
+@media -moz-pref("sidebar.verticalTabs") {
+  #sidebar-box {
+    padding-top: 8px !important;
+  }
+}
+
+/* #endregion sidebar */
+
+
+/* #region navigator-toolbox — buttons row */
+
+#navigator-toolbox {
+  flex: none !important;
+  background-color: var(--gjoa-bg) !important;
+  background-image: none !important;
+  position: relative !important;
+  z-index: 3 !important;
+}
+
+#nav-bar {
+  border: none !important;
+  margin: 6px 0 !important;
+}
+
+/* -1px compensates for XUL toolbarbutton internal padding we can't override.
+ * Applied on the sidebar side only; flips with sidebar position. */
+@media -moz-pref("sidebar.position_start") {
+  #nav-bar {
+    padding: 0 var(--gjoa-sidebar-inset) 0 calc(var(--gjoa-sidebar-inset) - 1px) !important;
+  }
+}
+@media not -moz-pref("sidebar.position_start") {
+  #nav-bar {
+    padding: 0 calc(var(--gjoa-sidebar-inset) - 1px) 0 var(--gjoa-sidebar-inset) !important;
+  }
+}
+
+
+/* Prevent nav-bar icons from drifting as sidebar resizes.
+ * The customization target is flex:1 inside nav-bar, and springs
+ * inside it distribute extra space. Cap the springs to 0 width
+ * so buttons stay packed together.
+ *
+ * `translateY(6px)` is the gap from the sidebar top edge to the
+ * first nav-bar row. Symmetric-footer feedback loop in
+ * src/drawer/layout.ts targets `bottomGap = topGap + 4` — so
+ * bottom icons sit 4px FURTHER from the sidebar's bottom edge than
+ * top icons sit from the top. DO NOT crank translateY above 8px:
+ * user-confirmed pushes top icons into the URL bar below. */
+#sidebar-main #nav-bar {
+  transform: translateY(6px) !important;
+}
+
+#sidebar-main #nav-bar-customization-target > toolbarspring {
+  flex: 0 0 0 !important;
+}
+
+#sidebar-main #nav-bar-customization-target > :is(toolbarbutton, toolbaritem) {
+  --toolbarbutton-outer-padding: 0 !important;
+  padding-inline: 1px !important;
+  margin-inline: 0 !important;
+}
+
+#PanelUI-menu-button {
+  padding-inline-end: 0 !important;
+}
+
+/* === gjoa nav-bar layout (2026-05-27 user spec) ============================
+ * Two layouts, mode-conditional:
+ *
+ *   EXPANDED  [☰ hamburger][□ sidebar-toggle] ←GAP→ [← → ↻ 🧩]
+ *   COMPACT   [← → ↻] [URL flex-fill] [🧩][□ sidebar-toggle][☰ hamburger]
+ *
+ * Expanded-mode rules are scoped to `#sidebar-main #nav-bar > ...`
+ * (3 IDs of specificity). Compact-mode rules are unscoped (2 IDs).
+ * In expanded mode both match — the higher-specificity sidebar-main
+ * rules win. In compact mode only the unscoped rules apply.
+ *
+ * Compact-mode also HIDES the rarely-relevant trailing widgets
+ * (taskbar-tabs-audio, ai-window-toggle, nav-bar-overflow-button,
+ * etc.) — those sit in DOM between customization-target and PanelUI
+ * and create an unwanted gap between the right-group buttons and
+ * hamburger when they have non-zero width.
+ *
+ * Per integration diag (tests/integration/nav-bar-layout.ts), in 151
+ * vertical-tabs+revamp nav-bar's direct children include:
+ *   [taskbar-tabs-favicon] [titlebar-spacer] [toolbartabstop]
+ *   [nav-bar-customization-target] [...other widgets...] [PanelUI-button]
+ *
+ * Strategy:
+ *   - CSS `order` pushes PanelUI-button (-10) and gjoa-sidebar-button
+ *     (-9) to the leftmost slots; taskbar-tabs-favicon (-8) follows.
+ *   - `margin-inline-start: auto` on nav-bar-customization-target turns
+ *     the remaining flex free-space into a left-margin on that element,
+ *     pinning it AND everything after it to the right edge.
+ *
+ * CSS-only (no DOM injection) because CustomizableUI reverts DOM moves
+ * but doesn't observe CSS order or margin. */
+/* --- COMPACT-mode nav-bar (top chrome) --------------------------------- */
+/* Hide rarely-relevant trailing widgets that sit in DOM between
+ * customization-target and the right group (gjoa-sidebar-button,
+ * PanelUI) — they create a gap between extensions and sidebar-toggle
+ * by occupying width with no visible content. */
+#nav-bar > #document-pip-return-to-opener-button,
+#nav-bar > #taskbar-tabs-audio,
+#nav-bar > #smartwindow-ask-button,
+#nav-bar > #nav-bar-overflow-button,
+#nav-bar > #ai-window-toggle,
+#nav-bar > .titlebar-spacer,
+#nav-bar > .titlebar-buttonbox-container,
+#nav-bar > .private-browsing-indicator-with-label,
+#nav-bar > .content-analysis-indicator {
+  display: none !important;
+}
+/* Hide opinionated widgets unconditionally — regardless of which slot
+ * CustomizableUI placed them in. The user's stated preference (2026-05-28):
+ * extensions sits immediately adjacent to sidebar-toggle in the right
+ * group, no clutter between them. Anything below is reachable via the
+ * hamburger menu or :ex commands. */
+#firefox-view-button,
+#alltabs-button,
+#downloads-button,
+#library-button,
+#fxa-toolbar-menu-button,
+#save-to-pocket-button,
+#print-button,
+#screenshot-button {
+  display: none !important;
+}
+/* Force customization-target to greedily absorb free space. XUL flex
+ * usually does this naturally, but explicitly setting CSS flex makes
+ * the layout robust against profile customizations that might add
+ * other flex-growing siblings into nav-bar. */
+#nav-bar > #nav-bar-customization-target {
+  flex: 1 1 auto !important;
+}
+/* gjoa-sidebar-button is DOM-inserted after PanelUI-button (see
+ * src/drawer/sidebar-button.ts). In compact mode we want
+ *   [...customization-target with URL][gjoa-sidebar-button][PanelUI]
+ * — so explicitly order them. taskbar-tabs-favicon (the 151+
+ * vertical-tabs sidebar toggle) sits between them if visible. */
+#nav-bar > #gjoa-sidebar-button {
+  order: 1 !important;
+  flex: 0 0 auto !important;
+}
+#nav-bar > #taskbar-tabs-favicon:not([hidden]) {
+  order: 1 !important;
+  flex: 0 0 auto !important;
+}
+#nav-bar > #PanelUI-button {
+  order: 2 !important;
+  flex: 0 0 auto !important;
+}
+
+/* --- EXPANDED-mode nav-bar (inside #sidebar-main) ----------------------
+ * Target: [☰][□][🧩] ──gap── [← → ↻]
+ *
+ * Higher specificity (3 IDs) overrides compact-mode rules above. */
+#sidebar-main #nav-bar > #PanelUI-button {
+  order: -10 !important;
+}
+#sidebar-main #nav-bar > #gjoa-sidebar-button {
+  order: -9 !important;
+}
+#sidebar-main #nav-bar > #taskbar-tabs-favicon {
+  order: -8 !important;
+}
+/* Customization-target as a CSS flexbox (overrides XUL hbox layout). */
+#sidebar-main #nav-bar > #nav-bar-customization-target {
+  display: flex !important;
+  flex: 1 1 auto !important;
+  align-items: center !important;
+}
+/* Force every direct child to natural size with no margins. */
+#sidebar-main #nav-bar > #nav-bar-customization-target > * {
+  flex: 0 0 auto !important;
+  margin-inline: 0 !important;
+}
+/* Extensions: order -2 (leftmost). */
+#sidebar-main #nav-bar > #nav-bar-customization-target > #unified-extensions-button {
+  order: -2 !important;
+}
+/* CSS-generated flex spring between extensions and back/forward/refresh.
+ * order -1 places it AFTER extensions (-2) and BEFORE everything else
+ * (default 0). flex: 1 absorbs ALL leftover space, pushing back +
+ * forward + refresh + any trailing children flush to the right edge.
+ *
+ * This works regardless of how many other elements customization-target
+ * has — we don't rely on `margin-inline-start: auto` being the sole
+ * auto-margin in the flex line. Robust against profile customizations. */
+#sidebar-main #nav-bar > #nav-bar-customization-target::before {
+  content: "" !important;
+  flex: 1 1 0 !important;
+  order: -1 !important;
+  /* zero visual footprint */
+  min-width: 0 !important;
+  height: 0 !important;
+}
+
+/* #endregion navigator-toolbox */
+
+
+/* #region toolbar-menubar — hidden by default
+ * Set gjoa.sidebar.menuBar to true in about:config to show. */
+
+/* New-tab toolbar button — hidden by default.
+ * Set gjoa.toolbar.newTabButton to true in about:config to show. */
+@media not -moz-pref("gjoa.toolbar.newTabButton") {
+  #new-tab-button { display: none !important; }
+}
+
+@media not -moz-pref("gjoa.sidebar.menuBar") {
+  #toolbar-menubar {
+    display: none !important;
+  }
+}
+
+/* #endregion toolbar-menubar */
+
+
+
+/* #region urlbar */
+
+#gjoa-urlbar-toolbar {
+  flex: none !important;
+  overflow: hidden !important;
+  /* Y-margin owns the urlbar↔first-tab gap so it stays constant whether
+   * the pinned container is rendered or hidden. X-inset lives on the
+   * urlbar element itself (see `#gjoa-urlbar-toolbar #urlbar` rules below). */
+  margin: 12px 0 16px !important;
+}
+
+#gjoa-urlbar-toolbar #urlbar-container {
+  margin: 0 !important;
+  padding: 0 !important;
+}
+
+@media -moz-pref("sidebar.position_start") {
+  #sidebar-main #gjoa-urlbar-toolbar #urlbar { left: var(--gjoa-sidebar-inset) !important; }
+}
+
+@media not -moz-pref("sidebar.position_start") {
+  #sidebar-main #gjoa-urlbar-toolbar #urlbar { right: var(--gjoa-sidebar-inset) !important; }
+}
+
+/* breakout: let the urlbar expand past the sidebar when focused.
+ * Scoped to #gjoa-urlbar-toolbar so it only applies in expanded layout.
+ * In collapsed layout the urlbar is back in #nav-bar with native sizing. */
+#gjoa-urlbar-toolbar #urlbar:is([focused][breakout-extend]) {
+  width: 600px !important;
+}
+
+#gjoa-urlbar-toolbar:has(#urlbar[breakout-extend]) {
+  overflow: visible !important;
+}
+
+#gjoa-urlbar-toolbar:has(#urlbar[breakout-extend]) #urlbar-container {
+  overflow: visible !important;
+}
+
+/* hide page-action-buttons (bookmark star, etc.) unless urlbar is expanded */
+#urlbar:not([breakout-extend]) #page-action-buttons {
+  display: none !important;
+}
+
+/*
+FIREFOX SECURITY STATES REFERENCE
+
+Reasonably safe to customize:
+- .chromeUI          - Firefox internal pages
+- .extensionPage     - Extension pages
+- .verifiedDomain    - HTTPS with valid cert
+- .verifiedIdentity  - EV certificates
+
+Preserve these (security warnings):
+- .notSecure           - HTTP or broken HTTPS
+- .insecureLoginForms  - HTTPS page with HTTP login
+- .mixedContentBlocked - HTTPS with blocked mixed content
+- .mixedActiveContent  - HTTPS with active mixed content
+*/
+
+/* HTTP not-secure warning banner — injected by gjoa-drawer.uc.js
+ * after 2s delay to avoid flashing on redirects */
+#gjoa-insecure-banner {
+  text-align: center;
+  font-size: 24px;
+  display: flex;
+  width: 100%;
+  height: 46px;
+  box-sizing: border-box;
+  background-color: var(--gjoa-bg);
+  background-image: none;
+}
+
+/* #endregion urlbar */
+
+
+/* #region floating urlbar — keyboard-driven command-palette presentation
+ * Activated by Ctrl+L (Cmd+L), or by gjoa `o` / `O` keys (which dispatch
+ * gjoa-urlbar-activate). JS lives in src/drawer/urlbar.ts — sets the attribute,
+ * sets popover="manual" + showPopover() for top-layer placement, and on intent
+ * "newTab" intercepts Enter to re-dispatch with altKey=true (Firefox's existing
+ * "open in new tab" path). Mouse-click activation is deliberately NOT covered
+ * here — the in-sidebar breakout-extend at-click-point behavior is preserved. */
+
+/* Width: 720px ideal, never closer than 20px to either edge, never above
+ * 720px. min(720px, 100vw - 40px) computes once and reapplies on every
+ * window resize. All three width properties use the same expression so
+ * Firefox's UrlbarInput sizing JS can't override any of them. */
+:root[gjoa-urlbar-floating] {
+  --gjoa-floating-w: min(720px, calc(100vw - 40px));
+  /* Cap dropdown height so a long suggestion list doesn't bleed below the
+   * viewport on tall-narrow windows. 100vh - 22vh (top offset) - 24vh (input
+   * height + breathing room) ≈ 54vh of result list. */
+  --gjoa-floating-max-h: calc(100vh - 22vh - 60px);
+}
+
+/* Center using left:0 + right:0 + margin:auto + fixed width — most robust
+ * approach: survives any transform JS Firefox applies and the UA
+ * `:popover-open { inset: 0; margin: auto }` defaults. */
+:root[gjoa-urlbar-floating] #urlbar {
+  position: fixed !important;
+  top: 22vh !important;
+  bottom: auto !important;
+  left: 0 !important;
+  right: 0 !important;
+  inset-inline-start: 0 !important;
+  inset-inline-end: 0 !important;
+  inset-block-start: 22vh !important;
+  inset-block-end: auto !important;
+  margin: 0 auto !important;
+  margin-inline-start: auto !important;
+  margin-inline-end: auto !important;
+  width: var(--gjoa-floating-w) !important;
+  min-width: var(--gjoa-floating-w) !important;
+  max-width: var(--gjoa-floating-w) !important;
+  transform: none !important;
+  z-index: 10001 !important;
+  /* Anchor the urlbar-results dropdown to our floating width. */
+  --urlbar-width: var(--gjoa-floating-w) !important;
+}
+
+/* Pin width during breakout-extend (the in-sidebar selectors ALSO have
+ * !important, so we have to win specificity-wise here too). */
+:root[gjoa-urlbar-floating] #gjoa-urlbar-toolbar #urlbar:is([focused][breakout-extend]),
+:root[gjoa-urlbar-floating] #urlbar[breakout-extend] {
+  width: var(--gjoa-floating-w) !important;
+  min-width: var(--gjoa-floating-w) !important;
+  max-width: var(--gjoa-floating-w) !important;
+  left: 0 !important;
+  right: 0 !important;
+  margin: 0 auto !important;
+  margin-inline-start: auto !important;
+  margin-inline-end: auto !important;
+}
+
+/* Cap dropdown body height — Firefox lets it grow as tall as the result list
+ * needs, which can extend below the viewport on short windows. */
+:root[gjoa-urlbar-floating] #urlbar .urlbarView,
+:root[gjoa-urlbar-floating] #urlbar .urlbarView-results {
+  max-height: var(--gjoa-floating-max-h) !important;
+  overflow-y: auto !important;
+}
+
+/* Backdrop dims everything behind the floating urlbar. Element is created
+ * by JS (#gjoa-urlbar-backdrop) and removed on deactivate. */
+#gjoa-urlbar-backdrop {
+  position: fixed !important;
+  inset: 0 !important;
+  background: rgba(0, 0, 0, 0.35) !important;
+  z-index: 10000 !important;
+  pointer-events: auto !important;
+  animation: gjoa-urlbar-backdrop-fade 120ms ease-out;
+}
+
+@keyframes gjoa-urlbar-backdrop-fade {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+
+/* New-tab intent: subtle visual hint that Enter will spawn a new tab.
+ * (Light-touch — anything stronger competes with Firefox's own urlbar UI.) */
+:root[gjoa-urlbar-floating][gjoa-urlbar-intent="new-tab"] #urlbar {
+  box-shadow: 0 0 0 2px var(--toolbarbutton-icon-fill-attention, #0a84ff),
+              0 12px 40px rgba(0, 0, 0, 0.5) !important;
+}
+
+:root[gjoa-urlbar-floating] #urlbar {
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.5) !important;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  #gjoa-urlbar-backdrop { animation: none !important; }
+}
+
+/* #endregion floating urlbar */
+
+
+/* #region nav-bar button labels — icons only */
+
+#nav-bar .toolbarbutton-text {
+  display: none !important;
+}
+
+/* #region sidebar-button — remove "checked" glow when sidebar is expanded */
+
+#sidebar-button[checked],
+#sidebar-button[checked] > .toolbarbutton-badge-stack {
+  background: revert !important;
+  background-color: transparent !important;
+  box-shadow: none !important;
+  outline: none !important;
+}
+
+
+/* #endregion sidebar-button */
+
+
+/* #endregion nav-bar button labels */
+
+
+/* #region vertical-spacer — no idea what this titlebar spacer does */
+
+#vertical-spacer {
+  display: none !important;
+}
+
+/* #endregion vertical-spacer */
+
+
+/* #region new tab button — hidden by default
+ * Set gjoa.sidebar.newTab to true in about:config to show. */
+
+@media not -moz-pref("gjoa.sidebar.newTab") {
+  #tabs-newtab-button {
+    display: none !important;
+  }
+}
+
+/* #endregion new tab button */
+
+
+/* #region compact mode — autohide sidebar
+ * Set gjoa.sidebar.compact to true in about:config to enable.
+ * JS (gjoa-drawer.uc.js) manages data-gjoa-compact and
+ * data-gjoa-compact-hidden attributes on #sidebar-main. */
+
+/* Default state: hidden off-screen.
+ * --gjoa-toolbox-height is set by JS when the toolbox is above the sidebar
+ * (collapsed vertical or horizontal layout), so compact mode doesn't overlap it. */
+#sidebar-main[data-gjoa-compact] {
+  position: fixed !important;
+  top: var(--gjoa-toolbox-height, 0px) !important;
+  height: calc(100vh - var(--gjoa-toolbox-height, 0px)) !important;
+  z-index: 10 !important;
+  pointer-events: none !important;
+  transition: transform var(--gjoa-transition-duration) var(--gjoa-transition-easing) !important;
+}
+
+/* Slide direction depends on which side the sidebar is anchored to. */
+@media -moz-pref("sidebar.position_start") {
+  #sidebar-main[data-gjoa-compact] {
+    left: 0 !important;
+    transform: translateX(-100%) !important;
+  }
+}
+@media not -moz-pref("sidebar.position_start") {
+  #sidebar-main[data-gjoa-compact] {
+    right: 0 !important;
+    transform: translateX(100%) !important;
+  }
+}
+
+/* Visible when hovered (gjoa-has-hover set by JS) */
+#sidebar-main[data-gjoa-compact][gjoa-has-hover] {
+  transform: translateX(0) !important;
+  pointer-events: auto !important;
+}
+
+/* We remove popover="manual" from the urlbar in compact mode (JS) so it
+ * leaves the top layer and moves with the sidebar's transform. No separate
+ * urlbar transform needed — it's a normal DOM child now. */
+
+
+#sidebar-main[data-gjoa-compact] ~ #sidebar-launcher-splitter {
+  display: none !important;
+}
+
+/* hover trigger strip — sits behind sidebar (z-index 9 < 10).
+ * Receives mouse events when sidebar has pointer-events: none. */
+#gjoa-hover-strip {
+  position: fixed !important;
+  top: var(--gjoa-toolbox-height, 0px) !important;
+  width: var(--gjoa-compact-trigger-width) !important;
+  height: calc(100vh - var(--gjoa-toolbox-height, 0px)) !important;
+  z-index: 9 !important;
+  background: transparent !important;
+}
+@media -moz-pref("sidebar.position_start") {
+  #gjoa-hover-strip { left: 0 !important; }
+}
+@media not -moz-pref("sidebar.position_start") {
+  #gjoa-hover-strip { right: 0 !important; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  #sidebar-main[data-gjoa-compact] {
+    transition: none !important;
+  }
+}
+
+/* Horizontal compact — applies when sidebar.verticalTabs is OFF. Hides
+ * the navigator-toolbox above the viewport; revealed by the top hover
+ * strip or by cursor entering the toolbox itself.
+ *
+ * State attribute is on documentElement (not navigator-toolbox itself)
+ * so the parallel structure mirrors the vertical case: a "compact mode
+ * is enabled" attribute that exists independently of "currently visible". */
+:root[data-gjoa-compact-horizontal] #navigator-toolbox {
+  position: fixed !important;
+  top: 0 !important;
+  left: 0 !important;
+  right: 0 !important;
+  z-index: 10 !important;
+  pointer-events: none !important;
+  transform: translateY(-100%) !important;
+  transition: transform var(--gjoa-transition-duration) var(--gjoa-transition-easing) !important;
+}
+
+:root[data-gjoa-compact-horizontal] #navigator-toolbox[gjoa-has-hover] {
+  transform: translateY(0) !important;
+  pointer-events: auto !important;
+}
+
+#gjoa-hover-strip-top {
+  position: fixed !important;
+  top: 0 !important;
+  left: 0 !important;
+  right: 0 !important;
+  height: var(--gjoa-compact-trigger-width) !important;
+  z-index: 9 !important;
+  background: transparent !important;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root[data-gjoa-compact-horizontal] #navigator-toolbox {
+    transition: none !important;
+  }
+}
+
+/* #endregion compact mode */
+
+
+/* #region draggable sidebar — drag window from empty sidebar space */
+
+#gjoa-drag-overlay {
+  position: absolute !important;
+  pointer-events: auto !important;
+  -moz-window-dragging: drag;
+  z-index: 0;
+}
+
+/* #endregion draggable sidebar */
+
+/* #region split view
+ * Hide the focus outline on the active split view panel by default.
+ * Set gjoa.splitView.outline to true in about:config to show. */
+
+@media not -moz-pref("gjoa.splitView.outline") {
+  #tabbrowser-tabpanels[splitview] .deck-selected > .browserContainer {
+    outline: none !important;
+  }
+}
+
+/* #endregion split view */

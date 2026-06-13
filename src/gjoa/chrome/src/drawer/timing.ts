@@ -2,7 +2,7 @@
 // state machines stay in sync with the visual animation.
 //
 // Don't hardcode duration constants in feature modules; import from here.
-// CSS owns the value (`--pfx-transition-duration` in palefox.css); this
+// CSS owns the value (`--gjoa-transition-duration` in gjoa.css); this
 // file reads it back. Bumping the CSS value automatically updates every
 // JS path that gates on it (collapse-protection, transitionend safety
 // timers, etc.). The fallbacks below are only used if computed style
@@ -10,11 +10,11 @@
 
 const FALLBACK_TRANSITION_MS = 250;
 
-/** Read `--pfx-transition-duration` from `:root` and parse to ms. */
+/** Read `--gjoa-transition-duration` from `:root` and parse to ms. */
 export function transitionDurationMs(): number {
   try {
     const raw = getComputedStyle(document.documentElement)
-      .getPropertyValue("--pfx-transition-duration").trim();
+      .getPropertyValue("--gjoa-transition-duration").trim();
     const ms = raw.endsWith("ms") ? parseFloat(raw)
       : raw.endsWith("s") ? parseFloat(raw) * 1000
       : NaN;

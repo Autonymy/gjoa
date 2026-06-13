@@ -11,7 +11,7 @@
 // INTERFACE
 // =============================================================================
 
-/** XUL tags palefox actually uses. Add new tags as needed; the runtime
+/** XUL tags gjoa actually uses. Add new tags as needed; the runtime
  *  call accepts any string but the type ensures we don't typo. */
 export type XULTag =
   | "label"

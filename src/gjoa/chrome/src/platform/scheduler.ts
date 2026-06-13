@@ -1,4 +1,4 @@
-// Palefox central scheduler.
+// Gjoa central scheduler.
 //
 // Owns the dirty-flag + microtask + ordering machinery that powers every
 // domain reconciler. One scheduler per chrome window. Architectural
@@ -13,15 +13,15 @@
 //   5. Microtask runs reconcilers in DECLARED ORDER (prefs → windows →
 //      tabs → snapshots → sidebar → command/picker derived).
 //   6. Each reconciler reads stable Firefox primitives + rebuilds its
-//      slice of the Palefox model.
+//      slice of the Gjoa model.
 //
 // flush() is the consistency-sensitive escape hatch:
 //
-//   Palefox.windows.current().tabs.pin(id);
-//   await Palefox.flush();
+//   Gjoa.windows.current().tabs.pin(id);
+//   await Gjoa.flush();
 //   // model is reconciled with reality
 //
-// Outside of `await Palefox.flush()`, callers should assume their write
+// Outside of `await Gjoa.flush()`, callers should assume their write
 // is visible synchronously (write-through model updates) AND that the
 // next microtask will reconcile against ground truth (rebuild from
 // gBrowser.tabs et al.). If those two views ever diverge, the

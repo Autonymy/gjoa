@@ -2,12 +2,11 @@
 
 A Firefox fork.
 
-Status: scaffold. Builds end-to-end via `nix build .#gjoa --impure`,
-but has no gjoa-specific features yet — produces vanilla Firefox 150
-with gjoa branding. Real features (vim keymap, tree tabs, hash-pinned
-loader) get ported in subsequent commits from
-[palefox v0.43.0](https://github.com/tompassarelli/palefox), the
-userscript-bundle predecessor.
+Status: feature-parity with [palefox v0.43.0](https://github.com/tompassarelli/palefox),
+the userscript-bundle predecessor. Tree tabs, vim keymap, sidebar
+drawer, drag-and-drop, tab groups, and history live as TypeScript
+modules under `src/gjoa/chrome/src/` and load via the native chrome
+loader (`src/gjoa/browser/components/gjoa/GjoaLoader.sys.mjs`).
 
 ## Build
 
@@ -26,14 +25,22 @@ configuration.
 ## Dev loop
 
 ```sh
-nix develop                          # enter shell with mach + env wired
-# edit src/gjoa/foo.mjs ...
-bun run import                       # re-apply overlays, regen branding
-cd engine && ./mach build faster     # ~30 sec, re-zips omni.ja
-$MOZ_OBJDIR/dist/bin/gjoa
+nix develop .#mach                   # enter shell with mach + toolchain
+cd engine && ./mach build            # one-time, ~30-60 min cold
+# edit src/gjoa/chrome/src/*.ts ...
+gjoa sync                            # bundle TS, symlink into mach install (~1s)
+gjoa dev                             # restart mach binary
 ```
 
-Full deep dive: [`docs/build-and-dev-loop.md`](docs/build-and-dev-loop.md).
+See [`docs/daily-loop.md`](docs/daily-loop.md) for the command cheatsheet
+and [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for the full map.
+
+## Tests
+
+```sh
+bun test                       # unit tests (happy-dom)
+bun run test:integration       # headless Marionette tests against gjoa
+```
 
 ## Layout
 

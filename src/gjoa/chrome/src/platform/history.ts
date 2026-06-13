@@ -1,11 +1,11 @@
-// Persisted-state APIs — Palefox.history / .sessions / .checkpoints.
+// Persisted-state APIs — Gjoa.history / .sessions / .checkpoints.
 //
-// Thin capability layer over `src/tabs/history.ts`. Same shapes, palefox-
+// Thin capability layer over `src/tabs/history.ts`. Same shapes, gjoa-
 // domain naming. New feature code should call these instead of reaching
 // for the HistoryAPI directly.
 //
 // Scope: today this is always "this Firefox profile's events" — single
-// running palefox = single SQLite, single set of rows. Cross-profile
+// running gjoa = single SQLite, single set of rows. Cross-profile
 // search (M11 in firefox-stability-roadmap.md) would extend this with
 // fanout across sibling profile DBs; not built today.
 
@@ -18,7 +18,7 @@ import type { HistoryAPI, HistoryEvent } from "../tabs/history.ts";
 export type LimitedOpts = { readonly limit?: number };
 export type SearchOpts = LimitedOpts & { readonly taggedOnly?: boolean };
 
-export type PalefoxHistoryAPI = {
+export type GjoaHistoryAPI = {
   /** Most recent N events, newest first. Untagged + tagged. */
   recent(opts?: LimitedOpts): Promise<readonly HistoryEvent[]>;
   /** Substring search across url + label. Multi-token queries match
@@ -30,7 +30,7 @@ export type PalefoxHistoryAPI = {
   instanceId(): string;
 };
 
-export type PalefoxTaggedAPI = {
+export type GjoaTaggedAPI = {
   /** All tagged events of a kind, newest first. */
   list(opts?: LimitedOpts): Promise<readonly HistoryEvent[]>;
   /** Substring filter. Backed by the same search index, restricted to tagged. */
@@ -38,14 +38,14 @@ export type PalefoxTaggedAPI = {
 };
 
 export type PersistedAPI = {
-  history: PalefoxHistoryAPI;
+  history: GjoaHistoryAPI;
   /** User-tagged checkpoints (`:checkpoint <label>`). */
-  checkpoints: PalefoxTaggedAPI & {
+  checkpoints: GjoaTaggedAPI & {
     /** Tag the latest event as a checkpoint. */
     tag(label?: string): Promise<number | null>;
   };
   /** Auto-tagged sessions (created on quit-application). */
-  sessions: PalefoxTaggedAPI & {
+  sessions: GjoaTaggedAPI & {
     /** Tag the latest event as a session. Used by the quit-application observer. */
     tag(label?: string): Promise<number | null>;
   };

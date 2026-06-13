@@ -13,7 +13,7 @@
 //     - closedTabs capped by CLOSED_MEMORY
 //   popSavedByUrl / popSavedByIndex / popSavedForTab queue helpers
 //     - splice-mutates queue
-//     - prefers pfx-id, falls back to URL, then FIFO under inSessionRestore
+//     - prefers gjoa-id, falls back to URL, then FIFO under inSessionRestore
 
 import { describe, expect, test } from "bun:test";
 
@@ -57,6 +57,7 @@ function makeSnapshot(opts: {
     savedTabQueue: opts.savedTabQueue ?? [],
     closedTabs: opts.closedTabs ?? [],
     nextTabId: opts.nextTabId ?? opts.tabs.length + 1,
+    spaces: { spaces: [], activeId: "default", tabSpaces: [] },
     tabUrl: (tab) => urls.get(tab) ?? "https://example.com/",
     treeData: (tab) => {
       const d = opts.treeData.get(tab);
@@ -244,7 +245,7 @@ describe("popSavedByIndex", () => {
 describe("popSavedForTab", () => {
   const baseCtx = { currentIdx: 0, pinnedId: 0, url: "", inSessionRestore: false };
 
-  test("priority 1: pfx-id wins even when URL would also match", () => {
+  test("priority 1: gjoa-id wins even when URL would also match", () => {
     const queue: SavedNode[] = [
       { id: 7, parentId: null, url: "https://other.test/" },
       { id: 8, parentId: null, url: "https://a.test/" },
@@ -255,7 +256,7 @@ describe("popSavedForTab", () => {
     expect(queue[0]!.id).toBe(8);
   });
 
-  test("priority 2: URL match when no pfx-id", () => {
+  test("priority 2: URL match when no gjoa-id", () => {
     const queue: SavedNode[] = [
       { id: 1, parentId: null, url: "https://a/" },
       { id: 2, parentId: null, url: "https://b/" },

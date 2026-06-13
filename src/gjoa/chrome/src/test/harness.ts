@@ -80,11 +80,11 @@ export function setupHarness(): Harness {
   const prefs = new Map<string, unknown>();
   const prefObservers = new Map<string, Set<PrefObserver>>();
 
-  // Defaults palefox actually reads. Tests override per-case via setPref.
+  // Defaults gjoa actually reads. Tests override per-case via setPref.
   prefs.set("sidebar.verticalTabs", true);
   prefs.set("sidebar.position_start", true);
-  prefs.set("pfx.compact.hoverHackDelay", 0);
-  prefs.set("pfx.debug", false);
+  prefs.set("gjoa.compact.hoverHackDelay", 0);
+  prefs.set("gjoa.debug", false);
 
   function notify(key: string): void {
     for (const obs of prefObservers.get(key) ?? []) {

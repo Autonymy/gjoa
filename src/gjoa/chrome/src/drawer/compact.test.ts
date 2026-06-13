@@ -6,7 +6,7 @@
 //
 // What's covered:
 //   toggle (vertical):  enable/disable, attribute set, pref written
-//   toggle (horizontal): same shape on documentElement[data-pfx-compact-horizontal]
+//   toggle (horizontal): same shape on documentElement[data-gjoa-compact-horizontal]
 //   pinSidebar / pinToolbox during external popups
 //   isCompactVertical / isCompactHorizontal queries
 //   destroy: removes pref observers cleanly
@@ -52,14 +52,14 @@ describe("compactToggle — vertical mode", () => {
   test("first toggle enables compact + sets pref", async () => {
     const compact = await buildCompact({ vertical: true });
     expect(compact.isCompactVertical()).toBe(false);
-    expect(harness.prefs.get("pfx.sidebar.compact")).toBeUndefined();
+    expect(harness.prefs.get("gjoa.sidebar.compact")).toBeUndefined();
 
     compact.toggle();
 
     expect(compact.isCompactVertical()).toBe(true);
-    expect(harness.prefs.get("pfx.sidebar.compact")).toBe(true);
+    expect(harness.prefs.get("gjoa.sidebar.compact")).toBe(true);
     const sidebar = harness.document.getElementById("sidebar-main")!;
-    expect(sidebar.hasAttribute("data-pfx-compact")).toBe(true);
+    expect(sidebar.hasAttribute("data-gjoa-compact")).toBe(true);
 
     compact.destroy();
   });
@@ -70,9 +70,9 @@ describe("compactToggle — vertical mode", () => {
     compact.toggle();
 
     expect(compact.isCompactVertical()).toBe(false);
-    expect(harness.prefs.get("pfx.sidebar.compact")).toBe(false);
+    expect(harness.prefs.get("gjoa.sidebar.compact")).toBe(false);
     const sidebar = harness.document.getElementById("sidebar-main")!;
-    expect(sidebar.hasAttribute("data-pfx-compact")).toBe(false);
+    expect(sidebar.hasAttribute("data-gjoa-compact")).toBe(false);
 
     compact.destroy();
   });
@@ -80,7 +80,7 @@ describe("compactToggle — vertical mode", () => {
   test("does NOT set horizontal-compact attributes in vertical mode", async () => {
     const compact = await buildCompact({ vertical: true });
     compact.toggle();
-    expect(harness.document.documentElement.hasAttribute("data-pfx-compact-horizontal")).toBe(false);
+    expect(harness.document.documentElement.hasAttribute("data-gjoa-compact-horizontal")).toBe(false);
     compact.destroy();
   });
 });
@@ -91,13 +91,13 @@ describe("compactToggle — horizontal mode", () => {
   test("first toggle enables horizontal compact + sets pref", async () => {
     const compact = await buildCompact({ vertical: false });
     expect(compact.isCompactHorizontal()).toBe(false);
-    expect(harness.prefs.get("pfx.toolbar.compact")).toBeUndefined();
+    expect(harness.prefs.get("gjoa.toolbar.compact")).toBeUndefined();
 
     compact.toggle();
 
     expect(compact.isCompactHorizontal()).toBe(true);
-    expect(harness.prefs.get("pfx.toolbar.compact")).toBe(true);
-    expect(harness.document.documentElement.hasAttribute("data-pfx-compact-horizontal")).toBe(true);
+    expect(harness.prefs.get("gjoa.toolbar.compact")).toBe(true);
+    expect(harness.document.documentElement.hasAttribute("data-gjoa-compact-horizontal")).toBe(true);
 
     compact.destroy();
   });
@@ -106,7 +106,7 @@ describe("compactToggle — horizontal mode", () => {
     const compact = await buildCompact({ vertical: false });
     compact.toggle();
     const sidebar = harness.document.getElementById("sidebar-main")!;
-    expect(sidebar.hasAttribute("data-pfx-compact")).toBe(false);
+    expect(sidebar.hasAttribute("data-gjoa-compact")).toBe(false);
     compact.destroy();
   });
 });
@@ -114,26 +114,26 @@ describe("compactToggle — horizontal mode", () => {
 // === Pin during external popup ==============================================
 
 describe("pinSidebar / pinToolbox", () => {
-  test("pinSidebar sets pfx-has-hover when vertical compact is on", async () => {
+  test("pinSidebar sets gjoa-has-hover when vertical compact is on", async () => {
     const compact = await buildCompact({ vertical: true });
     compact.toggle(); // enable
     const sidebar = harness.document.getElementById("sidebar-main")!;
-    expect(sidebar.hasAttribute("pfx-has-hover")).toBe(false);
+    expect(sidebar.hasAttribute("gjoa-has-hover")).toBe(false);
 
     compact.pinSidebar();
-    expect(sidebar.hasAttribute("pfx-has-hover")).toBe(true);
+    expect(sidebar.hasAttribute("gjoa-has-hover")).toBe(true);
 
     compact.destroy();
   });
 
-  test("pinToolbox sets pfx-has-hover when horizontal compact is on", async () => {
+  test("pinToolbox sets gjoa-has-hover when horizontal compact is on", async () => {
     const compact = await buildCompact({ vertical: false });
     compact.toggle(); // enable
     const toolbox = harness.document.getElementById("navigator-toolbox")!;
-    expect(toolbox.hasAttribute("pfx-has-hover")).toBe(false);
+    expect(toolbox.hasAttribute("gjoa-has-hover")).toBe(false);
 
     compact.pinToolbox();
-    expect(toolbox.hasAttribute("pfx-has-hover")).toBe(true);
+    expect(toolbox.hasAttribute("gjoa-has-hover")).toBe(true);
 
     compact.destroy();
   });
@@ -142,14 +142,14 @@ describe("pinSidebar / pinToolbox", () => {
 // === Pref observer ==========================================================
 
 describe("compact pref observer", () => {
-  test("flipping pfx.sidebar.compact pref toggles compact when vertical", async () => {
+  test("flipping gjoa.sidebar.compact pref toggles compact when vertical", async () => {
     const compact = await buildCompact({ vertical: true });
     expect(compact.isCompactVertical()).toBe(false);
 
-    harness.setPref("pfx.sidebar.compact", true);
+    harness.setPref("gjoa.sidebar.compact", true);
     expect(compact.isCompactVertical()).toBe(true);
 
-    harness.setPref("pfx.sidebar.compact", false);
+    harness.setPref("gjoa.sidebar.compact", false);
     expect(compact.isCompactVertical()).toBe(false);
 
     compact.destroy();
@@ -157,19 +157,19 @@ describe("compact pref observer", () => {
 
   test("flipping vertical-compact pref is a no-op when in horizontal mode", async () => {
     const compact = await buildCompact({ vertical: false });
-    harness.setPref("pfx.sidebar.compact", true);
+    harness.setPref("gjoa.sidebar.compact", true);
     expect(compact.isCompactVertical()).toBe(false);
     compact.destroy();
   });
 
-  test("flipping pfx.toolbar.compact pref toggles horizontal compact when in horizontal mode", async () => {
+  test("flipping gjoa.toolbar.compact pref toggles horizontal compact when in horizontal mode", async () => {
     const compact = await buildCompact({ vertical: false });
     expect(compact.isCompactHorizontal()).toBe(false);
 
-    harness.setPref("pfx.toolbar.compact", true);
+    harness.setPref("gjoa.toolbar.compact", true);
     expect(compact.isCompactHorizontal()).toBe(true);
 
-    harness.setPref("pfx.toolbar.compact", false);
+    harness.setPref("gjoa.toolbar.compact", false);
     expect(compact.isCompactHorizontal()).toBe(false);
 
     compact.destroy();
@@ -182,8 +182,8 @@ describe("sidebar.verticalTabs auto-swap", () => {
   test("flipping verticalTabs tears down vertical and applies horizontal pref", async () => {
     const compact = await buildCompact({ vertical: true });
     // Save prefs that should be applied on swap
-    harness.setPref("pfx.sidebar.compact", true);   // applies → enables vertical
-    harness.setPref("pfx.toolbar.compact", true);   // saved for when we swap
+    harness.setPref("gjoa.sidebar.compact", true);   // applies → enables vertical
+    harness.setPref("gjoa.toolbar.compact", true);   // saved for when we swap
 
     expect(compact.isCompactVertical()).toBe(true);
     expect(compact.isCompactHorizontal()).toBe(false);
@@ -199,8 +199,8 @@ describe("sidebar.verticalTabs auto-swap", () => {
 
   test("flipping back to vertical swaps the surface again", async () => {
     const compact = await buildCompact({ vertical: false });
-    harness.setPref("pfx.sidebar.compact", true);
-    harness.setPref("pfx.toolbar.compact", true);
+    harness.setPref("gjoa.sidebar.compact", true);
+    harness.setPref("gjoa.toolbar.compact", true);
 
     // Now in horizontal mode with horizontal compact on
     expect(compact.isCompactHorizontal()).toBe(true);
@@ -220,14 +220,14 @@ describe("sidebar.verticalTabs auto-swap", () => {
 describe("destroy", () => {
   test("removes pref observers", async () => {
     const compact = await buildCompact({ vertical: true });
-    expect(harness.prefObservers.get("pfx.sidebar.compact")?.size ?? 0).toBeGreaterThan(0);
-    expect(harness.prefObservers.get("pfx.toolbar.compact")?.size ?? 0).toBeGreaterThan(0);
+    expect(harness.prefObservers.get("gjoa.sidebar.compact")?.size ?? 0).toBeGreaterThan(0);
+    expect(harness.prefObservers.get("gjoa.toolbar.compact")?.size ?? 0).toBeGreaterThan(0);
     expect(harness.prefObservers.get("sidebar.verticalTabs")?.size ?? 0).toBeGreaterThan(0);
 
     compact.destroy();
 
-    expect(harness.prefObservers.get("pfx.sidebar.compact")?.size ?? 0).toBe(0);
-    expect(harness.prefObservers.get("pfx.toolbar.compact")?.size ?? 0).toBe(0);
+    expect(harness.prefObservers.get("gjoa.sidebar.compact")?.size ?? 0).toBe(0);
+    expect(harness.prefObservers.get("gjoa.toolbar.compact")?.size ?? 0).toBe(0);
     expect(harness.prefObservers.get("sidebar.verticalTabs")?.size ?? 0).toBe(0);
   });
 
@@ -235,7 +235,7 @@ describe("destroy", () => {
     const compact = await buildCompact({ vertical: true });
     compact.destroy();
 
-    harness.setPref("pfx.sidebar.compact", true);
+    harness.setPref("gjoa.sidebar.compact", true);
     expect(compact.isCompactVertical()).toBe(false);
   });
 });
@@ -245,7 +245,7 @@ describe("destroy", () => {
 describe("applyCompactForCurrentMode (init)", () => {
   test("applies vertical compact at construction when pref is on + verticalTabs", async () => {
     harness.setPref("sidebar.verticalTabs", true);
-    harness.setPref("pfx.sidebar.compact", true);
+    harness.setPref("gjoa.sidebar.compact", true);
 
     const { makeCompact } = await import("./compact.ts");
     const compact = makeCompact({
@@ -260,7 +260,7 @@ describe("applyCompactForCurrentMode (init)", () => {
 
   test("applies horizontal compact at construction when pref is on + horizontal layout", async () => {
     harness.setPref("sidebar.verticalTabs", false);
-    harness.setPref("pfx.toolbar.compact", true);
+    harness.setPref("gjoa.toolbar.compact", true);
 
     const { makeCompact } = await import("./compact.ts");
     const compact = makeCompact({

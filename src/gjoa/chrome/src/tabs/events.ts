@@ -2,7 +2,7 @@
 // onTabMove, onTabSelect, onTabAttrModified, onTabRestoring — plus the
 // sessionstore observers (windows-restored and manual-restore).
 //
-// This is the reactive layer: Firefox tells us a tab changed, palefox
+// This is the reactive layer: Firefox tells us a tab changed, gjoa
 // updates the panel + persist state in response. No internal mutable state;
 // every handler reads from state.ts and dispatches into the rows / vim /
 // persist APIs.
@@ -13,10 +13,9 @@
 import { CLOSED_MEMORY } from "./constants.ts";
 import {
   allRows,
-  dataOf,
+  groupById,
   isHorizontal,
   levelOf,
-  levelOfRow,
   parentOfTab,
   pinTabId,
   readPinnedId,
@@ -59,6 +58,9 @@ export type EventsDeps = {
   readonly vim: VimAPI;
   /** Persist tree state to disk after every mutation. */
   readonly scheduleSave: () => void;
+  /** Spaces API — onTabOpen assigns new tabs to a space (opener's or
+   *  active). Optional for back-compat / minimal test harnesses. */
+  readonly spaces?: import("../spaces/manager.ts").SpacesAPI;
 };
 
 export type EventsAPI = {
@@ -182,12 +184,39 @@ export function makeEvents(deps: EventsDeps): EventsAPI {
 
   /** Move a row to the DOM position matching the tab's index in gBrowser.tabs.
    *  Pinned and unpinned tabs live in separate containers, so we anchor only
-   *  against same-pinned-state siblings. Returns true if the row was moved. */
+   *  against same-pinned-state siblings. Returns true if the row was moved.
+   *
+   *  Group-parented tabs anchor on the group row instead of Firefox tab order:
+   *  Firefox's flat tab list has no concept of where the group "sits", so a
+   *  child of an empty group would otherwise land beside whichever root tab is
+   *  Firefox-adjacent — visually outside the group. */
   function placeRowInFirefoxOrder(tab: Tab, row: Row): boolean {
     if (!row || !state.panel) return false;
     const tabsArr = [...gBrowser.tabs] as Tab[];
     const myIdx = tabsArr.indexOf(tab);
     if (myIdx < 0) return false;
+
+    const myParentId = treeOf.get(tab)?.parentId;
+    if (typeof myParentId === "string") {
+      const grpRow = groupById(myParentId);
+      if (grpRow) {
+        let prevSibTab: Tab | null = null;
+        for (let i = myIdx - 1; i >= 0; i--) {
+          const t = tabsArr[i]!;
+          if (treeOf.get(t)?.parentId === myParentId) { prevSibTab = t; break; }
+        }
+        if (prevSibTab) {
+          const prevRow = rowOf.get(prevSibTab);
+          if (!prevRow || prevRow === row) return false;
+          const st = subtreeRows(prevRow);
+          const anchor = st[st.length - 1]!;
+          if (anchor.nextElementSibling !== row) { anchor.after(row); return true; }
+          return false;
+        }
+        if (grpRow.nextElementSibling !== row) { grpRow.after(row); return true; }
+        return false;
+      }
+    }
 
     if (isFxPinned(tab)) {
       let prevTab: Tab | null = null;
@@ -261,11 +290,22 @@ export function makeEvents(deps: EventsDeps): EventsAPI {
     const tab = (e.target as Tab);
     const td = treeData(tab);
 
+    // Assign new tab to the CURRENTLY-ACTIVE space. We deliberately do
+    // NOT inherit from `tab.owner`: Firefox auto-sets owner to whatever
+    // tab the user was viewing when they pressed Ctrl+T, and that tab
+    // typically lives in a different space than the one the user just
+    // switched to. The user's mental model is "the tab I just opened
+    // belongs in the space I'm currently looking at," and the active
+    // space is the only signal that reflects intent.
+    if (deps.spaces) {
+      deps.spaces.assignTab(tab, deps.spaces.activeId());
+    }
+
     // Session-restore path: match this tab to a leftover saved node.
     const prior = popSavedForTab(tab);
     if (prior) {
       const idx = [...gBrowser.tabs].indexOf(tab);
-      console.log(`palefox-tabs: onTabOpen matched — tab[${idx}] url="${tabUrl(tab)}" → saved id=${prior.id} parentId=${prior.parentId} origIdx=${prior._origIdx}`);
+      console.log(`gjoa-tabs: onTabOpen matched — tab[${idx}] url="${tabUrl(tab)}" → saved id=${prior.id} parentId=${prior.parentId} origIdx=${prior._origIdx}`);
       applySavedToTab(tab, prior);
       const row = rows.createTabRow(tab);
       if (tab.pinned) {
@@ -280,28 +320,25 @@ export function makeEvents(deps: EventsDeps): EventsAPI {
       return;
     }
 
-    // "root" (default) → parentId null
-    // "child"  → parentId = opener / selected
-    // "sibling"→ parentId = parent of opener / selected
-    const position = Services.prefs.getCharPref("pfx.tabs.newTabPosition", "root");
+    // New-tab placement. Default: SIBLING of the currently-active tab.
+    // Pressing Ctrl+T should give a tab at the same tree depth as the
+    // tab you're looking at — predictable, no deep indent chain.
+    //
+    // Pref `gjoa.tabs.newTabPosition`:
+    //   "sibling" (default) → parentId = anchor.parentId
+    //   "root"              → parentId null, tab moves to end of strip
+    //   "child"             → parentId = anchor.id (nests under anchor)
+    //
+    // Change via vim ex-command: `:tabpos <sibling|root|child>`.
+    const position = Services.prefs.getCharPref("gjoa.tabs.newTabPosition", "sibling");
     const anchor = tab.owner || (gBrowser.selectedTab !== tab ? gBrowser.selectedTab : null);
 
-    // Heuristic for "this is a duplicate of `anchor`": Firefox's duplicateTab()
-    // sets `tab.owner` to the source AND the new tab inherits the source's URL
-    // before navigation. A regular middle-click new-tab has an owner but a
-    // different (or empty) URL. We special-case duplicates so they (a) become
-    // a tree-child of their source and (b) stay adjacent to the source in
-    // Firefox's strip order instead of being yanked to the bottom by the
-    // position=root logic below.
-    const isDuplicate = !!(anchor && tabUrl(tab) && tabUrl(tab) === tabUrl(anchor));
-
-    if (isDuplicate && anchor) {
-      td.parentId = treeData(anchor).id;
-    } else if (position === "child" && anchor) {
+    if (position === "child" && anchor) {
       td.parentId = treeData(anchor).id;
     } else if (position === "sibling" && anchor) {
       td.parentId = treeData(anchor).parentId;
     }
+    // "root" leaves parentId at its default (null from treeData init).
 
     const row = rows.createTabRow(tab);
     if (tab.pinned) {
@@ -312,7 +349,7 @@ export function makeEvents(deps: EventsDeps): EventsAPI {
       placeRowInFirefoxOrder(tab, row);
     }
 
-    if (position === "root" && !isDuplicate) {
+    if (position === "root") {
       const tabsArr = [...gBrowser.tabs];
       const lastIdx = tabsArr.length - 1;
       if (tabsArr.indexOf(tab) !== lastIdx) {
@@ -362,7 +399,7 @@ export function makeEvents(deps: EventsDeps): EventsAPI {
       row.remove();
     }
     rowOf.delete(tab);
-    if (!state.pinnedContainer.querySelector(".pfx-tab-row")) {
+    if (!state.pinnedContainer.querySelector(".gjoa-tab-row")) {
       state.pinnedContainer.hidden = true;
     }
     rows.updateVisibility();
@@ -428,7 +465,7 @@ export function makeEvents(deps: EventsDeps): EventsAPI {
       placeRowInFirefoxOrder(tab, row);
     }
     rows.syncTabRow(tab);
-    if (!state.pinnedContainer.querySelector(".pfx-tab-row")) {
+    if (!state.pinnedContainer.querySelector(".gjoa-tab-row")) {
       state.pinnedContainer.hidden = true;
     }
     rows.updateVisibility();
@@ -509,6 +546,18 @@ export function makeEvents(deps: EventsDeps): EventsAPI {
   }
 
   function onTabSelect(): void {
+    // Cross-space selection auto-switches workspaces. If the user lands
+    // on a tab in a different space (e.g. `~` previous-tab, picker, or
+    // session restore), promote that tab's space to active. The
+    // spaces.onActivated handler short-circuits when the current
+    // selection is already in `next`, so this doesn't bounce back.
+    const sel = gBrowser.selectedTab as Tab;
+    if (deps.spaces && sel) {
+      const tabSpace = deps.spaces.spaceOf(sel);
+      if (tabSpace !== deps.spaces.activeId()) {
+        deps.spaces.setActive(tabSpace);
+      }
+    }
     for (const tab of gBrowser.tabs as Iterable<Tab>) {
       const row = rowOf.get(tab);
       if (row) row.toggleAttribute("selected", tab.selected);
@@ -518,7 +567,7 @@ export function makeEvents(deps: EventsDeps): EventsAPI {
       row.scrollIntoView({ block: "nearest", inline: "nearest" });
     }
     // Vim cursor follows selection. Without this, opening a new tab
-    // (Ctrl+T) or clicking a different tab leaves the [pfx-cursor]
+    // (Ctrl+T) or clicking a different tab leaves the [gjoa-cursor]
     // outline on the previously-cursor'd row while [selected] moves to
     // the new row — two visual indicators on different tabs. Note vim
     // panel-mode `j`/`k` does NOT fire TabSelect (cursor moves without
@@ -562,7 +611,7 @@ export function makeEvents(deps: EventsDeps): EventsAPI {
     // tree resync — Firefox creates session tabs asynchronously, so a
     // resync here guarantees a clean pass once everything is in gBrowser.tabs.
     const onSessionRestored = (): void => {
-      console.log("palefox-tabs: sessionstore-windows-restored — final tree resync");
+      console.log("gjoa-tabs: sessionstore-windows-restored — final tree resync");
       log("sessionstore-windows-restored", {
         queueLen: savedTabQueue.length,
         inSessionRestore: state.inSessionRestore,

@@ -7,7 +7,7 @@
 //   isVertical()              — current mode read from sidebar.verticalTabs
 //   setUrlbarTopLayer(bool)   — pull urlbar in/out of the top layer
 
-import { allRows, dataOf, isHorizontal, levelOfRow } from "./helpers.ts";
+import { allRows, dataOf, levelOfRow } from "./helpers.ts";
 import { createLogger } from "./log.ts";
 import { rowOf, state } from "./state.ts";
 import type { Row } from "./types.ts";
@@ -107,7 +107,7 @@ export function makeLayout(deps: LayoutDeps): LayoutAPI {
     if (!target) return;
     if (!alignSpacer) {
       alignSpacer = document.createXULElement("box") as HTMLElement;
-      alignSpacer.id = "pfx-content-alignment-spacer";
+      alignSpacer.id = "gjoa-content-alignment-spacer";
       alignSpacer.style.flex = "0 0 auto";
       alignSpacer.style.width = "10px";
     }
@@ -125,8 +125,8 @@ export function makeLayout(deps: LayoutDeps): LayoutAPI {
   function setUrlbarTopLayer(inTopLayer: boolean): void {
     const urlbar = document.getElementById("urlbar");
     if (!urlbar) return;
-    // palefox-drawer owns popover state when compact mode is active.
-    if (sidebarMain.hasAttribute("data-pfx-compact")) return;
+    // gjoa-drawer owns popover state when compact mode is active.
+    if (sidebarMain.hasAttribute("data-gjoa-compact")) return;
     if (inTopLayer && !urlbar.hasAttribute("popover")) {
       urlbar.setAttribute("popover", "manual");
       try { (urlbar as any).showPopover(); } catch (_) {}
@@ -139,9 +139,9 @@ export function makeLayout(deps: LayoutDeps): LayoutAPI {
     if (!state.panel) return;
 
     const vertical = isVertical();
-    state.panel.toggleAttribute("pfx-horizontal", !vertical);
-    state.pinnedContainer?.toggleAttribute("pfx-horizontal", !vertical);
-    document.documentElement.toggleAttribute("pfx-horizontal-tabs", !vertical);
+    state.panel.toggleAttribute("gjoa-horizontal", !vertical);
+    state.pinnedContainer?.toggleAttribute("gjoa-horizontal", !vertical);
+    document.documentElement.toggleAttribute("gjoa-horizontal-tabs", !vertical);
 
     if (toolboxResizeObs) {
       toolboxResizeObs.disconnect();
@@ -152,26 +152,60 @@ export function makeLayout(deps: LayoutDeps): LayoutAPI {
     const toolboxInSidebar = toolbox?.parentNode === sidebarMain;
 
     if (vertical) {
-      const expanded = sidebarMain.hasAttribute("sidebar-launcher-expanded");
-      state.panel.toggleAttribute("pfx-icons-only", !expanded);
-      state.pinnedContainer?.toggleAttribute("pfx-icons-only", !expanded);
+      // Two distinct states must not be conflated:
+      //
+      //   - `gjoa-sidebar-collapsed` (documentElement) — Firefox's
+      //     "collapse layout" toggle is OFF (toolbox at top of window
+      //     instead of inside sidebar) OR gjoa's auto-compact is on. Used
+      //     by the nav-bar CSS to lay out CT/urlbar/right-group when the
+      //     toolbox isn't framed by the sidebar.
+      //
+      //   - `gjoa-icons-only` (panel + pinned + spaceHeader) — gjoa's
+      //     auto-compact slide-off mode (`data-gjoa-compact`). Tabs
+      //     shrink to centered favicons because the sidebar is barely
+      //     visible (off-screen / 50px peek). In Firefox-native
+      //     collapse-layout the sidebar is normal width and tabs MUST
+      //     render full (labels, tree, full-width rows).
+      const sidebarCollapsed = !toolboxInSidebar || sidebarMain.hasAttribute("data-gjoa-compact");
+      // Icons-only fires in Firefox-native "collapse layout" (toolbox at
+      // top of window, sidebar at normal width but trimmed UX): tabs
+      // shrink to icon + indent, no labels — tree structure stays visible
+      // via inline-padding indentation. Suppressed when auto-compact is
+      // revealed on hover (compact's reveal restores full-width tabs with
+      // labels — that's the whole point of revealing).
+      const compactRevealed = sidebarMain.hasAttribute("data-gjoa-compact")
+        && sidebarMain.hasAttribute("gjoa-has-hover");
+      const iconsOnly = !toolboxInSidebar && !compactRevealed;
+      state.panel.toggleAttribute("gjoa-icons-only", iconsOnly);
+      state.pinnedContainer?.toggleAttribute("gjoa-icons-only", iconsOnly);
+      state.spaceHeader?.toggleAttribute("gjoa-icons-only", iconsOnly);
+      document.documentElement.toggleAttribute("gjoa-sidebar-collapsed", sidebarCollapsed);
       if (toolboxInSidebar && toolbox && state.pinnedContainer) {
-        if (toolbox.nextElementSibling !== state.pinnedContainer) toolbox.after(state.pinnedContainer);
+        // Order: toolbox → space-header → pinned → panel
+        if (state.spaceHeader && toolbox.nextElementSibling !== state.spaceHeader) toolbox.after(state.spaceHeader);
+        const headerAnchor = state.spaceHeader ?? toolbox;
+        if (headerAnchor.nextElementSibling !== state.pinnedContainer) headerAnchor.after(state.pinnedContainer);
         if (state.pinnedContainer.nextElementSibling !== state.panel) state.pinnedContainer.after(state.panel);
       } else if (
         state.pinnedContainer
         && (state.panel.parentNode !== sidebarMain
-            || sidebarMain.firstElementChild !== state.pinnedContainer)
+            || sidebarMain.firstElementChild !== (state.spaceHeader ?? state.pinnedContainer))
       ) {
         sidebarMain.prepend(state.panel);
         sidebarMain.prepend(state.pinnedContainer);
+        if (state.spaceHeader) sidebarMain.prepend(state.spaceHeader);
       }
       teardownHorizontalAlignSpacer();
       // If horizontal mode had a popout open, urlbar may be without popover.
       setUrlbarTopLayer(true);
     } else {
-      state.panel.removeAttribute("pfx-icons-only");
-      state.pinnedContainer?.removeAttribute("pfx-icons-only");
+      state.panel.removeAttribute("gjoa-icons-only");
+      state.pinnedContainer?.removeAttribute("gjoa-icons-only");
+      document.documentElement.removeAttribute("gjoa-sidebar-collapsed");
+      // Header isn't meaningful in horizontal-tabs mode — keep it out of the DOM flow.
+      if (state.spaceHeader && state.spaceHeader.parentNode) {
+        state.spaceHeader.remove();
+      }
       const tabbrowserTabs = document.getElementById("tabbrowser-tabs");
       if (tabbrowserTabs) {
         // Order in toolbar: tabbrowser-tabs → pinned container → panel.
@@ -191,13 +225,13 @@ export function makeLayout(deps: LayoutDeps): LayoutAPI {
     if (!toolboxInSidebar && toolbox) {
       const updateHeight = () => {
         const h = toolbox.getBoundingClientRect().height;
-        document.documentElement.style.setProperty("--pfx-toolbox-height", h + "px");
+        document.documentElement.style.setProperty("--gjoa-toolbox-height", h + "px");
       };
       updateHeight();
       toolboxResizeObs = new ResizeObserver(updateHeight);
       toolboxResizeObs.observe(toolbox);
     } else {
-      document.documentElement.style.removeProperty("--pfx-toolbox-height");
+      document.documentElement.style.removeProperty("--gjoa-toolbox-height");
     }
 
     // Re-sync all rows when switching modes.

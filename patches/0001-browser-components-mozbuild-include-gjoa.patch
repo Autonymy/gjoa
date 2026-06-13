@@ -1,3 +1,8 @@
+# gjoa-patch:
+#   baseline-firefox: 151.0.1
+#   touches:
+#     - browser/components/moz.build
+#
 Add the new browser/components/gjoa/ subdir to the build. Single-line
 DIRS entry, alphabetical placement between "genai" and "ipprotection".
 

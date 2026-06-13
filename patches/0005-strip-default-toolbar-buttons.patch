@@ -1,3 +1,8 @@
+# gjoa-patch:
+#   baseline-firefox: 151.0.1
+#   touches:
+#     - browser/components/customizableui/CustomizableUI.sys.mjs
+#
 Remove three buttons from Firefox's default toolbar placements:
 
   - fxa-toolbar-menu-button   ("Account" / Sync menu)

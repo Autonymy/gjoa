@@ -13,6 +13,7 @@
 
 import { CLOSED_MEMORY } from "./constants.ts";
 import type { HistoryAPI, SnapshotEnvelope } from "./history.ts";
+import type { SpacesSnapshot } from "../spaces/types.ts";
 import type { Row, SavedNode, Tab, TreeData } from "./types.ts";
 
 // =============================================================================
@@ -30,7 +31,7 @@ export type Snapshot = {
   readonly savedTabQueue: readonly SavedNode[];
   /** Recently-closed tab memory, persisted alongside the live tree. */
   readonly closedTabs: readonly SavedNode[];
-  /** Next palefox-id counter — saved so freshly opened tabs can't collide
+  /** Next gjoa-id counter — saved so freshly opened tabs can't collide
    *  with restored-session ids. */
   readonly nextTabId: number;
   /** Returns the persisted URL for a tab — code paths know better ways
@@ -38,6 +39,10 @@ export type Snapshot = {
   readonly tabUrl: (tab: Tab) => string;
   /** Returns the tree-data for a tab (must already exist). */
   readonly treeData: (tab: Tab) => TreeData;
+  /** Spaces-subsystem snapshot — list of spaces, active id, tab→space pairs.
+   *  Assembled by the orchestrator (which knows about tab ids); passed
+   *  through opaquely by buildEnvelope. */
+  readonly spaces: SpacesSnapshot;
 };
 
 // =============================================================================
@@ -81,6 +86,7 @@ export function buildEnvelope(snapshot: Snapshot): SnapshotEnvelope {
         level: row._group.level,
         state: row._group.state,
         collapsed: row._group.collapsed,
+        spaceId: row._group.spaceId,
         afterTabId: lastSeenTabId,
       });
     }
@@ -99,6 +105,7 @@ export function buildEnvelope(snapshot: Snapshot): SnapshotEnvelope {
     nodes: out,
     closedTabs: snapshot.closedTabs.slice(-CLOSED_MEMORY),
     nextTabId: snapshot.nextTabId,
+    spaces: snapshot.spaces,
   };
 }
 
@@ -111,7 +118,7 @@ export function buildEnvelope(snapshot: Snapshot): SnapshotEnvelope {
 export function makeSaver(
   getSnapshot: () => Snapshot,
   history: HistoryAPI,
-  onError: (err: unknown) => void = (e) => console.error("palefox-tabs: save chain", e),
+  onError: (err: unknown) => void = (e) => console.error("gjoa-tabs: save chain", e),
 ): () => void {
   let inFlight = false;
   let pending = false;
@@ -159,7 +166,7 @@ export function popSavedByIndex(queue: SavedNode[], idx: number): SavedNode | nu
 
 /** Splice-mutates `queue`. Combined helper used by event handlers when a
  *  session-restore tab arrives. Priority order:
- *    1. pfx-id attribute (most reliable, persisted via persistTabAttribute)
+ *    1. gjoa-id attribute (most reliable, persisted via persistTabAttribute)
  *    2. Exact URL match (when URL has resolved)
  *    3. FIFO shift (only if inSessionRestore — guards against new user tabs
  *       consuming stale entries from a previous session's leftovers) */
@@ -168,7 +175,7 @@ export function popSavedForTab(
   ctx: {
     /** Current index of this tab in gBrowser.tabs, or -1 if unknown. */
     readonly currentIdx: number;
-    /** Persisted palefox ID on the tab, or 0 if none. */
+    /** Persisted gjoa ID on the tab, or 0 if none. */
     readonly pinnedId: number;
     /** Resolved URL for the tab, or empty string if pending. */
     readonly url: string;
@@ -180,7 +187,7 @@ export function popSavedForTab(
 ): SavedNode | null {
   const { currentIdx, pinnedId, url, inSessionRestore, log } = ctx;
 
-  // 1. pfx-id match.
+  // 1. gjoa-id match.
   if (pinnedId) {
     const i = queue.findIndex(s => s.id === pinnedId);
     if (i >= 0) {

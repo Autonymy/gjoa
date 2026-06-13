@@ -8,7 +8,7 @@
 //   - `gBrowser.tabs` → array of fake-Tab plain objects
 //
 // What's covered here:
-//   treeData      — get-or-init + reads persisted pfx-id from XUL attribute
+//   treeData      — get-or-init + reads persisted gjoa-id from XUL attribute
 //   levelOf       — cycle-safe walk through treeOf
 //                   numeric parentId chain
 //                   string parentId (group) terminates with group.level + 1
@@ -24,17 +24,17 @@
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 
-import { rowOf, state, treeOf } from "./state.ts";
+import { state, treeOf } from "./state.ts";
 import type { Row, Tab, TreeData } from "./types.ts";
 
 // === Test scaffolding =========================================================
 
-/** Build a fake tab with optional pfx-id attribute. The attribute storage
+/** Build a fake tab with optional gjoa-id attribute. The attribute storage
  *  must be a real Map so getAttribute/setAttribute round-trip; helpers.ts
- *  reads `pfx-id` via getAttribute in `treeData`. */
+ *  reads `gjoa-id` via getAttribute in `treeData`. */
 function fakeTab(opts: { pfxId?: number; label?: string } = {}): Tab {
   const attrs = new Map<string, string>();
-  if (opts.pfxId != null) attrs.set("pfx-id", String(opts.pfxId));
+  if (opts.pfxId != null) attrs.set("gjoa-id", String(opts.pfxId));
   return {
     label: opts.label ?? "tab",
     getAttribute: (n: string) => attrs.get(n) ?? null,
@@ -81,7 +81,7 @@ beforeEach(() => {
 
 // helpers.ts imports `gBrowser` and `Services` as declare-const globals.
 // Stub them here so test calls don't ReferenceError. The Services stub is
-// just enough for the pfx.debug logger gate (returns false → log is no-op).
+// just enough for the gjoa.debug logger gate (returns false → log is no-op).
 beforeEach(() => {
   (globalThis as any).Services = {
     prefs: { getBoolPref: () => false },
@@ -104,18 +104,18 @@ afterEach(() => {
 // === treeData =================================================================
 
 describe("treeData", () => {
-  test("first call assigns a fresh palefox-id and persists via setAttribute", async () => {
+  test("first call assigns a fresh gjoa-id and persists via setAttribute", async () => {
     const { treeData } = await import("./helpers.ts");
-    const t = fakeTab(); // no persisted pfx-id
+    const t = fakeTab(); // no persisted gjoa-id
     state.nextTabId = 5;
     const d = treeData(t);
     expect(d.id).toBe(5);
     expect(state.nextTabId).toBe(6);
     // The pin call writes through setAttribute — verify the round-trip.
-    expect(t.getAttribute("pfx-id")).toBe("5");
+    expect(t.getAttribute("gjoa-id")).toBe("5");
   });
 
-  test("reuses persisted pfx-id and bumps nextTabId past it", async () => {
+  test("reuses persisted gjoa-id and bumps nextTabId past it", async () => {
     const { treeData } = await import("./helpers.ts");
     const t = fakeTab({ pfxId: 100 });
     state.nextTabId = 1;

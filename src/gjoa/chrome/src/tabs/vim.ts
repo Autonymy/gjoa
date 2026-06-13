@@ -1,9 +1,9 @@
 // Vim mode — cursor management, key handler, modeline UI, search/refile, ex
 // commands, and the row-action commands (clone-as-child, new-tab-below, new-
-// group-above, inline rename). Everything that's "you press a key, palefox
+// group-above, inline rename). Everything that's "you press a key, gjoa
 // does something" lives here.
 //
-// This is the largest single module in palefox. It's organized into sections
+// This is the largest single module in gjoa. It's organized into sections
 // via comment markers (// === Section === ) so you can navigate by jumping
 // between them. Keep additions in their right section.
 //
@@ -12,7 +12,7 @@
 // setCursor), the row-dblclick hooks (cloneAsSibling, startRename), and the
 // onTabOpen hook (consumePendingCursorMove).
 
-import { CHORD_TIMEOUT, INDENT } from "./constants.ts";
+import { CHORD_TIMEOUT } from "./constants.ts";
 import {
   allRows,
   dataOf,
@@ -29,7 +29,7 @@ import { hzDisplay, rowOf, savedTabQueue, selection, state, treeOf } from "./sta
 import type { Row, Tab } from "./types.ts";
 import type { LayoutAPI } from "./layout.ts";
 import type { RowsAPI } from "./rows.ts";
-import { makePicker, type PickerItem, type PickerAction } from "./picker.ts";
+import { makePicker, type PickerItem } from "./picker.ts";
 
 declare const document: Document;
 
@@ -60,8 +60,10 @@ export type VimDeps = {
   readonly history: import("./history.ts").HistoryAPI;
   /** Content-focus bridge — content_focus.ts frame script reports back
    *  whether the active page's focused element is editable. We use it to
-   *  bail palefox keys when the user is typing into a content input. */
+   *  bail gjoa keys when the user is typing into a content input. */
   readonly contentFocus: import("./content-focus.ts").ContentFocusAPI;
+  /** Spaces (workspaces) API — :space subcommands + gs/gS cycle. */
+  readonly spaces: import("../spaces/manager.ts").SpacesAPI;
 };
 
 export type VimAPI = {
@@ -103,8 +105,12 @@ export type VimAPI = {
   /** Dispatch an ex-command directly, bypassing the UI (no picker, no
    *  modeline). `cmd` is the post-`:` text — e.g. `"group MyName"` or
    *  `"tabs all"`. Used by tests and any future programmatic caller; the
-   *  user-facing flow is `:` → picker → modeline → Enter. */
+   *  user-facing flow is `:` → picker → Enter (one shot). */
   readonly runExCommand: (cmd: string) => void;
+  /** Open the ex-command picker programmatically. Same surface as pressing
+   *  `:`. Test harnesses use this to drive the picker without synthesizing
+   *  the colon keypress against the chrome document. */
+  readonly openExCommandPicker: () => void;
 };
 
 // =============================================================================
@@ -112,7 +118,7 @@ export type VimAPI = {
 // =============================================================================
 
 export function makeVim(deps: VimDeps): VimAPI {
-  const { rows, layout, scheduleSave, clearSelection, selectRange, sidebarMain, history, contentFocus } = deps;
+  const { rows, layout, scheduleSave, clearSelection, selectRange, sidebarMain, history, contentFocus, spaces } = deps;
 
   // ---------- spotlight picker ---------------------------------------------
   // Self-contained UI primitive — see src/tabs/picker.ts. We pass two
@@ -164,10 +170,10 @@ export function makeVim(deps: VimDeps): VimAPI {
   // ---------- Cursor / navigation ------------------------------------------
 
   function setCursor(row: Row | null): void {
-    if (state.cursor) state.cursor.removeAttribute("pfx-cursor");
+    if (state.cursor) state.cursor.removeAttribute("gjoa-cursor");
     state.cursor = row;
     if (row) {
-      row.setAttribute("pfx-cursor", "true");
+      row.setAttribute("gjoa-cursor", "true");
       row.scrollIntoView({ block: "nearest", inline: "nearest" });
       if (isHorizontal()) updateHorizontalExpansion();
     }
@@ -436,20 +442,20 @@ export function makeVim(deps: VimDeps): VimAPI {
 
   function createModeline(): void {
     modeline = document.createXULElement("hbox") as HTMLElement;
-    modeline.id = "pfx-modeline";
+    modeline.id = "gjoa-modeline";
     modeline.setAttribute("align", "center");
 
     const modeLabel = document.createXULElement("label") as HTMLElement;
-    modeLabel.id = "pfx-modeline-mode";
+    modeLabel.id = "gjoa-modeline-mode";
     modeLabel.setAttribute("value", "-- INSERT --");
 
     const chordLabel = document.createXULElement("label") as HTMLElement;
-    chordLabel.id = "pfx-modeline-chord";
+    chordLabel.id = "gjoa-modeline-chord";
     chordLabel.setAttribute("value", "");
     chordLabel.setAttribute("flex", "1");
 
     const msgLabel = document.createXULElement("label") as HTMLElement;
-    msgLabel.id = "pfx-modeline-msg";
+    msgLabel.id = "gjoa-modeline-msg";
     msgLabel.setAttribute("value", "");
     msgLabel.setAttribute("crop", "end");
 
@@ -459,9 +465,9 @@ export function makeVim(deps: VimDeps): VimAPI {
 
   function updateModeline(): void {
     if (!modeline) return;
-    const modeLabel = document.getElementById("pfx-modeline-mode");
-    const chordLabel = document.getElementById("pfx-modeline-chord");
-    const msgLabel = document.getElementById("pfx-modeline-msg");
+    const modeLabel = document.getElementById("gjoa-modeline-mode");
+    const chordLabel = document.getElementById("gjoa-modeline-chord");
+    const msgLabel = document.getElementById("gjoa-modeline-msg");
 
     let pending = "";
     if (pendingCtrlW) pending = "C-w-";
@@ -473,16 +479,16 @@ export function makeVim(deps: VimDeps): VimAPI {
     const hasContent = pending
       || (msgLabel && msgLabel.getAttribute("value"))
       || searchActive
-      || modeline.querySelector(".pfx-search-input");
-    modeline.toggleAttribute("pfx-visible", !!hasContent);
+      || modeline.querySelector(".gjoa-search-input");
+    modeline.toggleAttribute("gjoa-visible", !!hasContent);
   }
 
   function modelineMsg(text: string, duration: number = 3000): void {
     if (!modeline) return;
-    const msg = document.getElementById("pfx-modeline-msg");
+    const msg = document.getElementById("gjoa-modeline-msg");
     if (msg) {
       msg.setAttribute("value", text);
-      modeline.setAttribute("pfx-visible", "true");
+      modeline.setAttribute("gjoa-visible", "true");
       clearTimeout(modelineTimer);
       modelineTimer = setTimeout(() => {
         msg.setAttribute("value", "");
@@ -521,7 +527,7 @@ export function makeVim(deps: VimDeps): VimAPI {
 
   // ---------- Global keys ---------------------------------------------------
   //
-  // Chrome-scope keyboard interface. Fires whenever palefox is loaded
+  // Chrome-scope keyboard interface. Fires whenever gjoa is loaded
   // (sidebar focused or not), as long as focus isn't in a text input.
   // Content-area keys (when a webpage has focus) DON'T reach this listener
   // because content lives in a separate process — that's Phase 2 work
@@ -548,18 +554,18 @@ export function makeVim(deps: VimDeps): VimAPI {
   // (setupVimKeys intercepts first; the panel is its own modal mode that
   // owns its keys).
   //
-  // Per-site collisions are handled by `pfx.keys.blacklist` (managed via
-  // `:blacklist` / `:unblacklist`) — disable all palefox keys for sites
+  // Per-site collisions are handled by `gjoa.keys.blacklist` (managed via
+  // `:blacklist` / `:unblacklist`) — disable all gjoa keys for sites
   // that need their own j/k/etc. (Linear, GitHub, Notion).
   //
   // Optional leader prefix:
-  //   pfx.keys.useLeader = true   (default false)
-  //   pfx.keys.leader    = " "    (Space; any single key works)
+  //   gjoa.keys.useLeader = true   (default false)
+  //   gjoa.keys.leader    = " "    (Space; any single key works)
   // When useLeader is on, leader GATES every binding uniformly — bare keys
   // stop firing, including `:` (must use `<leader>:`). `<leader>?` toggles
   // the discoverability help panel.
   //
-  // Per-binding `pfx.keys.<key>.enabled` (default true) opts a binding out
+  // Per-binding `gjoa.keys.<key>.enabled` (default true) opts a binding out
   // entirely so vimium / tridactyl / Firefox-native take it.
   //
   // Originally also had Alt+X (Meta-X alias for `:`) but on Windows it's
@@ -591,16 +597,16 @@ export function makeVim(deps: VimDeps): VimAPI {
    *    ancestors as context).
    *
    *  scope === "all": tabs from EVERY chrome window in this Firefox
-   *    process via Palefox.tabs.all(). Flat list (no tree preservation —
+   *    process via Gjoa.tabs.all(). Flat list (no tree preservation —
    *    parent-id walks would cross window boundaries weirdly). Each row's
    *    secondary line carries window context. Selecting a row from a
    *    different window switches windows + selects the tab via
-   *    Palefox.tabs.activate(id, windowId). */
+   *    Gjoa.tabs.activate(id, windowId). */
   function openTabsPicker(scope: "current" | "all" = "current"): void {
-    const Palefox = (window as unknown as { Palefox?: import("../platform/index.ts").PalefoxAPI }).Palefox;
+    const Gjoa = (window as unknown as { Gjoa?: import("../platform/index.ts").GjoaAPI }).Gjoa;
 
-    if (scope === "all" && Palefox) {
-      const all = Palefox.tabs.all();
+    if (scope === "all" && Gjoa) {
+      const all = Gjoa.tabs.all();
       if (!all.length) {
         modelineMsg("No tabs", 3000);
         return;
@@ -627,7 +633,7 @@ export function makeVim(deps: VimDeps): VimAPI {
         preserveTree: false,
         onSelect: (item) => {
           const d = item.data as { id: number; windowId: string };
-          try { Palefox.tabs.activate(d.id, d.windowId); } catch {}
+          try { Gjoa.tabs.activate(d.id, d.windowId); } catch {}
         },
       });
       return;
@@ -691,9 +697,9 @@ export function makeVim(deps: VimDeps): VimAPI {
   // command event is what autoOpen sees. We synthesize an Event of type
   // "command" so autoOpen takes the same path.
   //
-  // After the view is primed, our pfx-urlbar-activate CustomEvent is
+  // After the view is primed, our gjoa-urlbar-activate CustomEvent is
   // dispatched so drawer/urlbar.ts adds the floating decoration. newTab
-  // intent: setting pfx-urlbar-intent="new-tab" makes drawer/urlbar.ts
+  // intent: setting gjoa-urlbar-intent="new-tab" makes drawer/urlbar.ts
   // intercept Enter and re-dispatch with altKey=true (Firefox's
   // open-in-new-tab path).
   function activateUrlbar(intent: "current" | "newTab"): void {
@@ -711,7 +717,7 @@ export function makeVim(deps: VimDeps): VimAPI {
         u.view?.autoOpen?.({ event: new Event("command") });
       }
     } catch {}
-    document.dispatchEvent(new CustomEvent("pfx-urlbar-activate", {
+    document.dispatchEvent(new CustomEvent("gjoa-urlbar-activate", {
       detail: { intent },
     }));
   }
@@ -720,26 +726,26 @@ export function makeVim(deps: VimDeps): VimAPI {
     const target = lastTab;
     if (!target) return;
     try {
-      // tab.isOpen check — `isOpen` is in our Tab type and palefox uses it.
+      // tab.isOpen check — `isOpen` is in our Tab type and gjoa uses it.
       if (target.isOpen) gBrowser.selectedTab = target;
     } catch (e) {
-      console.error("palefox-tabs: toggleLastTab failed", e);
+      console.error("gjoa-tabs: toggleLastTab failed", e);
     }
   }
 
-  /** Pref-gate per-binding. Users opt out of any palefox key by setting
-   *  `pfx.keys.<name>.enabled` to false in about:config — letting
+  /** Pref-gate per-binding. Users opt out of any gjoa key by setting
+   *  `gjoa.keys.<name>.enabled` to false in about:config — letting
    *  vimium / tridactyl / native Firefox take it instead. Defaults true. */
   function keyEnabled(name: string): boolean {
-    return Services.prefs.getBoolPref(`pfx.keys.${name}.enabled`, true);
+    return Services.prefs.getBoolPref(`gjoa.keys.${name}.enabled`, true);
   }
 
-  /** Per-site escape hatch. Pref `pfx.keys.blacklist` is a comma-separated
+  /** Per-site escape hatch. Pref `gjoa.keys.blacklist` is a comma-separated
    *  list of hostnames; entries match the current tab's hostname exactly OR
    *  as a parent suffix (e.g. `google.com` matches `docs.google.com`).
    *  Empty pref = blacklist disabled. Managed via `:blacklist` ex-commands. */
   function blacklistedHosts(): string[] {
-    const raw = Services.prefs.getStringPref("pfx.keys.blacklist", "");
+    const raw = Services.prefs.getStringPref("gjoa.keys.blacklist", "");
     return raw.split(",").map((s) => s.trim().toLowerCase()).filter(Boolean);
   }
 
@@ -756,7 +762,7 @@ export function makeVim(deps: VimDeps): VimAPI {
   /** ⚠ TEMPORARY STOPGAP — see firefox-stability-roadmap.md M13.
    *
    *  Pages where the content-focus bridge can't observe in-page input
-   *  focus (system-principal pages with their own form widgets). Palefox
+   *  focus (system-principal pages with their own form widgets). Gjoa
    *  keys would otherwise hijack `t` / `:` / `h` etc. while the user
    *  types into an "Add Search Engine" or "Edit DNS" field. We bail
    *  unconditionally on these URIs as a safety net.
@@ -819,7 +825,7 @@ export function makeVim(deps: VimDeps): VimAPI {
     const h = host.trim().toLowerCase();
     if (!h || list.includes(h)) return;
     list.push(h);
-    Services.prefs.setStringPref("pfx.keys.blacklist", list.join(","));
+    Services.prefs.setStringPref("gjoa.keys.blacklist", list.join(","));
   }
 
   function blacklistRemove(host: string): boolean {
@@ -827,7 +833,7 @@ export function makeVim(deps: VimDeps): VimAPI {
     const h = host.trim().toLowerCase();
     const next = list.filter((x) => x !== h);
     if (next.length === list.length) return false;
-    Services.prefs.setStringPref("pfx.keys.blacklist", next.join(","));
+    Services.prefs.setStringPref("gjoa.keys.blacklist", next.join(","));
     return true;
   }
 
@@ -836,12 +842,12 @@ export function makeVim(deps: VimDeps): VimAPI {
   // =============================================================================
   //
   // Two prefs:
-  //   pfx.keys.useLeader  (bool, default false) — turn leader gating on/off
-  //   pfx.keys.leader     (string, default " ") — which key arms the leader
+  //   gjoa.keys.useLeader  (bool, default false) — turn leader gating on/off
+  //   gjoa.keys.leader     (string, default " ") — which key arms the leader
   //
   // Default off: chrome scope doesn't have the single-key collision problem
   // vim/emacs have in normal mode. Bare keys dispatch directly. Per-site
-  // collisions are handled by `pfx.keys.blacklist`.
+  // collisions are handled by `gjoa.keys.blacklist`.
   //
   // When useLeader = true:
   //   - Bare keys do NOT dispatch — must go through `<leader>key`.
@@ -851,13 +857,13 @@ export function makeVim(deps: VimDeps): VimAPI {
   //   - `:` still bypasses the gate (vim convention).
 
   function leaderKey(): string | null {
-    if (!Services.prefs.getBoolPref("pfx.keys.useLeader", false)) return null;
-    const v = Services.prefs.getStringPref("pfx.keys.leader", " ");
+    if (!Services.prefs.getBoolPref("gjoa.keys.useLeader", false)) return null;
+    const v = Services.prefs.getStringPref("gjoa.keys.leader", " ");
     return v.length === 0 ? null : v;
   }
 
   function leaderTimeoutMs(): number {
-    return Services.prefs.getIntPref("pfx.keys.leader_timeout", 1500);
+    return Services.prefs.getIntPref("gjoa.keys.leader_timeout", 1500);
   }
 
   /** Bindings reachable via leader. Pairs with the dispatch switch in
@@ -883,23 +889,23 @@ export function makeVim(deps: VimDeps): VimAPI {
   function whichKeyEnsure(): HTMLElement {
     if (whichKeyEl && whichKeyEl.isConnected) return whichKeyEl;
     const el = document.createElement("div");
-    el.id = "pfx-which-key";
+    el.id = "gjoa-which-key";
     el.hidden = true;
 
     const header = document.createElement("div");
-    header.className = "pfx-wk-header";
+    header.className = "gjoa-wk-header";
     header.textContent = "leader";
     el.appendChild(header);
 
     for (const b of LEADER_BINDINGS) {
       if (!keyEnabled(bindingPrefName(b.key))) continue;
       const row = document.createElement("div");
-      row.className = "pfx-wk-row";
+      row.className = "gjoa-wk-row";
       const k = document.createElement("span");
-      k.className = "pfx-wk-key";
+      k.className = "gjoa-wk-key";
       k.textContent = b.key === " " ? "Space" : b.key;
       const d = document.createElement("span");
-      d.className = "pfx-wk-desc";
+      d.className = "gjoa-wk-desc";
       d.textContent = b.desc;
       row.appendChild(k);
       row.appendChild(d);
@@ -911,7 +917,7 @@ export function makeVim(deps: VimDeps): VimAPI {
     return el;
   }
 
-  /** Map binding key character to its `pfx.keys.<name>.enabled` pref name.
+  /** Map binding key character to its `gjoa.keys.<name>.enabled` pref name.
    *  Mirrors the keyEnabled() calls in the dispatch switch. */
   function bindingPrefName(key: string): string {
     switch (key) {
@@ -927,7 +933,7 @@ export function makeVim(deps: VimDeps): VimAPI {
     // visual affordance. NOT an <input> — the global keymap bails on focused
     // INPUT/TEXTAREA, which would self-defeat the focus-stash trick.
     const el = document.createElement("div");
-    el.id = "pfx-leader-focus-stash";
+    el.id = "gjoa-leader-focus-stash";
     el.setAttribute("aria-hidden", "true");
     el.setAttribute("tabindex", "-1");
     el.style.position = "fixed";
@@ -989,7 +995,7 @@ export function makeVim(deps: VimDeps): VimAPI {
     if (whichKeyEl) whichKeyEl.hidden = true;
   }
 
-  /** Try to dispatch a keydown event as a palefox binding. Returns true if
+  /** Try to dispatch a keydown event as a gjoa binding. Returns true if
    *  the event was handled (preventDefault + stopImmediatePropagation
    *  already applied). Pure dispatch — does NOT manage leader state.
    *
@@ -1059,7 +1065,7 @@ export function makeVim(deps: VimDeps): VimAPI {
         e.stopImmediatePropagation();
         if (e.repeat) return true;
         try {
-          gBrowser.selectedBrowser.messageManager?.sendAsyncMessage("Palefox:ScrollStart", { dy: 1 });
+          gBrowser.selectedBrowser.messageManager?.sendAsyncMessage("Gjoa:ScrollStart", { dy: 1 });
         } catch {}
         return true;
       case "k":
@@ -1068,24 +1074,24 @@ export function makeVim(deps: VimDeps): VimAPI {
         e.stopImmediatePropagation();
         if (e.repeat) return true;
         try {
-          gBrowser.selectedBrowser.messageManager?.sendAsyncMessage("Palefox:ScrollStart", { dy: -1 });
+          gBrowser.selectedBrowser.messageManager?.sendAsyncMessage("Gjoa:ScrollStart", { dy: -1 });
         } catch {}
         return true;
       case "e":
-        // Toggle compact mode — flips `pfx.sidebar.compact`. The compact-mode
+        // Toggle compact mode — flips `gjoa.sidebar.compact`. The compact-mode
         // factory in src/drawer/compact.ts observes this pref and reacts.
         if (!keyEnabled("e")) return false;
         e.preventDefault();
         e.stopImmediatePropagation();
         try {
-          const cur = Services.prefs.getBoolPref("pfx.sidebar.compact", false);
-          Services.prefs.setBoolPref("pfx.sidebar.compact", !cur);
+          const cur = Services.prefs.getBoolPref("gjoa.sidebar.compact", false);
+          Services.prefs.setBoolPref("gjoa.sidebar.compact", !cur);
         } catch {}
         return true;
       case "?":
         // Toggle the help panel. Reachable bare when useLeader=false,
         // and as `<leader>?` when useLeader=true. Sites that want their
-        // own `?` shortcut should be added to `pfx.keys.blacklist`.
+        // own `?` shortcut should be added to `gjoa.keys.blacklist`.
         if (!keyEnabled("question")) return false;
         e.preventDefault();
         e.stopImmediatePropagation();
@@ -1122,7 +1128,7 @@ export function makeVim(deps: VimDeps): VimAPI {
       // Content's focused element is editable — bail.
       if (contentFocus.contentInputFocused()) return;
       // Per-site escape hatch — let the page own its keys without uninstalling
-      // palefox. Toggle via `:blacklist` / `:unblacklist`.
+      // gjoa. Toggle via `:blacklist` / `:unblacklist`.
       if (currentHostBlacklisted()) return;
       // Bail when typing in any chrome input field — those keys are real input.
       const a = document.activeElement as HTMLElement | null;
@@ -1131,7 +1137,7 @@ export function makeVim(deps: VimDeps): VimAPI {
         a.tagName === "TEXTAREA" || a.tagName === "textarea" ||
         a.isContentEditable
       )) return;
-      if (a && (a.closest?.("#urlbar") || a.closest?.("findbar") || a.closest?.(".pfx-search-input") || a.closest?.(".pfx-picker"))) return;
+      if (a && (a.closest?.("#urlbar") || a.closest?.("findbar") || a.closest?.(".gjoa-search-input") || a.closest?.(".gjoa-picker"))) return;
 
       // Modifier-only keys (Shift/Ctrl/Alt/Meta tapped alone) don't
       // disarm leader and aren't bindings. Let them through.
@@ -1190,7 +1196,7 @@ export function makeVim(deps: VimDeps): VimAPI {
     document.addEventListener("keyup", (e) => {
       if (e.key !== "j" && e.key !== "k") return;
       try {
-        gBrowser.selectedBrowser.messageManager?.sendAsyncMessage("Palefox:ScrollStop");
+        gBrowser.selectedBrowser.messageManager?.sendAsyncMessage("Gjoa:ScrollStop");
       } catch {}
     }, true);
   }
@@ -1223,7 +1229,7 @@ export function makeVim(deps: VimDeps): VimAPI {
           endSearch(false);
           e.preventDefault();
           e.stopImmediatePropagation();
-        } else if (modeline?.querySelector(".pfx-search-input")) {
+        } else if (modeline?.querySelector(".gjoa-search-input")) {
           endExMode(null);
           e.preventDefault();
           e.stopImmediatePropagation();
@@ -1344,6 +1350,11 @@ export function makeVim(deps: VimDeps): VimAPI {
       if (combo === "gg") { goToTop(); return true; }
       if (combo === "gC") {
         if (state.cursor?._tab) cloneAsSibling(state.cursor._tab);
+        return true;
+      }
+      // gs / gS — cycle to next/prev space.
+      if (combo === "gs" || combo === "gS") {
+        cycleSpace(combo === "gs" ? 1 : -1);
         return true;
       }
       return true;
@@ -1586,14 +1597,14 @@ export function makeVim(deps: VimDeps): VimAPI {
     if (searchActive || !modeline) return;
 
     for (const child of modeline.children) (child as HTMLElement).hidden = true;
-    modeline.setAttribute("pfx-visible", "true");
+    modeline.setAttribute("gjoa-visible", "true");
 
     const prefix = document.createXULElement("label") as HTMLElement;
-    prefix.className = "pfx-search-prefix";
+    prefix.className = "gjoa-search-prefix";
     prefix.setAttribute("value", ":");
 
     const input = document.createElement("input");
-    input.className = "pfx-search-input";
+    input.className = "gjoa-search-input";
     if (prefill) input.value = prefill;
 
     modeline.append(prefix, input);
@@ -1610,7 +1621,21 @@ export function makeVim(deps: VimDeps): VimAPI {
     });
   }
 
-  /** Registry of ex-commands palefox knows about. Drives the `:` picker
+  /** Cycle active space by `dir` (+1 = next, -1 = prev). Wraps around. */
+  function cycleSpace(dir: 1 | -1): void {
+    const list = spaces.list();
+    if (list.length < 2) {
+      modelineMsg("Only one space — :space new <name> to add", 2500);
+      return;
+    }
+    const cur = spaces.activeId();
+    const idx = list.findIndex(s => s.id === cur);
+    const next = list[((idx + dir) % list.length + list.length) % list.length]!;
+    spaces.setActive(next.id);
+    modelineMsg(`:space → "${next.name}"`, 1500);
+  }
+
+  /** Registry of ex-commands gjoa knows about. Drives the `:` picker
    *  (discoverability) — the dispatch switch in endExMode() is still the
    *  source of truth for what runs. Keep this list in sync when adding
    *  new commands. Aliases live alongside the canonical name; the picker
@@ -1625,16 +1650,23 @@ export function makeVim(deps: VimDeps): VimAPI {
     { name: "restore",    description: "Picker over recent checkpoints",         takesArgs: false },
     { name: "sessions",   description: "Picker over auto-saved sessions",        takesArgs: false },
     { name: "history",    description: "Picker over the full event log",         takesArgs: true },
-    { name: "blacklist",  description: "Disable palefox keys on a site (or `list`/`remove`)", takesArgs: true },
-    { name: "unblacklist",description: "Re-enable palefox keys on a site",       takesArgs: true },
+    { name: "blacklist",  description: "Disable gjoa keys on a site (or `list`/`remove`)", takesArgs: true },
+    { name: "unblacklist",description: "Re-enable gjoa keys on a site",       takesArgs: true },
+    { name: "spc",        description: "Spaces: new/rename/delete/switch/list (also :space)", takesArgs: true },
+    { name: "tabpos",     description: "New-tab placement: sibling | root | child", takesArgs: true },
     { name: "help",       description: "Show the keymap help panel",             takesArgs: false },
   ];
 
   /** Discoverable picker over ex-commands. Triggered by the global `:` key.
-   *  Selecting a command opens the modeline pre-filled with `<name> ` (or
-   *  `<name>` for no-arg commands) so the user can keep typing args + Enter.
-   *  The picker's own input field substring-filters EX_COMMANDS as the
-   *  user types, so this also serves as a "type-to-find-command" surface. */
+   *  Single-shot UX: Enter on the picked item FIRES the command immediately,
+   *  using any text the user typed into the picker's filter input as args.
+   *  Examples (query in [brackets]):
+   *    [space]              → fires `:space` (opens spaces sub-picker)
+   *    [space new Work]     → fires `:space new Work`
+   *    [group Reading]      → fires `:group Reading`
+   *  No intermediate modeline round-trip. The picker's input doubles as a
+   *  type-to-find filter (substring match against command name + desc) AND
+   *  the argument carrier. */
   function openExCommandPicker(): void {
     const items: PickerItem[] = EX_COMMANDS.map((cmd) => ({
       display: ":" + cmd.name,
@@ -1644,16 +1676,37 @@ export function makeVim(deps: VimDeps): VimAPI {
     picker.show({
       prompt: "ex ›",
       items,
-      onSelect: (item) => {
+      // First-word filter: typing "space new Work" still narrows to the
+      // `:space` entry. (Default substring-match would require the entire
+      // query to be in the item's display+secondary, which fails as soon
+      // as the user adds args.)
+      filterItem: (item, q) => {
         const cmd = item.data as { name: string; takesArgs: boolean };
-        startExMode(cmd.name + (cmd.takesArgs ? " " : ""));
+        const firstWord = q.trim().toLowerCase().split(/\s+/)[0] || "";
+        if (!firstWord) return true;
+        const hay = (cmd.name + " " + (item.secondary ?? "")).toLowerCase();
+        return hay.includes(firstWord);
+      },
+      onSelect: (item, query) => {
+        const cmd = item.data as { name: string; takesArgs: boolean };
+        // The picker input is the user's free-typing surface. Strategy:
+        //   - If query starts with the picked command's name, use it
+        //     verbatim (the user typed full "space new Work" → fire it).
+        //   - Else use just the command name (the user filtered to the
+        //     command by partial match, e.g. typed "sp" → fire ":space").
+        const q = (query || "").trim();
+        const lower = q.toLowerCase();
+        const useQueryAsArgs = lower.startsWith(cmd.name.toLowerCase() + " ")
+                            || lower === cmd.name.toLowerCase();
+        const exCmd = useQueryAsArgs ? q : cmd.name;
+        endExMode(exCmd);
       },
     });
   }
 
   function endExMode(cmd: string | null): void {
-    modeline.querySelector(".pfx-search-prefix")?.remove();
-    modeline.querySelector(".pfx-search-input")?.remove();
+    modeline.querySelector(".gjoa-search-prefix")?.remove();
+    modeline.querySelector(".gjoa-search-input")?.remove();
     for (const child of modeline.children) (child as HTMLElement).hidden = false;
     updateModeline();
 
@@ -1811,7 +1864,7 @@ export function makeVim(deps: VimDeps): VimAPI {
       }
       case "tabs": {
         // `:tabs`         — current window
-        // `:tabs all`     — all chrome windows (Palefox.tabs.all() aggregator)
+        // `:tabs all`     — all chrome windows (Gjoa.tabs.all() aggregator)
         const sub = (args[1] || "").toLowerCase();
         const scope = (sub === "all" || sub === "*") ? "all" : "current";
         openTabsPicker(scope as "current" | "all");
@@ -1848,6 +1901,85 @@ export function makeVim(deps: VimDeps): VimAPI {
       }
       case "help": {
         toggleWhichKey();
+        break;
+      }
+      case "tabpos": {
+        // :tabpos                → show current value
+        // :tabpos <sibling|root|child>  → set the pref
+        const valid = ["sibling", "root", "child"];
+        const arg = (args[1] || "").toLowerCase();
+        if (!arg) {
+          const cur = Services.prefs.getCharPref("gjoa.tabs.newTabPosition", "sibling");
+          modelineMsg(`:tabpos = ${cur} (options: sibling | root | child)`, 4000);
+          break;
+        }
+        if (!valid.includes(arg)) {
+          modelineMsg(`Usage: :tabpos <sibling|root|child>`, 3500);
+          break;
+        }
+        Services.prefs.setCharPref("gjoa.tabs.newTabPosition", arg);
+        modelineMsg(`:tabpos → ${arg}`, 2500);
+        break;
+      }
+      case "spc":
+      case "space": {
+        // :spc (canonical) / :space (legacy alias):
+        //   :spc new <name> | :spc rename <name> | :spc delete |
+        //   :spc switch <name> | :spc list (picker, default if no sub)
+        const sub = (args[1] || "list").toLowerCase();
+        const rest = args.slice(2).join(" ").trim();
+        switch (sub) {
+          case "new": {
+            const name = rest || "Untitled";
+            const s = spaces.create(name);
+            spaces.setActive(s.id);
+            modelineMsg(`:space new "${s.name}" → switched`, 2500);
+            break;
+          }
+          case "rename": {
+            if (!rest) { modelineMsg("Usage: :space rename <name>", 3000); break; }
+            spaces.rename(spaces.activeId(), rest);
+            modelineMsg(`:space rename "${rest}"`, 2500);
+            break;
+          }
+          case "delete": {
+            const cur = spaces.active();
+            const all = spaces.list();
+            if (all.length <= 1 || all[0]!.id === cur.id) {
+              modelineMsg("Can't delete the default space", 3000);
+              break;
+            }
+            spaces.delete(cur.id);
+            modelineMsg(`:space delete "${cur.name}"`, 2500);
+            break;
+          }
+          case "switch": {
+            if (!rest) { modelineMsg("Usage: :space switch <name>", 3000); break; }
+            const match = spaces.list().find(s => s.name.toLowerCase() === rest.toLowerCase());
+            if (!match) { modelineMsg(`No space named "${rest}"`, 3000); break; }
+            spaces.setActive(match.id);
+            modelineMsg(`:space → "${match.name}"`, 2000);
+            break;
+          }
+          case "list":
+          default: {
+            const items: PickerItem[] = spaces.list().map((s) => ({
+              display: s.name,
+              secondary: s.id === spaces.activeId() ? "(active)" : "",
+              data: s,
+            }));
+            picker.show({
+              prompt: "spaces ›",
+              items,
+              onSelect: (item) => {
+                const s = item.data as import("../spaces/types.ts").Space;
+                spaces.setActive(s.id);
+                modelineMsg(`:space → "${s.name}"`, 2000);
+              },
+            });
+            break;
+          }
+        }
         break;
       }
       case "history": {
@@ -1933,7 +2065,7 @@ export function makeVim(deps: VimDeps): VimAPI {
   }
 
   /** Restore a saved event into the live workspace as a subtree under a
-   *  synthetic group node. Re-keys all pfx-ids past state.nextTabId so
+   *  synthetic group node. Re-keys all gjoa-ids past state.nextTabId so
    *  there's no collision with currently-live tabs. Live tabs are NOT
    *  affected — restored content is added alongside.
    *
@@ -1944,7 +2076,7 @@ export function makeVim(deps: VimDeps): VimAPI {
    *       offset. Saved nodes whose parentId was null become children of
    *       the synthetic group.
    *    4. Push everything onto state.savedTabQueue, then open new tabs at
-   *       the saved URLs — palefox's onTabOpen → popSavedForTab pipeline
+   *       the saved URLs — gjoa's onTabOpen → popSavedForTab pipeline
    *       wires each newly-arriving tab to its pre-translated parentId.
    */
   async function restoreEvent(event: import("./history.ts").HistoryEvent): Promise<void> {
@@ -2102,17 +2234,17 @@ export function makeVim(deps: VimDeps): VimAPI {
     searchActive = true;
 
     for (const child of modeline.children) (child as HTMLElement).hidden = true;
-    modeline.setAttribute("pfx-visible", "true");
+    modeline.setAttribute("gjoa-visible", "true");
 
     const input = document.createElement("input");
     searchInput = input;
-    input.className = "pfx-search-input";
+    input.className = "gjoa-search-input";
     input.placeholder = "";
     modeline.appendChild(input);
     input.focus();
 
     const prefix = document.createXULElement("label") as HTMLElement;
-    prefix.className = "pfx-search-prefix";
+    prefix.className = "gjoa-search-prefix";
     prefix.setAttribute("value", "/");
     modeline.insertBefore(prefix, input);
 
@@ -2164,7 +2296,7 @@ export function makeVim(deps: VimDeps): VimAPI {
           panelActive = false;
           searchMatches = [];
           searchIdx = -1;
-          sidebarMain.dispatchEvent(new Event("pfx-dismiss"));
+          sidebarMain.dispatchEvent(new Event("gjoa-dismiss"));
           dismissedToContent = true;
         }
       } else if (searchMatches.length) {
@@ -2182,7 +2314,7 @@ export function makeVim(deps: VimDeps): VimAPI {
       // Tear down the search input + prefix from the modeline.
       if (searchInput) searchInput.remove();
       searchInput = null;
-      const prefix = modeline?.querySelector(".pfx-search-prefix");
+      const prefix = modeline?.querySelector(".gjoa-search-prefix");
       if (prefix) prefix.remove();
       for (const child of modeline.children) (child as HTMLElement).hidden = false;
       updateModeline();
@@ -2200,7 +2332,7 @@ export function makeVim(deps: VimDeps): VimAPI {
 
       if (searchInput) searchInput.remove();
       searchInput = null;
-      const prefix = modeline?.querySelector(".pfx-search-prefix");
+      const prefix = modeline?.querySelector(".gjoa-search-prefix");
       if (prefix) prefix.remove();
       for (const child of modeline.children) (child as HTMLElement).hidden = false;
       updateModeline();
@@ -2254,7 +2386,7 @@ export function makeVim(deps: VimDeps): VimAPI {
 
   function startRename(row: Row): void {
     if (!row) return;
-    const label = row.querySelector<HTMLElement>(".pfx-tab-label");
+    const label = row.querySelector<HTMLElement>(".gjoa-tab-label");
     if (!label) return;
     const d = dataOf(row);
     if (!d) return;
@@ -2264,11 +2396,11 @@ export function makeVim(deps: VimDeps): VimAPI {
     // <span> vs <input> render text with different baselines and metrics
     // no matter how much CSS you throw at them. Mutating the same element
     // means same font, same line-height, same flex slot — zero layout
-    // shift. The focus ring lives on .pfx-tab-row:focus-within (CSS).
+    // shift. The focus ring lives on .gjoa-tab-row:focus-within (CSS).
     const original = d.name || (row._tab ? row._tab.label : "") || "";
     label.textContent = original;
     label.setAttribute("contenteditable", "plaintext-only");
-    label.classList.add("pfx-renaming");
+    label.classList.add("gjoa-renaming");
     label.style.removeProperty("overflow");
     label.style.removeProperty("text-overflow");
     label.focus();
@@ -2288,7 +2420,7 @@ export function makeVim(deps: VimDeps): VimAPI {
       done = true;
       const value = (label!.textContent || "").trim();
       label!.removeAttribute("contenteditable");
-      label!.classList.remove("pfx-renaming");
+      label!.classList.remove("gjoa-renaming");
       window.getSelection?.()?.removeAllRanges();
       if (commit) {
         if (row._group) {
@@ -2327,5 +2459,6 @@ export function makeVim(deps: VimDeps): VimAPI {
     cloneAsSibling, startRename,
     consumePendingCursorMove,
     runExCommand: (cmd: string) => endExMode(cmd),
+    openExCommandPicker,
   };
 }

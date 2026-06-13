@@ -11,7 +11,7 @@
 // INTERFACE
 // =============================================================================
 
-/** Chrome elements palefox depends on. Single seam for any future Firefox
+/** Chrome elements gjoa depends on. Single seam for any future Firefox
  *  rename — change here, not at every callsite. Returns null when an
  *  element doesn't exist (e.g. on a Firefox build that's removed it). */
 export const ids = {

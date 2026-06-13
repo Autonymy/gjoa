@@ -1,7 +1,7 @@
 // Ambient declarations for the Mozilla chrome scripting environment.
 //
-// These are the chrome globals that fx-autoconfig exposes inside palefox's
-// privileged scope. The high-traffic ones are typed from real palefox use
+// These are the chrome globals the subscript loader exposes inside the
+// privileged scope. The high-traffic ones are typed from real gjoa use
 // (every method here is reached for by some adapter or feature module);
 // the long tail stays `any` until a specific call site benefits from
 // tighter checking.
@@ -114,7 +114,7 @@ declare global {
     };
 
     /** Window mediator — enumerates browser chrome windows in this Firefox
-     *  process. Used by `Palefox.tabs.all()` to gather tabs across windows. */
+     *  process. Used by `Gjoa.tabs.all()` to gather tabs across windows. */
     wm: {
       getEnumerator(windowType: string): {
         hasMoreElements(): boolean;
@@ -162,6 +162,11 @@ declare global {
     }>;
     exists(path: string): Promise<boolean>;
     remove(path: string): Promise<void>;
+    move(
+      sourcePath: string,
+      destPath: string,
+      opts?: { noOverwrite?: boolean },
+    ): Promise<void>;
     makeDirectory(
       path: string,
       opts?: { ignoreExisting?: boolean; createAncestors?: boolean },
@@ -241,7 +246,13 @@ declare global {
     reloadTab(tab: import("../tabs/types.ts").Tab): void;
     /** Modern Firefox accepts either a number or `{ tabIndex: number }`. */
     moveTabTo(tab: import("../tabs/types.ts").Tab, index: number | { tabIndex: number }): void;
-    addTab(uri: string, opts: { triggeringPrincipal: unknown }): import("../tabs/types.ts").Tab;
+    addTab(
+      uri: string,
+      opts: {
+        triggeringPrincipal: unknown;
+        inBackground?: boolean;
+      },
+    ): import("../tabs/types.ts").Tab;
     /** Stable: open a tab in a new window. */
     replaceTabWithWindow(tab: import("../tabs/types.ts").Tab): unknown;
     /** Newer: open multiple tabs in a new window. May be absent on
@@ -277,7 +288,7 @@ declare global {
   const gNavToolbox: HTMLElement;
 
   // ============================================================
-  // Subsystems palefox touches occasionally — loose for now
+  // Subsystems gjoa touches occasionally — loose for now
   // ============================================================
 
   const SessionStore: {
@@ -291,7 +302,7 @@ declare global {
     [other: string]: unknown;
   };
 
-  /** Native tab context menu. Palefox occasionally piggybacks on its
+  /** Native tab context menu. Gjoa occasionally piggybacks on its
    *  contextTab(s) state for split-view actions. */
   const TabContextMenu: {
     contextTab: import("../tabs/types.ts").Tab | null;
@@ -305,13 +316,21 @@ declare global {
     [other: string]: unknown;
   };
 
+  /** Modern browser-window command surface. `BrowserCommands.openTab()` is
+   *  what the native (+) button binds to. May be absent on builds where the
+   *  command was renamed; callers should guard with typeof checks. */
+  const BrowserCommands: {
+    openTab?(): void;
+    [other: string]: unknown;
+  };
+
   const FirefoxViewHandler: {
     readonly tab: import("../tabs/types.ts").Tab | null;
     [other: string]: unknown;
   };
 
   /** WebExtension API surface — only available in some contexts; loosely
-   *  typed since palefox reaches for it opportunistically. */
+   *  typed since gjoa reaches for it opportunistically. */
   const browser: { readonly [api: string]: unknown };
 
   // ============================================================
@@ -323,31 +342,33 @@ declare global {
     createXULElement(tag: string): HTMLElement;
   }
 
-  /** Palefox decorates DOM elements (the rows it builds) with these
+  /** Gjoa decorates DOM elements (the rows it builds) with these
    *  private refs. Typing them as optional on every Element lets walks
-   *  through siblings/children avoid per-call casts. */
+   *  through siblings/children avoid per-call casts.
+   *
+   *  `hidden` and `isContentEditable` are declared here so DOM walks via
+   *  `nextElementSibling` (typed as `Element | null`) can read them
+   *  without per-call casts. Types match HTMLElement so the augmentation
+   *  doesn't break subtype variance. */
   interface Element {
     _tab?: import("../tabs/types.ts").Tab;
     _group?: import("../tabs/types.ts").Group;
-    /** XUL/HTML elements palefox touches all expose `hidden`, `style`,
-     *  `isContentEditable` — DOM lib types Element more strictly; this
-     *  augmentation matches our runtime reality. */
-    hidden?: boolean;
-    isContentEditable?: boolean;
+    readonly hidden?: boolean | "until-found";
+    readonly isContentEditable?: boolean;
   }
 
   // ============================================================
   // Test-only debug API
   // ============================================================
 
-  /** Only present when `pfx.test.exposeAPI` pref is true (set in
+  /** Only present when `gjoa.test.exposeAPI` pref is true (set in
    *  test-profile user.js by tools/test-driver/profile.ts). Production
    *  builds never expose this. Typed loosely — surface is intentionally
    *  fluid; tests assert on shape themselves. */
   interface Window {
-    pfxTest?: Record<string, unknown>;
-    /** Palefox semantic platform — set during init. Typed strictly via
-     *  `(window as ...).Palefox`-style cast at the call site. */
-    Palefox?: unknown;
+    gjoaTest?: Record<string, unknown>;
+    /** Gjoa semantic platform — set during init. Typed strictly via
+     *  `(window as ...).Gjoa`-style cast at the call site. */
+    Gjoa?: unknown;
   }
 }

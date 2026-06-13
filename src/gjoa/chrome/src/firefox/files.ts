@@ -2,7 +2,7 @@
 //
 // Manifest entry: "IOUtils + PathUtils" (Tier 0, rock-stable).
 // All paths are profile-relative by default. Absolute paths are accepted
-// but discouraged (palefox shouldn't write outside its own profile).
+// but discouraged (gjoa shouldn't write outside its own profile).
 
 // `Services.dirsvc`, `Ci.nsIFile`, `IOUtils`, `PathUtils` are typed via
 // src/types/chrome.d.ts.

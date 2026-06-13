@@ -53,6 +53,21 @@ const TARGET_BROWSER_URL = "chrome://browser/content/browser.xhtml";
 const loadedSheets = new Set();
 let observerRegistered = false;
 
+// Production-mode bundle list. These are the chrome bundles baked into
+// omni.ja by `bun run chrome:dist` + tools/prep/chrome-bake.ts. Keep in
+// sync with tools/chrome-bundle/build.config.ts entries (minus the
+// `gjoa-hello.uc.js` smoke-test bundle, which we don't ship).
+const PROD_SCRIPTS = [
+  "gjoa-security.uc.js",
+  "gjoa-drawer.uc.js",
+  "gjoa-tabs.uc.js",
+];
+const PROD_STYLES = [
+  "gjoa.uc.css",
+  "gjoa-tabs.uc.css",
+  "gjoa-which-key.uc.css",
+];
+
 // -----------------------------------------------------------------------------
 // Source resolution
 // -----------------------------------------------------------------------------
@@ -84,56 +99,61 @@ function listFiles(dir, suffix) {
 // Loading
 // -----------------------------------------------------------------------------
 
-function loadScriptInto(window, file) {
-  const url = Services.io.newFileURI(file).spec;
+function loadScriptUrlInto(window, url, label) {
   try {
     Services.scriptloader.loadSubScriptWithOptions(url, {
       target: window,
       ignoreCache: true,
     });
-    console.log(`gjoa-loader: loaded script ${file.leafName}`);
+    console.log(`gjoa-loader: loaded script ${label}`);
   } catch (e) {
-    console.error(`gjoa-loader: script ${file.leafName} threw at load time`, e);
+    console.error(`gjoa-loader: script ${label} threw at load time`, e);
   }
 }
 
-function registerStyleSheet(file) {
-  const url = Services.io.newFileURI(file).spec;
+function registerStyleSheetUrl(url, label) {
   if (loadedSheets.has(url)) return;
   try {
     const uri = Services.io.newURI(url);
     STYLE_SHEET_SERVICE.loadAndRegisterSheet(uri, STYLE_SHEET_SERVICE.AGENT_SHEET);
     loadedSheets.add(url);
-    console.log(`gjoa-loader: registered stylesheet ${file.leafName}`);
+    console.log(`gjoa-loader: registered stylesheet ${label}`);
   } catch (e) {
-    console.error(`gjoa-loader: stylesheet ${file.leafName} threw at register time`, e);
+    console.error(`gjoa-loader: stylesheet ${label} threw at register time`, e);
   }
+}
+
+function loadScriptInto(window, file) {
+  loadScriptUrlInto(window, Services.io.newFileURI(file).spec, file.leafName);
+}
+
+function registerStyleSheet(file) {
+  registerStyleSheetUrl(Services.io.newFileURI(file).spec, file.leafName);
 }
 
 function loadIntoChromeWindow(window) {
   const dev = devModeDir();
-  if (!dev) {
-    // Production: nothing yet. Future commit will load from
-    // chrome://gjoa/content/scripts/*.uc.js and chrome://gjoa/content/styles/*.uc.css.
-    // For now, no-op — production builds simply ship without the chrome layer.
+  if (dev) {
+    const jsDir = dev.clone();
+    jsDir.append("JS");
+    const cssDir = dev.clone();
+    cssDir.append("CSS");
+    for (const css of listFiles(cssDir, ".uc.css")) {
+      registerStyleSheet(css);
+    }
+    for (const js of listFiles(jsDir, ".uc.js")) {
+      loadScriptInto(window, js);
+    }
     return;
   }
 
-  const jsDir = dev.clone();
-  jsDir.append("JS");
-  const cssDir = dev.clone();
-  cssDir.append("CSS");
-
-  // Stylesheets are global — register once (loadAndRegisterSheet is idempotent
-  // via our loadedSheets cache anyway).
-  for (const css of listFiles(cssDir, ".uc.css")) {
-    registerStyleSheet(css);
+  // Production: load from chrome://gjoa/content/{scripts,styles}/, baked
+  // into omni.ja by `bun run chrome:dist` + tools/prep/chrome-bake.ts.
+  for (const css of PROD_STYLES) {
+    registerStyleSheetUrl(`chrome://gjoa/content/styles/${css}`, css);
   }
-
-  // Scripts are per-window — load each one against the freshly-opened
-  // chrome window.
-  for (const js of listFiles(jsDir, ".uc.js")) {
-    loadScriptInto(window, js);
+  for (const js of PROD_SCRIPTS) {
+    loadScriptUrlInto(window, `chrome://gjoa/content/scripts/${js}`, js);
   }
 }
 
@@ -163,7 +183,7 @@ export const GjoaLoader = {
     if (dev) {
       console.log(`gjoa-loader: dev mode active — sourcing chrome from ${dev.path}`);
     } else {
-      console.log("gjoa-loader: production mode (no gjoa-dev/ override; chrome scripts not loaded)");
+      console.log("gjoa-loader: production mode — loading chrome bundles from chrome://gjoa/content/");
     }
   },
 };

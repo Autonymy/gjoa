@@ -1,11 +1,11 @@
 /* ==UserScript==
-// @name           palefox-tabs
+// @name           gjoa-tabs
 // @description    Sidebar tab panel styles
 // @include        main
 // ==/UserScript== */
 
-/* Tab-panel styles. Loaded by palefox loader; targets DOM built by
- * palefox-tabs.uc.js. Overwritten on update — do not edit. */
+/* Tab-panel styles. Loaded by gjoa loader; targets DOM built by
+ * gjoa-tabs.uc.js. Overwritten on update — do not edit. */
 
 
 /* #region sidebar containers */
@@ -13,7 +13,46 @@
 /* Hide native vertical tab strip — we render our own panel. */
 #vertical-tabs { display: none !important; }
 
-/* `#sidebar-main > sidebar-main` styling lives in palefox.css under
+/* Active-space header — workspace identifier above the tab list.
+ *
+ * Plain text. No dot marker, no chevron — just the space name. Both
+ * created visual nesting cues that misled users into reading the tab
+ * list below as "children" of the header. Click still opens the
+ * spaces picker (handled in tabs/index.ts).
+ *
+ * Aligned to --gjoa-sidebar-inset so the label sits on the same
+ * vertical content rail as the top-row icons. */
+#gjoa-space-header {
+  display: flex !important;
+  flex-direction: row !important;
+  align-items: center !important;
+  margin: 8px var(--gjoa-sidebar-inset, 10px) 4px var(--gjoa-sidebar-inset, 10px) !important;
+  padding: 4px 8px !important;
+  border-radius: 6px !important;
+  cursor: pointer !important;
+  user-select: none !important;
+  -moz-user-focus: ignore !important;
+  transition: background-color 120ms ease !important;
+}
+#gjoa-space-header-label {
+  font-size: 13px !important;
+  font-weight: 600 !important;
+  letter-spacing: -0.01em !important;
+  color: color-mix(in oklab, currentColor 80%, transparent) !important;
+  margin: 0 !important;
+}
+#gjoa-space-header:hover {
+  background: color-mix(in oklab, currentColor 8%, transparent) !important;
+}
+#gjoa-space-header:hover #gjoa-space-header-label {
+  color: currentColor !important;
+}
+/* Icons-only (collapsed sidebar): hide — no room for a text identifier. */
+#gjoa-space-header[gjoa-icons-only] {
+  display: none !important;
+}
+
+/* `#sidebar-main > sidebar-main` styling lives in gjoa.css under
  * #region sidebar-main — kept there because it's chrome restructuring,
  * not tab-panel concern. */
 
@@ -22,7 +61,7 @@
 
 /* #region tab panel */
 
-#pfx-tab-panel {
+#gjoa-tab-panel {
   flex: 1 !important;
   max-height: 74%;
   overflow-y: auto !important;
@@ -30,9 +69,9 @@
   scrollbar-width: thin;
   /* Explicit opaque bg so a translucent ancestor / compositor blur can't
    * paint through the panel even if #sidebar-main's bg got clobbered. */
-  background-color: var(--pfx-bg);
+  background-color: var(--gjoa-bg);
 }
-#pfx-tab-panel:focus { outline: none; }
+#gjoa-tab-panel:focus { outline: none; }
 
 /* Icons-only mode (collapsed sidebar layout) */
 /* Icons-only sidebar (collapsed): force both the pinned and panel containers
@@ -41,7 +80,7 @@
  * the strip has breathing room — this is what the old icon-grid CSS used to
  * give us via horizontal padding. :not([hidden]) so an empty pinned
  * container actually stays hidden when there are no pinned tabs. */
-:is(#pfx-pinned-container, #pfx-tab-panel)[pfx-icons-only]:not([hidden]) {
+:is(#gjoa-pinned-container, #gjoa-tab-panel)[gjoa-icons-only]:not([hidden]) {
   display: flex !important;
   flex-direction: column !important;
   align-items: center !important;
@@ -49,14 +88,14 @@
   min-width: 50px !important;
 }
 
-#pfx-tab-panel[pfx-icons-only] .pfx-tab-label,
-#pfx-tab-panel[pfx-icons-only] .pfx-tab-chevron {
+#gjoa-tab-panel[gjoa-icons-only] .gjoa-tab-label,
+#gjoa-tab-panel[gjoa-icons-only] .gjoa-tab-chevron {
   display: none !important;
 }
-#pfx-tab-panel[pfx-icons-only] .pfx-group-row {
+#gjoa-tab-panel[gjoa-icons-only] .gjoa-group-row {
   display: none !important;
 }
-#pfx-tab-panel[pfx-icons-only] .pfx-tab-row {
+#gjoa-tab-panel[gjoa-icons-only] .gjoa-tab-row {
   width: 24px;
   height: 24px;
   padding: 4px !important;
@@ -66,11 +105,11 @@
   min-height: unset;
   box-sizing: content-box;
 }
-#pfx-tab-panel[pfx-icons-only] .pfx-tab-icon {
+#gjoa-tab-panel[gjoa-icons-only] .gjoa-tab-icon {
   margin: 0;
 }
 
-#pfx-tab-spacer {
+#gjoa-tab-spacer {
   min-height: 20px;
   -moz-window-dragging: drag;
 }
@@ -81,35 +120,35 @@
 /* #region pinned tabs — vertical list above the unpinned tree, floating divider */
 
 /* No `display: flex` here — keep the XUL vbox default so the container
- * stretches to the full sidebar width like #pfx-tab-panel does. Rows center
+ * stretches to the full sidebar width like #gjoa-tab-panel does. Rows center
  * themselves via `margin: 2px auto` in icons-only mode (see below).
  * Horizontal mode and empty-zone state override `display` explicitly. */
-#pfx-pinned-container {
-  /* No padding. The urlbar-toolbar (palefox.css) owns the gap above the
+#gjoa-pinned-container {
+  /* No padding. The urlbar-toolbar (gjoa.css) owns the gap above the
    * first row; the divider's `::after` y-margin owns the gap below. So
    * showing/hiding the pinned container can't shift the tab list. */
   padding: 0;
-  background-color: var(--pfx-bg);
+  background-color: var(--gjoa-bg);
 }
-#pfx-pinned-container[hidden] {
+#gjoa-pinned-container[hidden] {
   display: none !important;
 }
 /* Floating divider: thin inset line between pinned and unpinned tab
  * areas. Hidden when the pinned container has no rows — there's nothing
  * to separate. (Active during drag the container is un-hidden as a
  * thin hot-strip; the divider would visually duplicate that line.) */
-#pfx-pinned-container:has(.pfx-tab-row)::after {
+#gjoa-pinned-container:has(.gjoa-tab-row)::after {
   content: "";
   display: block;
   height: 1px;
   /* Y-margin matches the urlbar-toolbar's 12px so the divider sits at a
    * consistent rhythm; X-margin stays at the sidebar inset. */
-  margin: 12px var(--pfx-sidebar-inset);
+  margin: 12px var(--gjoa-sidebar-inset);
   background: color-mix(in srgb, currentColor 15%, transparent);
 }
 /* In icons-only mode the container is `align-items: center` so flex items
  * size to content — the empty ::after would be 0-width. Stretch it back. */
-#pfx-pinned-container[pfx-icons-only]::after {
+#gjoa-pinned-container[gjoa-icons-only]::after {
   align-self: stretch;
 }
 
@@ -119,11 +158,11 @@
 
 /* Icons-only sidebar — match the tree panel's icons-only treatment so pinned
  * and unpinned rows collapse identically. */
-#pfx-pinned-container[pfx-icons-only] .pfx-tab-label,
-#pfx-pinned-container[pfx-icons-only] .pfx-tab-chevron {
+#gjoa-pinned-container[gjoa-icons-only] .gjoa-tab-label,
+#gjoa-pinned-container[gjoa-icons-only] .gjoa-tab-chevron {
   display: none !important;
 }
-#pfx-pinned-container[pfx-icons-only] .pfx-tab-row {
+#gjoa-pinned-container[gjoa-icons-only] .gjoa-tab-row {
   width: 24px;
   height: 24px;
   padding: 4px !important;
@@ -133,7 +172,7 @@
   min-height: unset;
   box-sizing: content-box;
 }
-#pfx-pinned-container[pfx-icons-only] .pfx-tab-icon {
+#gjoa-pinned-container[gjoa-icons-only] .gjoa-tab-icon {
   margin: 0;
 }
 
@@ -144,11 +183,11 @@
 /* #region rows */
 
 /* Shared row base */
-.pfx-tab-row, .pfx-group-row {
+.gjoa-tab-row, .gjoa-group-row {
   padding: 6px 8px;
   padding-inline-end: 6px;
   border-radius: 4px;
-  margin: 2px var(--pfx-sidebar-inset);
+  margin: 2px var(--gjoa-sidebar-inset);
   min-height: 28px;
   cursor: default;
   transition: padding-inline-start 0.15s ease;
@@ -156,7 +195,7 @@
 
 /* Horizontal mode: bump horizontal gap between adjacent tabs (axis flips —
  * stacking is left-to-right, so spacing lives on the inline axis). */
-:is(#pfx-tab-panel, #pfx-pinned-container)[pfx-horizontal] :is(.pfx-tab-row, .pfx-group-row) {
+:is(#gjoa-tab-panel, #gjoa-pinned-container)[gjoa-horizontal] :is(.gjoa-tab-row, .gjoa-group-row) {
   margin: 0 2px;
 }
 /* Visual states (intentionally distinct from each other so ambiguous
@@ -165,27 +204,27 @@
  *   :hover       — 5% currentColor overlay. Subtle, transient mouse cue.
  *   [selected]   — elevated surface + accent left-edge stripe. The
  *                  Firefox selectedTab; one row at a time.
- *   [pfx-cursor] — 1px outline (defined further down). The vim cursor;
+ *   [gjoa-cursor] — 1px outline (defined further down). The vim cursor;
  *                  follows selection by default but can decouple via
  *                  panel-mode j/k navigation that doesn't commit.
  */
-.pfx-tab-row:hover, .pfx-group-row:hover {
+.gjoa-tab-row:hover, .gjoa-group-row:hover {
   background: color-mix(in srgb, currentColor 5%, transparent);
 }
-.pfx-tab-row[selected] {
-  background: var(--pfx-bg-elevated);
+.gjoa-tab-row[selected] {
+  background: var(--gjoa-bg-elevated);
 }
 
 /* Favicon */
-.pfx-tab-icon {
+.gjoa-tab-icon {
   width: 16px; height: 16px;
   margin-inline-end: 6px;
   flex-shrink: 0;
 }
-.pfx-tab-row[busy] .pfx-tab-icon { opacity: 0.4; }
+.gjoa-tab-row[busy] .gjoa-tab-icon { opacity: 0.4; }
 
 /* Label */
-.pfx-tab-label {
+.gjoa-tab-label {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -193,21 +232,22 @@
 }
 
 /* Group rows */
-.pfx-group-row {
+.gjoa-group-row {
   font-weight: 600;
   opacity: 0.85;
 }
-.pfx-group-marker {
+.gjoa-group-marker {
   margin-inline-end: 6px;
   font-size: 8px;
   opacity: 0.5;
   flex-shrink: 0;
 }
 
-/* Collapse indicator — real XUL <image> child anchored to the row's far
- * right edge. margin-inline-start: auto pushes it past the label's flex:1
- * so the chevron always sits flush right with breathing room. */
-.pfx-tab-chevron {
+/* Collapse indicator — real XUL <image> child. Right-anchored via
+ * margin-inline-start: auto so it sits flush-right when visible.
+ * display:none by default; CSS reveals it for collapsed rows with
+ * children (see [gjoa-collapsed] rule lower down). */
+.gjoa-tab-chevron {
   width: 12px; height: 12px;
   margin-inline-start: auto;
   margin-inline-end: 4px;
@@ -218,7 +258,7 @@
   fill: currentColor;
   opacity: 0.5;
 }
-[pfx-collapsed] .pfx-tab-chevron {
+[gjoa-collapsed] .gjoa-tab-chevron {
   display: inline-block;
 }
 
@@ -227,11 +267,11 @@
 
 /* #region vim cursor */
 
-[pfx-cursor] {
+[gjoa-cursor] {
   outline: 1px solid color-mix(in srgb, currentColor 35%, transparent);
   outline-offset: -1px;
 }
-:root[pfx-mode="insert"] [pfx-cursor] {
+:root[gjoa-mode="insert"] [gjoa-cursor] {
   outline-color: color-mix(in srgb, currentColor 10%, transparent);
 }
 
@@ -240,7 +280,7 @@
 
 /* #region modeline — absolute overlay at bottom, hidden by default */
 
-#pfx-modeline {
+#gjoa-modeline {
   position: fixed;
   bottom: 0;
   left: 0;
@@ -255,25 +295,25 @@
   z-index: 100;
   display: none;
 }
-#pfx-modeline[pfx-visible] {
+#gjoa-modeline[gjoa-visible] {
   display: flex;
 }
-#pfx-modeline-mode {
+#gjoa-modeline-mode {
   font-weight: bold;
   margin-inline-end: 12px;
 }
-#pfx-modeline-chord {
+#gjoa-modeline-chord {
   opacity: 0.6;
 }
-#pfx-modeline-msg {
+#gjoa-modeline-msg {
   opacity: 0.5;
   margin-inline-start: 8px;
 }
-:root[pfx-mode="normal"] #pfx-modeline-mode { color: #7aa2f7; }
-:root[pfx-mode="insert"] #pfx-modeline-mode { color: #9ece6a; }
+:root[gjoa-mode="normal"] #gjoa-modeline-mode { color: #7aa2f7; }
+:root[gjoa-mode="insert"] #gjoa-modeline-mode { color: #9ece6a; }
 
 /* Search input (in modeline) */
-.pfx-search-prefix {
+.gjoa-search-prefix {
   font-family: monospace;
   font-size: 11px;
   font-weight: bold;
@@ -281,7 +321,7 @@
   margin: 0 !important;
   padding: 0 !important;
 }
-.pfx-search-input {
+.gjoa-search-input {
   flex: 1;
   min-width: 0;
   padding: 0 !important;
@@ -301,10 +341,10 @@
 /* #region rename input */
 
 /* Rename mode — vim.ts toggles `contenteditable` on the existing
- * .pfx-tab-label and adds .pfx-renaming. No new element enters the DOM,
+ * .gjoa-tab-label and adds .gjoa-renaming. No new element enters the DOM,
  * so the row's box is unchanged: same font, same line-height, same flex
  * slot. The teal focus ring lives on the row via :focus-within. */
-.pfx-tab-label.pfx-renaming {
+.gjoa-tab-label.gjoa-renaming {
   overflow: visible;
   text-overflow: clip;
   white-space: nowrap;
@@ -314,9 +354,9 @@
   -moz-user-select: text;
 }
 
-.pfx-tab-row:focus-within,
-.pfx-group-row:focus-within {
-  outline: 2px solid var(--pfx-accent);
+.gjoa-tab-row:focus-within,
+.gjoa-group-row:focus-within {
+  outline: 2px solid var(--gjoa-accent);
   outline-offset: -1px;
   border-radius: 4px;
 }
@@ -326,7 +366,7 @@
 
 /* #region multi-select */
 
-[pfx-multi] {
+[gjoa-multi] {
   background: color-mix(in srgb, currentColor 10%, transparent);
 }
 
@@ -340,14 +380,14 @@
  * adds nothing visually but introduces a stuck-attribute bug class
  * whenever dragend fails to fire (source row destroyed mid-drop, etc.) —
  * the row keeps the outline indefinitely and looks selected. By having
- * no [pfx-dragging] CSS, the attribute can stick harmlessly. */
-#pfx-drop-indicator {
+ * no [gjoa-dragging] CSS, the attribute can stick harmlessly. */
+#gjoa-drop-indicator {
   height: 2px;
   background: color-mix(in srgb, currentColor 50%, transparent);
-  margin: 0 var(--pfx-sidebar-inset);
+  margin: 0 var(--gjoa-sidebar-inset);
   border-radius: 1px;
 }
-#pfx-drop-indicator[pfx-drop-child] {
+#gjoa-drop-indicator[gjoa-drop-child] {
   height: 0;
   border: 1px dashed color-mix(in srgb, currentColor 35%, transparent);
   margin-top: -1px;
@@ -355,12 +395,12 @@
 }
 /* Horizontal-mode indicator is fixed-positioned by JS; ignore the in-flow
  * margin/border-radius and just paint a solid bar. */
-#pfx-drop-indicator[pfx-fixed] {
+#gjoa-drop-indicator[gjoa-fixed] {
   margin: 0;
   border: none;
   z-index: 9999;
 }
-#pfx-drop-indicator[pfx-fixed][pfx-drop-child] {
+#gjoa-drop-indicator[gjoa-fixed][gjoa-drop-child] {
   height: 2px;
   border: none;
 }
@@ -370,10 +410,10 @@
 
 /* #region horizontal mode — replace native tab strip */
 
-:root[pfx-horizontal-tabs] #tabbrowser-tabs {
+:root[gjoa-horizontal-tabs] #tabbrowser-tabs {
   display: none !important;
 }
-:root[pfx-horizontal-tabs] #TabsToolbar {
+:root[gjoa-horizontal-tabs] #TabsToolbar {
   position: relative !important;
   z-index: 100 !important;
   /* Popout cells extend below TabsToolbar's row 1 height. overflow:visible
@@ -384,18 +424,18 @@
 }
 
 /* Opt-in: place the tab strip BELOW nav-bar in horizontal mode (default
- * Firefox order has tabs on top). Set pfx.toolbar.tabsBelowNavBar = true
+ * Firefox order has tabs on top). Set gjoa.toolbar.tabsBelowNavBar = true
  * in about:config to flip. */
-@media -moz-pref("pfx.toolbar.tabsBelowNavBar") {
-  :root[pfx-horizontal-tabs] #navigator-toolbox {
+@media -moz-pref("gjoa.toolbar.tabsBelowNavBar") {
+  :root[gjoa-horizontal-tabs] #navigator-toolbox {
     display: flex !important;
     flex-direction: column !important;
   }
-  :root[pfx-horizontal-tabs] #TabsToolbar { order: 1; }
-  :root[pfx-horizontal-tabs] #PersonalToolbar { order: 2; }
+  :root[gjoa-horizontal-tabs] #TabsToolbar { order: 1; }
+  :root[gjoa-horizontal-tabs] #PersonalToolbar { order: 2; }
 }
 /* Don't let navigator-toolbox clip TabsToolbar's popouts. */
-:root[pfx-horizontal-tabs] #navigator-toolbox {
+:root[gjoa-horizontal-tabs] #navigator-toolbox {
   overflow: visible !important;
 }
 
@@ -404,7 +444,7 @@
  * vertical divider (border-right on the pinned container).
  * `:not([hidden])` keeps an empty pinned container hidden (no rows = no
  * grid to lay out). */
-:is(#pfx-tab-panel, #pfx-pinned-container)[pfx-horizontal]:not([hidden]) {
+:is(#gjoa-tab-panel, #gjoa-pinned-container)[gjoa-horizontal]:not([hidden]) {
   display: grid !important;
   /* No min — columns shrink infinitely small as more tabs arrive,
    * rather than scrolling offscreen. */
@@ -418,10 +458,10 @@
   z-index: 2;
 }
 /* Panel fills the remaining toolbar width; pinned sizes to its contents. */
-#pfx-tab-panel[pfx-horizontal] {
+#gjoa-tab-panel[gjoa-horizontal] {
   flex: 1 1 0 !important;
 }
-#pfx-pinned-container[pfx-horizontal] {
+#gjoa-pinned-container[gjoa-horizontal] {
   flex: 0 0 auto !important;
   padding: 0;
   margin-right: 6px;
@@ -429,32 +469,32 @@
   border-right: 1px solid color-mix(in srgb, currentColor 15%, transparent);
 }
 /* Vertical divider replaces the horizontal one in horizontal mode. */
-#pfx-pinned-container[pfx-horizontal]::after {
+#gjoa-pinned-container[gjoa-horizontal]::after {
   display: none;
 }
 
-:is(#pfx-tab-panel, #pfx-pinned-container)[pfx-horizontal] .pfx-tab-row,
-:is(#pfx-tab-panel, #pfx-pinned-container)[pfx-horizontal] .pfx-group-row {
+:is(#gjoa-tab-panel, #gjoa-pinned-container)[gjoa-horizontal] .gjoa-tab-row,
+:is(#gjoa-tab-panel, #gjoa-pinned-container)[gjoa-horizontal] .gjoa-group-row {
   margin: 1px;
   position: relative;
 }
 
 /* Popout children — solid background so they obscure whatever paints
  * underneath. Applies to popouts in BOTH the panel and pinned containers.
- * `var(--pfx-bg-popout)` defaults to an opaque literal so this can't bleed
- * the toolbar / urlbar / page through (see palefox.css palette region). */
-:is(#pfx-tab-panel, #pfx-pinned-container)[pfx-horizontal] [pfx-popout-child] {
-  background: var(--pfx-bg-popout) !important;
+ * `var(--gjoa-bg-popout)` defaults to an opaque literal so this can't bleed
+ * the toolbar / urlbar / page through (see gjoa.css palette region). */
+:is(#gjoa-tab-panel, #gjoa-pinned-container)[gjoa-horizontal] [gjoa-popout-child] {
+  background: var(--gjoa-bg-popout) !important;
   background-image: none !important;
   margin-top: 0;
   margin-bottom: 0;
 }
 /* Shadow on the last child in each popout column */
-#pfx-tab-panel[pfx-horizontal] [pfx-popout-child]:not(:has(+ [pfx-popout-child])) {
+#gjoa-tab-panel[gjoa-horizontal] [gjoa-popout-child]:not(:has(+ [gjoa-popout-child])) {
   box-shadow: 0 2px 8px rgba(0,0,0,0.25);
 }
 
-#pfx-tab-panel[pfx-horizontal] #pfx-tab-spacer {
+#gjoa-tab-panel[gjoa-horizontal] #gjoa-tab-spacer {
   display: none !important;
 }
 
@@ -474,7 +514,7 @@
  * so a full-height picker still has ~32px breathing room from the
  * viewport bottom. Shorter result sets just leave whitespace below
  * instead of yanking the input down. */
-#pfx-picker {
+#gjoa-picker {
   position: fixed !important;
   left: 50% !important;
   top: calc(100vh - 60vh - 32px) !important;
@@ -483,43 +523,43 @@
   z-index: 9999 !important;
   width: min(720px, 90vw) !important;
   max-height: 60vh !important;
-  background: var(--pfx-bg-elevated) !important;
-  color: var(--pfx-fg) !important;
-  border: 1px solid var(--pfx-border) !important;
+  background: var(--gjoa-bg-elevated) !important;
+  color: var(--gjoa-fg) !important;
+  border: 1px solid var(--gjoa-border) !important;
   border-radius: 8px !important;
   box-shadow: 0 8px 32px rgba(0, 0, 0, 0.32) !important;
-  font-family: var(--pfx-font, system-ui, sans-serif) !important;
+  font-family: var(--gjoa-font, system-ui, sans-serif) !important;
   font-size: 13px !important;
   display: flex !important;
   flex-direction: column !important;
   overflow: hidden !important;
 }
 
-#pfx-picker[hidden] { display: none !important; }
+#gjoa-picker[hidden] { display: none !important; }
 
-#pfx-picker .pfx-picker-input-box {
+#gjoa-picker .gjoa-picker-input-box {
   display: flex !important;
   align-items: center !important;
   gap: 8px !important;
   padding: 10px 14px !important;
-  border-bottom: 1px solid var(--pfx-border) !important;
+  border-bottom: 1px solid var(--gjoa-border) !important;
 }
 
-#pfx-picker .pfx-picker-prompt {
-  color: var(--pfx-accent) !important;
+#gjoa-picker .gjoa-picker-prompt {
+  color: var(--gjoa-accent) !important;
   font-weight: 600 !important;
 }
 
-#pfx-picker .pfx-picker-input {
+#gjoa-picker .gjoa-picker-input {
   flex: 1 !important;
   background: transparent !important;
   border: none !important;
   outline: none !important;
-  color: var(--pfx-fg) !important;
+  color: var(--gjoa-fg) !important;
   font: inherit !important;
 }
 
-#pfx-picker .pfx-picker-list {
+#gjoa-picker .gjoa-picker-list {
   flex: 1 !important;
   overflow-y: auto !important;
   padding: 4px 0 !important;
@@ -527,7 +567,7 @@
   flex-direction: column !important;
 }
 
-#pfx-picker .pfx-picker-row {
+#gjoa-picker .gjoa-picker-row {
   padding: 6px 14px !important;
   cursor: pointer !important;
   display: flex !important;
@@ -535,34 +575,34 @@
   gap: 8px !important;
 }
 
-#pfx-picker .pfx-picker-row[pfx-picker-selected="true"] {
-  background: color-mix(in srgb, var(--pfx-accent) 15%, transparent) !important;
+#gjoa-picker .gjoa-picker-row[gjoa-picker-selected="true"] {
+  background: color-mix(in srgb, var(--gjoa-accent) 15%, transparent) !important;
 }
 
-#pfx-picker .pfx-picker-row:hover:not([pfx-picker-selected="true"]) {
-  background: color-mix(in srgb, var(--pfx-fg) 6%, transparent) !important;
+#gjoa-picker .gjoa-picker-row:hover:not([gjoa-picker-selected="true"]) {
+  background: color-mix(in srgb, var(--gjoa-fg) 6%, transparent) !important;
 }
 
 /* Tree context rows — dim text so direct matches stand out. */
-#pfx-picker .pfx-picker-row[pfx-picker-context="true"] .pfx-picker-label,
-#pfx-picker .pfx-picker-row[pfx-picker-context="true"] .pfx-picker-secondary {
+#gjoa-picker .gjoa-picker-row[gjoa-picker-context="true"] .gjoa-picker-label,
+#gjoa-picker .gjoa-picker-row[gjoa-picker-context="true"] .gjoa-picker-secondary {
   opacity: 0.5 !important;
 }
 
-#pfx-picker .pfx-picker-icon {
+#gjoa-picker .gjoa-picker-icon {
   width: 16px !important;
   height: 16px !important;
   flex: none !important;
   object-fit: contain !important;
 }
 
-#pfx-picker .pfx-picker-icon-text {
+#gjoa-picker .gjoa-picker-icon-text {
   width: 16px !important;
   text-align: center !important;
   flex: none !important;
 }
 
-#pfx-picker .pfx-picker-text {
+#gjoa-picker .gjoa-picker-text {
   display: flex !important;
   align-items: baseline !important;
   gap: 12px !important;
@@ -570,15 +610,15 @@
   flex: 1 !important;
 }
 
-#pfx-picker .pfx-picker-secondary {
-  color: var(--pfx-fg-muted) !important;
+#gjoa-picker .gjoa-picker-secondary {
+  color: var(--gjoa-fg-muted) !important;
   font-size: 0.85em !important;
   margin-inline-start: auto !important;
 }
 
-#pfx-picker .pfx-picker-empty {
+#gjoa-picker .gjoa-picker-empty {
   padding: 16px 14px !important;
-  color: var(--pfx-fg-muted) !important;
+  color: var(--gjoa-fg-muted) !important;
   font-style: italic !important;
 }
 

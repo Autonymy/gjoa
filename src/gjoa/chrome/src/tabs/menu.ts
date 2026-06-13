@@ -1,8 +1,8 @@
 // Tab + group context menus.
 //
 // Public API:
-//   buildContextMenu(deps)       — tab menu (#pfx-tab-menu)
-//   buildGroupContextMenu(deps)  — group menu (#pfx-group-menu)
+//   buildContextMenu(deps)       — tab menu (#gjoa-tab-menu)
+//   buildGroupContextMenu(deps)  — group menu (#gjoa-group-menu)
 // Both build their menupopup once at init and return the element.
 //
 // state.contextTab / state.contextGroupRow are set by the row-level
@@ -32,6 +32,9 @@ export type MenuDeps = {
   readonly setCursor: (row: Row) => void;
   /** Update collapsed-row visibility throughout the panel. */
   readonly updateVisibility: () => void;
+  /** Re-sync every row's indent + state. Required after mutating parentId
+   *  on a tab so the subtree's visual levels reflect the new ancestor chain. */
+  readonly scheduleTreeResync: () => void;
   /** Persist tree state to disk. */
   readonly scheduleSave: () => void;
 };
@@ -43,11 +46,11 @@ export type MenuDeps = {
 export function buildContextMenu(deps: MenuDeps): HTMLElement {
   const {
     startRename, toggleCollapse, createGroupRow, setCursor,
-    updateVisibility, scheduleSave,
+    updateVisibility, scheduleTreeResync, scheduleSave,
   } = deps;
 
   const menu = document.createXULElement("menupopup") as HTMLElement;
-  menu.id = "pfx-tab-menu";
+  menu.id = "gjoa-tab-menu";
 
   function mi(label: string, handler: () => void): HTMLElement {
     const item = document.createXULElement("menuitem") as HTMLElement;
@@ -57,7 +60,7 @@ export function buildContextMenu(deps: MenuDeps): HTMLElement {
   }
   const sep = () => document.createXULElement("menuseparator") as HTMLElement;
 
-  // --- Palefox items ---
+  // --- Gjoa items ---
   const renameItem = mi("Rename Tab", () => {
     if (state.contextTab) {
       const row = rowOf.get(state.contextTab);
@@ -73,9 +76,25 @@ export function buildContextMenu(deps: MenuDeps): HTMLElement {
     if (!state.contextTab) return;
     const row = rowOf.get(state.contextTab);
     if (!row) return;
-    const grp = createGroupRow("New Group", levelOfRow(row));
-    const st = subtreeRows(row);
-    st[st.length - 1]!.after(grp);
+    // Build the group at the tab's current level, then COMPOSE the tab
+    // and its existing subtree INSIDE the group:
+    //   1. Insert the group row immediately BEFORE the tab (so tab+subtree
+    //      visually sit underneath it in the DOM).
+    //   2. Reparent the tab itself so its parentId points at the new
+    //      group's string id. Descendants follow via their own parentId
+    //      chains (they don't need to change — they're parented to the
+    //      tab, which is now inside the group).
+    const tabLevel = levelOfRow(row);
+    const grp = createGroupRow("New Group", tabLevel);
+    row.before(grp);
+
+    const td = treeData(state.contextTab);
+    td.parentId = grp._group!.id;
+
+    // Tab's level just shifted (now group.level + 1) and its descendants
+    // shifted with it. Resync every row's padding so the indents reflect
+    // the new ancestor chain.
+    scheduleTreeResync();
     setCursor(grp);
     updateVisibility();
     scheduleSave();
@@ -193,7 +212,7 @@ export function buildGroupContextMenu(deps: GroupMenuDeps): HTMLElement {
   const { startRename, toggleCollapse, syncGroupRow, updateVisibility, scheduleSave } = deps;
 
   const menu = document.createXULElement("menupopup") as HTMLElement;
-  menu.id = "pfx-group-menu";
+  menu.id = "gjoa-group-menu";
 
   function mi(label: string, handler: () => void): HTMLElement {
     const item = document.createXULElement("menuitem") as HTMLElement;
@@ -312,7 +331,7 @@ export function buildPanelContextMenu(deps: PanelMenuDeps): HTMLElement {
   const { createGroupRow, startRename, setCursor, updateVisibility, scheduleSave } = deps;
 
   const menu = document.createXULElement("menupopup") as HTMLElement;
-  menu.id = "pfx-panel-menu";
+  menu.id = "gjoa-panel-menu";
 
   function mi(label: string, handler: () => void): HTMLElement {
     const item = document.createXULElement("menuitem") as HTMLElement;

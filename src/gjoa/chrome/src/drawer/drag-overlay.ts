@@ -5,7 +5,7 @@
 // light-DOM box over the empty space and keep its geometry in sync via
 // ResizeObserver + MutationObserver on tabbrowser-arrowscrollbox.
 //
-// Pref-driven on/off (`pfx.view.draggable-sidebar`, default true).
+// Pref-driven on/off (`gjoa.view.draggable-sidebar`, default true).
 
 import { createLogger } from "../tabs/log.ts";
 
@@ -33,7 +33,7 @@ export type DragOverlayAPI = {
 // IMPLEMENTATION
 // =============================================================================
 
-const PREF = "pfx.view.draggable-sidebar";
+const PREF = "gjoa.view.draggable-sidebar";
 
 export function makeDragOverlay(deps: DragOverlayDeps): DragOverlayAPI {
   const log = createLogger("drawer/drag-overlay");
@@ -72,7 +72,7 @@ export function makeDragOverlay(deps: DragOverlayDeps): DragOverlayAPI {
   function enable(): void {
     if (overlay) return;
     const el = (document as Document & { createXULElement(t: string): HTMLElement }).createXULElement("box");
-    el.id = "pfx-drag-overlay";
+    el.id = "gjoa-drag-overlay";
     sidebarMain.appendChild(el);
     overlay = el;
     if (arrowscrollbox) {

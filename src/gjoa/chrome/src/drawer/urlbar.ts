@@ -5,15 +5,15 @@
 //      add the floating decoration on top by listening to the same key in
 //      capture phase WITHOUT preventDefault. We deliberately don't bind
 //      Ctrl+K — too many web apps own that combo (Slack, etc.).
-//   2. Palefox `o` / `O` keys (in src/tabs/vim.ts). They dispatch the
-//      `pfx-urlbar-activate` CustomEvent on document; we handle it here.
+//   2. Gjoa `o` / `O` keys (in src/tabs/vim.ts). They dispatch the
+//      `gjoa-urlbar-activate` CustomEvent on document; we handle it here.
 //      `o` = current-tab intent, `O` = new-tab intent.
 //
 // Mouse-click on the in-sidebar urlbar is deliberately untouched. Users who
 // want native breakout-extend at the click point still get it.
 //
 // Visual: when active, the urlbar floats fixed at top:22vh, left:50%,
-// translateX(-50%), width:720px. CSS lives in palefox.css under #region
+// translateX(-50%), width:720px. CSS lives in gjoa.css under #region
 // floating urlbar. The popover="manual" attribute is set so the urlbar
 // occupies the top layer and renders above #sidebar-main / browser content.
 //
@@ -65,18 +65,18 @@ export function makeUrlbar(deps: UrlbarDeps): UrlbarAPI {
     intent = newIntent;
     if (activated) {
       log("activateFloating:re-arm", { intent });
-      root.setAttribute("pfx-urlbar-intent", intent === "newTab" ? "new-tab" : "current");
+      root.setAttribute("gjoa-urlbar-intent", intent === "newTab" ? "new-tab" : "current");
       return;
     }
     activated = true;
     log("activateFloating", { intent });
 
-    root.setAttribute("pfx-urlbar-floating", "");
-    root.setAttribute("pfx-urlbar-intent", intent === "newTab" ? "new-tab" : "current");
+    root.setAttribute("gjoa-urlbar-floating", "");
+    root.setAttribute("gjoa-urlbar-intent", intent === "newTab" ? "new-tab" : "current");
 
     if (!backdrop) {
       backdrop = document.createElement("div");
-      backdrop.id = "pfx-urlbar-backdrop";
+      backdrop.id = "gjoa-urlbar-backdrop";
       backdrop.addEventListener("mousedown", () => deactivateFloating());
       root.appendChild(backdrop);
     }
@@ -102,8 +102,8 @@ export function makeUrlbar(deps: UrlbarDeps): UrlbarAPI {
     if (!activated) return;
     activated = false;
     log("deactivateFloating");
-    root.removeAttribute("pfx-urlbar-floating");
-    root.removeAttribute("pfx-urlbar-intent");
+    root.removeAttribute("gjoa-urlbar-floating");
+    root.removeAttribute("gjoa-urlbar-intent");
     backdrop?.remove();
     backdrop = null;
 
@@ -116,10 +116,10 @@ export function makeUrlbar(deps: UrlbarDeps): UrlbarAPI {
     //   - breakout-extend on (urlbar still focused — common after Alt+Enter
     //     opens a background tab and keeps focus): leave popover alone, the
     //     urlbar should remain in the top layer for native breakout sizing.
-    //   - compact off: leave alone (palefox's "default" for the urlbar is
+    //   - compact off: leave alone (gjoa's "default" for the urlbar is
     //     popover="manual" + showPopover, set by compactDisable).
-    const compactVertical = !!document.querySelector("#sidebar-main[data-pfx-compact]");
-    const compactHorizontal = root.hasAttribute("data-pfx-compact-horizontal");
+    const compactVertical = !!document.querySelector("#sidebar-main[data-gjoa-compact]");
+    const compactHorizontal = root.hasAttribute("data-gjoa-compact-horizontal");
     const compactOn = compactVertical || compactHorizontal;
     const breakout = urlbar.hasAttribute("breakout-extend");
     if (compactOn && !breakout) {
@@ -233,14 +233,14 @@ export function makeUrlbar(deps: UrlbarDeps): UrlbarAPI {
 
   urlbar.addEventListener("focusout", onFocusOut, true);
   urlbar.addEventListener("keydown", onKeydown, true);
-  document.addEventListener("pfx-urlbar-activate", onActivateRequest);
-  document.addEventListener("pfx-urlbar-deactivate", onDeactivateRequest);
+  document.addEventListener("gjoa-urlbar-activate", onActivateRequest);
+  document.addEventListener("gjoa-urlbar-deactivate", onDeactivateRequest);
 
   function destroy(): void {
     urlbar.removeEventListener("focusout", onFocusOut, true);
     urlbar.removeEventListener("keydown", onKeydown, true);
-    document.removeEventListener("pfx-urlbar-activate", onActivateRequest);
-    document.removeEventListener("pfx-urlbar-deactivate", onDeactivateRequest);
+    document.removeEventListener("gjoa-urlbar-activate", onActivateRequest);
+    document.removeEventListener("gjoa-urlbar-deactivate", onDeactivateRequest);
     deactivateFloating();
   }
 

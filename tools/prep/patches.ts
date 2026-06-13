@@ -1,7 +1,7 @@
 import { existsSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { $ } from "bun";
-import { ENGINE_DIR, PATCHES_DIR, REPO_ROOT } from "./paths";
+import { ENGINE_DIR, PATCHES_DIR } from "./paths";
 import { log } from "./log";
 
 // Apply *.patch files from patches/ in alphabetical order. Idempotency:
@@ -44,6 +44,18 @@ export async function patches(): Promise<void> {
   if (allPatches.length === 0) {
     log.info(`patches/ is empty, skipping`);
     return;
+  }
+
+  // Patch-header lint. Non-fatal — we always apply patches regardless,
+  // but a missing header surfaces immediately so future maintainers
+  // (read: the user, post-Firefox-bump) get a clear signal that the
+  // 3-way-merge metadata is incomplete.
+  try {
+    const { checkAll } = await import("./patch-header.ts");
+    const problems = await checkAll();
+    if (problems > 0) log.warn(`${problems} patch(es) missing the gjoa-patch header`);
+  } catch (e) {
+    log.warn(`patch-header lint failed (non-fatal): ${(e as Error).message}`);
   }
 
   await ensureEngineGit();

@@ -1,3 +1,8 @@
+# gjoa-patch:
+#   baseline-firefox: 151.0.1
+#   touches:
+#     - browser/components/customizableui/CustomizableUI.sys.mjs
+#
 Force-migrate existing profiles to the new toolbar + menubar defaults.
 
 Patches 0004 (menubar autohide=false) and 0005 (strip 3 default buttons)
@@ -9,8 +14,8 @@ This patch makes the change apply to *every* existing profile on next
 launch, as a one-shot migration. Mechanism is the same as every other
 CustomizableUI bump:
 
-  1. kVersion bumped 23 -> 24.
-  2. New `currentVersion < 24` block iterates every saved placements
+  1. kVersion bumped 24 -> 25.
+  2. New `currentVersion < 25` block iterates every saved placements
      area and filters out the three button ids.
   3. Same block clears the persisted `autohide` attribute on
      `#toolbar-menubar` from xulStore so the new `autohide="false"`
@@ -22,18 +27,17 @@ matches the new defaults from patch 0005). Idempotent on re-runs.
 diff --git a/browser/components/customizableui/CustomizableUI.sys.mjs b/browser/components/customizableui/CustomizableUI.sys.mjs
 --- a/browser/components/customizableui/CustomizableUI.sys.mjs
 +++ b/browser/components/customizableui/CustomizableUI.sys.mjs
-@@ -68,7 +68,7 @@ const kSubviewEvents = ["ViewShowing", "ViewHiding"];
+@@ -67,7 +67,7 @@ const kSubviewEvents = ["ViewShowing", "ViewHiding"];
   * The current version. We can use this to auto-add new default widgets as necessary.
   * (would be const but isn't because of testing purposes)
   */
--var kVersion = 23;
-+var kVersion = 24;
+-var kVersion = 24;
++var kVersion = 25;
 
  /**
   * Buttons removed from built-ins by version they were removed. kVersion must be
-@@ -848,6 +848,32 @@ var CustomizableUIInternal = {
-       if (buttonIndex != -1) {
-         navbarPlacements.splice(buttonIndex, 1);
+@@ -846,6 +846,30 @@ var CustomizableUIInternal = {
+         navbarPlacements.push("reset-pbm-toolbar-button");
        }
      }
 +
@@ -43,7 +47,7 @@ diff --git a/browser/components/customizableui/CustomizableUI.sys.mjs b/browser/
 +    // with patches 0004 + 0005 which change the source defaults — this
 +    // block carries the change forward into pre-existing profiles
 +    // whose layout was saved before those defaults landed.
-+    if (currentVersion < 24) {
++    if (currentVersion < 25) {
 +      const STRIPPED = new Set([
 +        "fxa-toolbar-menu-button",
 +        "firefox-view-button",
@@ -51,9 +55,7 @@ diff --git a/browser/components/customizableui/CustomizableUI.sys.mjs b/browser/
 +      ]);
 +      for (const area of Object.keys(gSavedState.placements)) {
 +        const arr = gSavedState.placements[area];
-+        if (!Array.isArray(arr)) {
-+          continue;
-+        }
++        if (!Array.isArray(arr)) { continue; }
 +        gSavedState.placements[area] = arr.filter(id => !STRIPPED.has(id));
 +      }
 +      Services.xulStore.removeValue(

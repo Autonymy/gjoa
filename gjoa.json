@@ -7,13 +7,11 @@
   "displayVersion": "0.1.0",
   "license": "MPL-2.0",
   "github": "tompassarelli/gjoa",
-
   "firefox": {
-    "version": "150.0",
-    "candidate": "150.0",
+    "version": "151.0.1",
+    "candidate": "151.0.1",
     "candidateBuild": 1
   },
-
   "branding": {
     "shortName": "Gjoa",
     "shorterName": "Gjoa",
@@ -23,7 +21,6 @@
     "backgroundColor": "#1e1e2e",
     "displayName": "Gjoa"
   },
-
   "urls": {
     "homepageOverride": "",
     "welcome": "",

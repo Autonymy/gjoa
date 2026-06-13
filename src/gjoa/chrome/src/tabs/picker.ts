@@ -8,7 +8,7 @@
 // Tree-preserving filter (`preserveTree`): when set, items matching the
 // query are joined by their `parentId`-walked ancestors so the tree
 // context isn't lost. Ancestors that are NOT direct matches get the
-// `[pfx-picker-context]` attribute for dim styling.
+// `[gjoa-picker-context]` attribute for dim styling.
 //
 // Visual layout, top to bottom:
 //   ┌──────────────────────────┐
@@ -53,10 +53,21 @@ export interface PickerAction {
 
 export type PickerShowOpts = {
   readonly items: readonly PickerItem[];
-  readonly onSelect: (item: PickerItem) => unknown;
+  /** Fired on Enter / click. Receives the picked item and the picker's
+   *  current input value (the literal text the user typed into the filter
+   *  field). Use the query when the command surface wants to be one-shot:
+   *  the user can type the full command including args, hit Enter once,
+   *  and the action fires without a second modeline round-trip. */
+  readonly onSelect: (item: PickerItem, query: string) => unknown;
   readonly prompt?: string;
   readonly actions?: readonly PickerAction[];
   readonly preserveTree?: boolean;
+  /** Optional custom item-filter. Default: substring match on
+   *  (item.display + " " + item.secondary) lowercased. Override when the
+   *  picker's input doubles as a free-form argument carrier — e.g. the
+   *  ex-command picker filters on the first word only so "space new Work"
+   *  still narrows to ":space". */
+  readonly filterItem?: (item: PickerItem, query: string) => boolean;
 };
 
 export type PickerDeps = {
@@ -72,7 +83,7 @@ export type PickerAPI = {
    *  the contents and resets selection. */
   show(opts: PickerShowOpts): void;
   /** True while the picker is visible. Used by other keymap handlers
-   *  to bail (so palefox keys don't compete with the picker's input). */
+   *  to bail (so gjoa keys don't compete with the picker's input). */
   isActive(): boolean;
   /** Force-close the picker without committing. */
   dismiss(): void;
@@ -92,11 +103,13 @@ export function makePicker(deps: PickerDeps): PickerAPI {
   let items: readonly PickerItem[] = [];
   let filtered: PickerItem[] = [];
   let selectedIdx = 0;
-  let onSelect: ((item: PickerItem) => unknown) | null = null;
+  let onSelect: ((item: PickerItem, query: string) => unknown) | null = null;
   let actions: readonly PickerAction[] = [];
   /** When true, filter walks parents of matched items so tree context is
-   *  preserved (rendered as `[pfx-picker-context]` rows). */
+   *  preserved (rendered as `[gjoa-picker-context]` rows). */
   let preserveTree = false;
+  /** Optional caller-supplied filter. Null = default substring matching. */
+  let filterItem: ((item: PickerItem, query: string) => boolean) | null = null;
 
   // Esc anywhere dismisses an active picker. The input-level listener only
   // fires when the input has focus — clicking outside the input (or focus
@@ -130,24 +143,24 @@ export function makePicker(deps: PickerDeps): PickerAPI {
       (document as Document & { createXULElement(t: string): HTMLElement }).createXULElement(tag);
 
     const root = xul("vbox");
-    root.id = "pfx-picker";
+    root.id = "gjoa-picker";
     root.hidden = true;
     root.setAttribute("aria-modal", "true");
 
     // Input field at top.
     const inputBox = xul("hbox");
-    inputBox.className = "pfx-picker-input-box";
+    inputBox.className = "gjoa-picker-input-box";
     const prompt = xul("label");
-    prompt.className = "pfx-picker-prompt";
+    prompt.className = "gjoa-picker-prompt";
     prompt.setAttribute("value", "›");
     const input = document.createElement("input");
-    input.className = "pfx-picker-input";
+    input.className = "gjoa-picker-input";
     input.placeholder = "Filter…";
     inputBox.append(prompt, input);
 
     // Scrollable list below.
     const list = xul("vbox");
-    list.className = "pfx-picker-list";
+    list.className = "gjoa-picker-list";
 
     root.append(inputBox, list);
     document.documentElement.appendChild(root);
@@ -160,7 +173,7 @@ export function makePicker(deps: PickerDeps): PickerAPI {
     //   - Flat: substring match on display + secondary.
     //   - Tree-preserving: matched items + all their ancestors stay
     //     visible, in original tree order. Ancestors that aren't direct
-    //     matches get the `[pfx-picker-context]` flag for dim styling.
+    //     matches get the `[gjoa-picker-context]` flag for dim styling.
     input.addEventListener("input", () => {
       const q = input.value.trim().toLowerCase();
       filtered = computeFiltered(items, q);
@@ -226,9 +239,14 @@ export function makePicker(deps: PickerDeps): PickerAPI {
   function computeFiltered(allItems: readonly PickerItem[], q: string): PickerItem[] {
     if (!q) return [...allItems];
     const matchedSet = new Set<PickerItem>();
+    const match = filterItem
+      ? (it: PickerItem) => filterItem!(it, q)
+      : (it: PickerItem) => {
+          const hay = ((it.display ?? "") + " " + (it.secondary ?? "")).toLowerCase();
+          return hay.includes(q);
+        };
     for (const it of allItems) {
-      const hay = ((it.display ?? "") + " " + (it.secondary ?? "")).toLowerCase();
-      if (hay.includes(q)) matchedSet.add(it);
+      if (match(it)) matchedSet.add(it);
     }
     if (!preserveTree) {
       return allItems.filter((it) => matchedSet.has(it));
@@ -263,7 +281,7 @@ export function makePicker(deps: PickerDeps): PickerAPI {
     while (pickerList.firstChild) pickerList.firstChild.remove();
     if (!filtered.length) {
       const empty = (document as Document & { createXULElement(t: string): HTMLElement }).createXULElement("label");
-      empty.className = "pfx-picker-empty";
+      empty.className = "gjoa-picker-empty";
       empty.setAttribute("value", "(no matches)");
       pickerList.appendChild(empty);
       return;
@@ -271,14 +289,14 @@ export function makePicker(deps: PickerDeps): PickerAPI {
     const q = pickerInput?.value?.trim().toLowerCase() ?? "";
     filtered.forEach((item, idx) => {
       const row = (document as Document & { createXULElement(t: string): HTMLElement }).createXULElement("hbox");
-      row.className = "pfx-picker-row";
-      if (idx === selectedIdx) row.setAttribute("pfx-picker-selected", "true");
+      row.className = "gjoa-picker-row";
+      if (idx === selectedIdx) row.setAttribute("gjoa-picker-selected", "true");
       // In tree-preserving mode, items visible only because they're an ancestor
       // of a match get a context flag for dimmer styling.
       if (preserveTree && q && !isDirectMatch(item, q)) {
-        row.setAttribute("pfx-picker-context", "true");
+        row.setAttribute("gjoa-picker-context", "true");
       }
-      // Indent: each level adds 14px (matches palefox's INDENT constant).
+      // Indent: each level adds 14px (matches gjoa's INDENT constant).
       // setProperty(..., "important") wins against the row's CSS
       // `padding: 6px 14px !important` rule. Plain inline-style assignment
       // loses to a CSS !important.
@@ -294,29 +312,29 @@ export function makePicker(deps: PickerDeps): PickerAPI {
       if (item.icon) {
         if (/^https?:|^data:|^chrome:|^moz-/.test(item.icon)) {
           const img = document.createElement("img");
-          img.className = "pfx-picker-icon";
+          img.className = "gjoa-picker-icon";
           img.src = item.icon;
           img.alt = "";
           row.appendChild(img);
         } else {
           const ic = (document as Document & { createXULElement(t: string): HTMLElement }).createXULElement("label");
-          ic.className = "pfx-picker-icon-text";
+          ic.className = "gjoa-picker-icon-text";
           ic.setAttribute("value", item.icon);
           row.appendChild(ic);
         }
       }
 
       const text = (document as Document & { createXULElement(t: string): HTMLElement }).createXULElement("hbox");
-      text.className = "pfx-picker-text";
+      text.className = "gjoa-picker-text";
       text.setAttribute("flex", "1");
       const primary = (document as Document & { createXULElement(t: string): HTMLElement }).createXULElement("label");
-      primary.className = "pfx-picker-label";
+      primary.className = "gjoa-picker-label";
       primary.setAttribute("value", item.display);
       primary.setAttribute("crop", "end");
       text.appendChild(primary);
       if (item.secondary) {
         const sec = (document as Document & { createXULElement(t: string): HTMLElement }).createXULElement("label");
-        sec.className = "pfx-picker-secondary";
+        sec.className = "gjoa-picker-secondary";
         sec.setAttribute("value", item.secondary);
         sec.setAttribute("crop", "end");
         text.appendChild(sec);
@@ -329,7 +347,7 @@ export function makePicker(deps: PickerDeps): PickerAPI {
       });
       pickerList!.appendChild(row);
     });
-    const selected = pickerList.querySelector("[pfx-picker-selected='true']");
+    const selected = pickerList.querySelector("[gjoa-picker-selected='true']");
     selected?.scrollIntoView({ block: "nearest" });
   }
 
@@ -373,12 +391,13 @@ export function makePicker(deps: PickerDeps): PickerAPI {
     if (!active) return;
     const item = filtered[selectedIdx];
     const cb = onSelect;
+    const q = pickerInput?.value ?? "";
     active = false;
     onSelect = null;
     actions = [];
     preserveTree = false;
     if (pickerEl) pickerEl.hidden = true;
-    if (item && cb) cb(item);
+    if (item && cb) cb(item, q);
   }
 
   function dismiss(): void {
@@ -402,10 +421,11 @@ export function makePicker(deps: PickerDeps): PickerAPI {
     onSelect = opts.onSelect;
     actions = opts.actions ?? [];
     preserveTree = !!opts.preserveTree;
+    filterItem = opts.filterItem ?? null;
     filtered = [...opts.items];
     active = true;
 
-    const promptEl = pickerEl.querySelector(".pfx-picker-prompt");
+    const promptEl = pickerEl.querySelector(".gjoa-picker-prompt");
     if (promptEl && opts.prompt) {
       promptEl.setAttribute("value", opts.prompt);
     } else if (promptEl) {

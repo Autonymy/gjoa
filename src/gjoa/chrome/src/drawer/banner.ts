@@ -45,10 +45,10 @@ export function makeBanner(): BannerAPI {
   function show(): void {
     if (banner) return;
     const el = (document as Document & { createXULElement(t: string): HTMLElement }).createXULElement("hbox");
-    el.id = "pfx-insecure-banner";
+    el.id = "gjoa-insecure-banner";
     el.setAttribute("align", "center");
     el.setAttribute("pack", "center");
-    el.textContent = "🦊 Palefox - HTTP Alert: Not Secure";
+    el.textContent = "🦊 Gjoa - HTTP Alert: Not Secure";
     const browserEl = document.getElementById("browser");
     if (!browserEl?.parentNode) {
       log("show:no-browser-parent");

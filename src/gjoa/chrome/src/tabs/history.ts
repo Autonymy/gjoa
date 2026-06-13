@@ -1,8 +1,8 @@
-// Temporal workspace history — palefox's append-only event log over SQLite.
+// Temporal workspace history — gjoa's append-only event log over SQLite.
 //
 // Public API (factory): see HistoryAPI below.
 //
-// Storage shape: one SQLite file at <profile>/palefox-history.sqlite.
+// Storage shape: one SQLite file at <profile>/gjoa-history.sqlite.
 //   - events            row per meaningful workspace mutation, hash-deduped
 //   - events_search_content   per-tab url/label rows, kept in sync via app code
 //   - event_search      FTS5 virtual table over the search-content
@@ -14,6 +14,7 @@
 // touching the DB so we don't pay a write cost for no-op saves.
 
 import { createLogger, type Logger } from "./log.ts";
+import type { SpacesSnapshot } from "../spaces/types.ts";
 import type { SavedNode } from "./types.ts";
 
 
@@ -27,8 +28,12 @@ export interface SnapshotEnvelope {
   readonly nodes: readonly SavedNode[];
   /** Recently-closed tabs queue (capped by CLOSED_MEMORY in constants.ts). */
   readonly closedTabs: readonly SavedNode[];
-  /** Highest pfx-id assigned so far (so reload doesn't collide). */
+  /** Highest gjoa-id assigned so far (so reload doesn't collide). */
   readonly nextTabId: number;
+  /** Spaces (workspaces) state — optional for backward-compat with envelopes
+   *  written before the Spaces feature landed. Absence is treated as "no
+   *  spaces persisted yet"; the manager initializes with a default space. */
+  readonly spaces?: SpacesSnapshot;
 }
 
 /** A single row from the events table, decoded for callers. */
@@ -81,7 +86,7 @@ export interface HistoryAPI {
 
 const SCHEMA_VERSION = 2;
 
-const INSTANCE_ID_PREF = "pfx.instance.id";
+const INSTANCE_ID_PREF = "gjoa.instance.id";
 
 /** Keep schema migrations as ordered SQL strings. Each entry migrates from
  *  index N to N+1. Adding a column tomorrow appends one entry. The v1→v2
@@ -126,7 +131,7 @@ const MIGRATIONS: readonly string[] = [
   // History note: this was added when we mistakenly thought "cross-instance
   // search" meant "search across multiple Firefox profiles." It actually
   // meant "search across multiple chrome windows of the same profile" —
-  // a single-process problem solved by `Palefox.tabs.all()` (M12), with
+  // a single-process problem solved by `Gjoa.tabs.all()` (M12), with
   // no DB join required.
   //
   // The migration already ran on users' DBs, so the column stays. It costs
@@ -153,7 +158,7 @@ let _lastHash: string | null = null;
 let _instanceId: string | null = null;
 
 /** Load (or generate-and-persist) this Firefox profile's stable
- *  palefox instance id. Stored in a Firefox pref so it survives
+ *  gjoa instance id. Stored in a Firefox pref so it survives
  *  restarts. Used as `instance_id` on every persisted history row;
  *  cross-instance queries (M11) discover sibling profiles' DBs and
  *  use their instanceId values to attribute/filter results. */
@@ -200,10 +205,24 @@ async function openConnection(): Promise<Connection> {
   const { Sqlite } = ChromeUtils.importESModule<{ Sqlite: { openConnection(opts: { path: string }): Promise<Connection> } }>(
     "resource://gre/modules/Sqlite.sys.mjs",
   );
-  const path = PathUtils.join(
-    Services.dirsvc.get("ProfD", Ci.nsIFile).path,
-    "palefox-history.sqlite",
-  );
+  const profDir = Services.dirsvc.get("ProfD", Ci.nsIFile).path;
+  const path = PathUtils.join(profDir, "gjoa-history.sqlite");
+  // Legacy migration: palefox-history.sqlite (+ -wal, -shm sidecars) →
+  // gjoa-history.sqlite. Idempotent: only renames if the new file
+  // doesn't already exist. SQLite's WAL/SHM auto-recreate on first
+  // open, so renaming the base file alone is sufficient.
+  for (const suffix of ["", "-wal", "-shm"]) {
+    const oldPath = PathUtils.join(profDir, "palefox-history.sqlite" + suffix);
+    const newPath = path + suffix;
+    try {
+      if (await IOUtils.exists(oldPath) && !(await IOUtils.exists(newPath))) {
+        await IOUtils.move(oldPath, newPath);
+        log("migrateLegacyDB", { from: oldPath, to: newPath });
+      }
+    } catch (e) {
+      log("migrateLegacyDB:fail", { suffix, error: String(e) });
+    }
+  }
   log("openConnection", { path });
   const conn = await Sqlite.openConnection({ path });
   // Pragmas first — these don't participate in transactions.
@@ -226,7 +245,7 @@ async function applyMigrations(conn: Connection): Promise<void> {
   log("migrate:apply", { from: current, to: SCHEMA_VERSION });
   for (let v = current; v < SCHEMA_VERSION; v++) {
     const sql = MIGRATIONS[v];
-    if (!sql) throw new Error(`palefox-history: no migration for v${v} → v${v + 1}`);
+    if (!sql) throw new Error(`gjoa-history: no migration for v${v} → v${v + 1}`);
     await conn.executeTransaction(async () => {
       // Sqlite.sys.mjs's `execute` runs ONE statement; split on `;`
       // for multi-statement migrations and execute each.
@@ -425,9 +444,9 @@ export function makeHistory(): HistoryAPI {
     async runRetention({ retainDays, maxRows } = {}) {
       const conn = await openConnection();
       const days =
-        retainDays ?? Services.prefs.getIntPref("pfx.history.retainDays", 30);
+        retainDays ?? Services.prefs.getIntPref("gjoa.history.retainDays", 30);
       const max =
-        maxRows ?? Services.prefs.getIntPref("pfx.history.maxRows", 10_000);
+        maxRows ?? Services.prefs.getIntPref("gjoa.history.maxRows", 10_000);
       const cutoff = Date.now() - days * 24 * 60 * 60 * 1000;
       let deleted = 0;
       await conn.executeTransaction(async () => {
@@ -443,7 +462,7 @@ export function makeHistory(): HistoryAPI {
         deleted += c1;
 
         // Trim untagged past maxRows (keeping newest).
-        const overflow = await conn.execute(
+        await conn.execute(
           `DELETE FROM events
             WHERE tag IS NULL
               AND id IN (

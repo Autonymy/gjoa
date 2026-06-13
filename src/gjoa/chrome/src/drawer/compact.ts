@@ -5,20 +5,20 @@
 //   - Horizontal (sidebar.verticalTabs=false) → #navigator-toolbox hides upward
 //
 // State model (inverted from naive show/hide):
-//   data-pfx-compact / data-pfx-compact-horizontal present → CSS hides target
-//   pfx-has-hover present                                  → CSS shows target
-//   No pfx-has-hover                                       → hidden
+//   data-gjoa-compact / data-gjoa-compact-horizontal present → CSS hides target
+//   gjoa-has-hover present                                  → CSS shows target
+//   No gjoa-has-hover                                       → hidden
 //
 // This eliminates race conditions: enabling compact just sets the attribute.
-// The element is immediately hidden because pfx-has-hover is absent. Showing
-// requires explicitly ADDING pfx-has-hover. See docs/dev/compact-mode-dissertation.md
+// The element is immediately hidden because gjoa-has-hover is absent. Showing
+// requires explicitly ADDING gjoa-has-hover. See docs/dev/compact-mode-dissertation.md
 // for the full state-machine analysis comparing this to Zen and Firefox native.
 //
 // Public API (CompactAPI): toggle(), reconcile()/reconcileHorizontal(),
 // flashSidebar()/flashToolbox(), pin/unpin during external popups, destroy().
 //
 // Wires its own listeners (popups, mouseenter/leave, sizemodechange, blur)
-// and pref observers (pfx.sidebar.compact, pfx.toolbar.compact,
+// and pref observers (gjoa.sidebar.compact, gjoa.toolbar.compact,
 // sidebar.verticalTabs). destroy() unwires everything for clean window unload.
 
 import { createLogger, type Logger } from "../tabs/log.ts";
@@ -62,8 +62,8 @@ export function makeCompact(deps: CompactDeps): CompactAPI {
 
   // === Constants ===
 
-  const COMPACT_PREF = "pfx.sidebar.compact";
-  const HORIZONTAL_COMPACT_PREF = "pfx.toolbar.compact";
+  const COMPACT_PREF = "gjoa.sidebar.compact";
+  const HORIZONTAL_COMPACT_PREF = "gjoa.toolbar.compact";
 
   // Match Zen's defaults exactly so the feel transfers.
   // - keepHoverDuration  (zen.view.compact.sidebar-keep-hover.duration)
@@ -73,31 +73,31 @@ export function makeCompact(deps: CompactDeps): CompactAPI {
   // `zen.view.compact.toolbar-hide-after-hover.duration` (1000ms default).
   const OFFSCREEN_SHOW_DURATION = 1000;
   // Matches Zen's `zen.view.compact.toolbar-flash-popup.duration` (800ms).
-  // Dispatched via `sidebarMain.dispatchEvent(new CustomEvent("pfx-flash"))`.
+  // Dispatched via `sidebarMain.dispatchEvent(new CustomEvent("gjoa-flash"))`.
   const FLASH_DURATION = 800;
   // Collapse-protection duration lives in src/drawer/timing.ts (single
-  // source of truth, derived from `--pfx-transition-duration` CSS var).
+  // source of truth, derived from `--gjoa-transition-duration` CSS var).
 
   // Wayland / X11 spurious-mouseleave debounce. Wraps the per-tick :hover check
   // in setTimeout(_, hoverHackDelay()) so users on flaky compositors can tune.
   // Zen pref equivalent: zen.view.compact.hover-hack-delay (default 0).
   function hoverHackDelay(): number {
-    return Services.prefs.getIntPref("pfx.compact.hoverHackDelay", 0);
+    return Services.prefs.getIntPref("gjoa.compact.hoverHackDelay", 0);
   }
 
   // === Logging ===
-  // Shared logger writes timestamped lines to <profile>/palefox-debug.log
-  // when pfx.debug is true. Cheap no-op when off.
+  // Shared logger writes timestamped lines to <profile>/gjoa-debug.log
+  // when gjoa.debug is true. Cheap no-op when off.
 
   const log: Logger = createLogger("compact");
   function dbg(event: string, data: Record<string, unknown> = {}): void {
     // Auto-payload reads only cheap attributes / scalars. NEVER call isGuarded()
     // here — it would recurse via reconcileCounterIfStale → dbg.
     log(event, {
-      compact: sidebarMain.hasAttribute("data-pfx-compact"),
-      compactHz: document.documentElement.hasAttribute("data-pfx-compact-horizontal"),
-      hover: sidebarMain.hasAttribute("pfx-has-hover"),
-      hoverHz: navigatorToolbox.hasAttribute("pfx-has-hover"),
+      compact: sidebarMain.hasAttribute("data-gjoa-compact"),
+      compactHz: document.documentElement.hasAttribute("data-gjoa-compact-horizontal"),
+      hover: sidebarMain.hasAttribute("gjoa-has-hover"),
+      hoverHz: navigatorToolbox.hasAttribute("gjoa-has-hover"),
       openPopups: _openPopups,
       flashPending: flashTimer !== null,
       ...data,
@@ -177,7 +177,7 @@ export function makeCompact(deps: CompactDeps): CompactAPI {
     if (urlbar?.hasAttribute("breakout-extend")) return true;
     if (document.querySelector("toolbarbutton[open='true']")) return true;
     if (document.querySelector(".tabbrowser-tab[multiselected]")) return true;
-    if (document.querySelector("[pfx-dragging]")) return true;
+    if (document.querySelector("[gjoa-dragging]")) return true;
     return false;
   }
 
@@ -189,7 +189,7 @@ export function makeCompact(deps: CompactDeps): CompactAPI {
       collapseProtectedRemaining: Math.max(0, _collapseProtectedUntil - Date.now()),
     });
     if (value && _ignoreNextHover) {
-      sidebarMain.removeAttribute("pfx-has-hover");
+      sidebarMain.removeAttribute("gjoa-has-hover");
       return;
     }
     if (value) {
@@ -202,7 +202,7 @@ export function makeCompact(deps: CompactDeps): CompactAPI {
         if (_setHoverRetryTimer !== null) clearTimeout(_setHoverRetryTimer);
         _setHoverRetryTimer = setTimeout(() => {
           _setHoverRetryTimer = null;
-          if (sidebarMain.hasAttribute("pfx-has-hover")) return;
+          if (sidebarMain.hasAttribute("gjoa-has-hover")) return;
           const stillWanted = flashTimer !== null
             || sidebarMain.matches(":hover")
             || (hoverStrip?.matches(":hover") ?? false);
@@ -211,7 +211,7 @@ export function makeCompact(deps: CompactDeps): CompactAPI {
         }, collapseRemaining + 16);
         return;
       }
-      sidebarMain.setAttribute("pfx-has-hover", "true");
+      sidebarMain.setAttribute("gjoa-has-hover", "true");
       // Successful show — cancel any pending retry (we're done).
       if (_setHoverRetryTimer !== null) {
         clearTimeout(_setHoverRetryTimer);
@@ -219,8 +219,8 @@ export function makeCompact(deps: CompactDeps): CompactAPI {
       }
       return;
     }
-    if (sidebarMain.hasAttribute("pfx-has-hover")) {
-      sidebarMain.removeAttribute("pfx-has-hover");
+    if (sidebarMain.hasAttribute("gjoa-has-hover")) {
+      sidebarMain.removeAttribute("gjoa-has-hover");
       _collapseProtectedUntil = Date.now() + collapseProtectionDurationMs();
     }
   }
@@ -253,9 +253,9 @@ export function makeCompact(deps: CompactDeps): CompactAPI {
   }
 
   function reconcileCompactState(trigger: string): void {
-    if (!sidebarMain.hasAttribute("data-pfx-compact")) return;
+    if (!sidebarMain.hasAttribute("data-gjoa-compact")) return;
     const before = {
-      hover: sidebarMain.hasAttribute("pfx-has-hover"),
+      hover: sidebarMain.hasAttribute("gjoa-has-hover"),
       flashPending: flashTimer !== null,
       _ignoreNextHover,
       _openPopups,
@@ -266,8 +266,8 @@ export function makeCompact(deps: CompactDeps): CompactAPI {
       || (hoverStrip?.matches(":hover") ?? false);
     const guarded = isGuarded();
     if (guarded || cursorOver) {
-      if (!sidebarMain.hasAttribute("pfx-has-hover")) {
-        sidebarMain.setAttribute("pfx-has-hover", "true");
+      if (!sidebarMain.hasAttribute("gjoa-has-hover")) {
+        sidebarMain.setAttribute("gjoa-has-hover", "true");
       }
       scheduleHideWatchdog();
     } else if (flashTimer !== null) {
@@ -279,7 +279,7 @@ export function makeCompact(deps: CompactDeps): CompactAPI {
     dbg("reconcileCompactState", {
       trigger, before, cursorOver, guarded,
       after: {
-        hover: sidebarMain.hasAttribute("pfx-has-hover"),
+        hover: sidebarMain.hasAttribute("gjoa-has-hover"),
         flashPending: flashTimer !== null,
         _ignoreNextHover,
       },
@@ -306,7 +306,7 @@ export function makeCompact(deps: CompactDeps): CompactAPI {
   function setToolboxHover(value: boolean): void {
     dbg("setToolboxHover", { value });
     if (value && _ignoreNextHover) {
-      navigatorToolbox.removeAttribute("pfx-has-hover");
+      navigatorToolbox.removeAttribute("gjoa-has-hover");
       return;
     }
     if (value) {
@@ -317,7 +317,7 @@ export function makeCompact(deps: CompactDeps): CompactAPI {
         if (_setToolboxHoverRetryTimer !== null) clearTimeout(_setToolboxHoverRetryTimer);
         _setToolboxHoverRetryTimer = setTimeout(() => {
           _setToolboxHoverRetryTimer = null;
-          if (navigatorToolbox.hasAttribute("pfx-has-hover")) return;
+          if (navigatorToolbox.hasAttribute("gjoa-has-hover")) return;
           const stillWanted = _hzFlashTimer !== null
             || navigatorToolbox.matches(":hover")
             || (hoverStripTop?.matches(":hover") ?? false);
@@ -326,15 +326,15 @@ export function makeCompact(deps: CompactDeps): CompactAPI {
         }, collapseRemaining + 16);
         return;
       }
-      navigatorToolbox.setAttribute("pfx-has-hover", "true");
+      navigatorToolbox.setAttribute("gjoa-has-hover", "true");
       if (_setToolboxHoverRetryTimer !== null) {
         clearTimeout(_setToolboxHoverRetryTimer);
         _setToolboxHoverRetryTimer = null;
       }
       return;
     }
-    if (navigatorToolbox.hasAttribute("pfx-has-hover")) {
-      navigatorToolbox.removeAttribute("pfx-has-hover");
+    if (navigatorToolbox.hasAttribute("gjoa-has-hover")) {
+      navigatorToolbox.removeAttribute("gjoa-has-hover");
       _collapseProtectedHzUntil = Date.now() + collapseProtectionDurationMs();
     }
   }
@@ -367,9 +367,9 @@ export function makeCompact(deps: CompactDeps): CompactAPI {
   }
 
   function reconcileCompactStateHorizontal(trigger: string): void {
-    if (!document.documentElement.hasAttribute("data-pfx-compact-horizontal")) return;
+    if (!document.documentElement.hasAttribute("data-gjoa-compact-horizontal")) return;
     const before = {
-      hover: navigatorToolbox.hasAttribute("pfx-has-hover"),
+      hover: navigatorToolbox.hasAttribute("gjoa-has-hover"),
       flashPending: _hzFlashTimer !== null,
       _ignoreNextHover,
       _openPopups,
@@ -380,8 +380,8 @@ export function makeCompact(deps: CompactDeps): CompactAPI {
       || (hoverStripTop?.matches(":hover") ?? false);
     const guarded = isGuarded();
     if (guarded || cursorOver) {
-      if (!navigatorToolbox.hasAttribute("pfx-has-hover")) {
-        navigatorToolbox.setAttribute("pfx-has-hover", "true");
+      if (!navigatorToolbox.hasAttribute("gjoa-has-hover")) {
+        navigatorToolbox.setAttribute("gjoa-has-hover", "true");
       }
       scheduleHideWatchdogHz();
     } else if (_hzFlashTimer !== null) {
@@ -393,7 +393,7 @@ export function makeCompact(deps: CompactDeps): CompactAPI {
     dbg("reconcileCompactStateHorizontal", {
       trigger, before, cursorOver, guarded,
       after: {
-        hover: navigatorToolbox.hasAttribute("pfx-has-hover"),
+        hover: navigatorToolbox.hasAttribute("gjoa-has-hover"),
         flashPending: _hzFlashTimer !== null,
         _ignoreNextHover,
       },
@@ -424,7 +424,7 @@ export function makeCompact(deps: CompactDeps): CompactAPI {
     // SYNCHRONOUSLY cancel any in-flight collapse-protection. A real
     // mouseenter event is evidence of user intent; the protection only
     // exists to suppress spurious / programmatic reveals (Wayland flake,
-    // pfx-flash). Doing this BEFORE the hoverHackDelay tick is the fix
+    // gjoa-flash). Doing this BEFORE the hoverHackDelay tick is the fix
     // for "swipe-during-close lockout" — when the cursor crosses the
     // sidebar mid-animation, the sidebar can slide past the cursor before
     // the post-delay `:hover` re-check fires, so the cancel was never
@@ -456,7 +456,7 @@ export function makeCompact(deps: CompactDeps): CompactAPI {
           dbg("onSidebarEnter:abort", { reason: "ignore-next-hover-rAF", targetId });
           return;
         }
-        if (sidebarMain.hasAttribute("pfx-has-hover")) {
+        if (sidebarMain.hasAttribute("gjoa-has-hover")) {
           dbg("onSidebarEnter:abort", { reason: "already-has-hover", targetId });
           return;
         }
@@ -493,14 +493,14 @@ export function makeCompact(deps: CompactDeps): CompactAPI {
   }
 
   function onDocMouseLeave(e: MouseEvent): void {
-    if (!sidebarMain.hasAttribute("data-pfx-compact")) return;
-    if (sidebarMain.hasAttribute("pfx-has-hover")) return;
+    if (!sidebarMain.hasAttribute("data-gjoa-compact")) return;
+    if (sidebarMain.hasAttribute("gjoa-has-hover")) return;
     if (_ignoreNextHover) return;
     // Only trigger near the edge the sidebar is anchored to (mirrored when
     // sidebar.position_start flips from left → right).
     const triggerWidth = parseInt(
       getComputedStyle(document.documentElement)
-        .getPropertyValue("--pfx-compact-trigger-width") || "8",
+        .getPropertyValue("--gjoa-compact-trigger-width") || "8",
       10,
     );
     const onLeft = Services.prefs.getBoolPref("sidebar.position_start", true);
@@ -528,7 +528,7 @@ export function makeCompact(deps: CompactDeps): CompactAPI {
       clearFlashToolbox();
       requestAnimationFrame(() => {
         if (_ignoreNextHover) return;
-        if (navigatorToolbox.hasAttribute("pfx-has-hover")) return;
+        if (navigatorToolbox.hasAttribute("gjoa-has-hover")) return;
         setToolboxHover(true);
       });
     }, hoverHackDelay());
@@ -547,12 +547,12 @@ export function makeCompact(deps: CompactDeps): CompactAPI {
   }
 
   function onDocMouseLeaveTop(e: MouseEvent): void {
-    if (!document.documentElement.hasAttribute("data-pfx-compact-horizontal")) return;
-    if (navigatorToolbox.hasAttribute("pfx-has-hover")) return;
+    if (!document.documentElement.hasAttribute("data-gjoa-compact-horizontal")) return;
+    if (navigatorToolbox.hasAttribute("gjoa-has-hover")) return;
     if (_ignoreNextHover) return;
     const triggerHeight = parseInt(
       getComputedStyle(document.documentElement)
-        .getPropertyValue("--pfx-compact-trigger-width") || "8",
+        .getPropertyValue("--gjoa-compact-trigger-width") || "8",
       10,
     );
     if (e.clientY > triggerHeight * 3) return;
@@ -564,7 +564,7 @@ export function makeCompact(deps: CompactDeps): CompactAPI {
 
   function compactEnable(): void {
     dbg("compactEnable");
-    sidebarMain.setAttribute("data-pfx-compact", "");
+    sidebarMain.setAttribute("data-gjoa-compact", "");
 
     // Urlbar has popover="manual" → CSS top layer, immune to ancestor transforms.
     // Remove popover so the urlbar moves with the sidebar's transform; restore
@@ -572,10 +572,10 @@ export function makeCompact(deps: CompactDeps): CompactAPI {
     if (urlbar && !urlbarCompactObserver) {
       urlbar.removeAttribute("popover");
       urlbarCompactObserver = new MutationObserver(() => {
-        if (!sidebarMain.hasAttribute("data-pfx-compact")) return;
+        if (!sidebarMain.hasAttribute("data-gjoa-compact")) return;
         // Floating urlbar lives in its own top layer with popover state
         // owned by src/drawer/urlbar.ts. Bail so we don't fight it.
-        if (document.documentElement.hasAttribute("pfx-urlbar-floating")) return;
+        if (document.documentElement.hasAttribute("gjoa-urlbar-floating")) return;
         if (urlbar.hasAttribute("breakout-extend")) {
           dbg("urlbar:breakout-open");
           urlbar.setAttribute("popover", "manual");
@@ -601,8 +601,8 @@ export function makeCompact(deps: CompactDeps): CompactAPI {
             dbg("urlbar:breakout-close:close");
             clearFlash();
             cancelHideWatchdog();
-            if (sidebarMain.hasAttribute("pfx-has-hover")) {
-              sidebarMain.removeAttribute("pfx-has-hover");
+            if (sidebarMain.hasAttribute("gjoa-has-hover")) {
+              sidebarMain.removeAttribute("gjoa-has-hover");
             }
             _collapseProtectedUntil = Date.now() + collapseProtectionDurationMs();
           }
@@ -616,12 +616,12 @@ export function makeCompact(deps: CompactDeps): CompactAPI {
 
     if (!hoverStrip || !hoverStrip.isConnected) {
       hoverStrip = (document as any).createXULElement("box") as HTMLElement;
-      hoverStrip.id = "pfx-hover-strip";
+      hoverStrip.id = "gjoa-hover-strip";
       sidebarMain.parentNode!.appendChild(hoverStrip);
       hoverStrip.addEventListener("mouseenter", () => {
         dbg("hoverStrip:mouseenter", {
           _ignoreNextHover, flashPending: flashTimer !== null,
-          hasHover: sidebarMain.hasAttribute("pfx-has-hover"),
+          hasHover: sidebarMain.hasAttribute("gjoa-has-hover"),
         });
         if (_ignoreNextHover) {
           dbg("hoverStrip:abort", { reason: "ignore-next-hover-sync" });
@@ -640,8 +640,8 @@ export function makeCompact(deps: CompactDeps): CompactAPI {
     dbg("compactDisable");
     clearFlash();
     cancelHideWatchdog();
-    sidebarMain.removeAttribute("data-pfx-compact");
-    sidebarMain.removeAttribute("pfx-has-hover");
+    sidebarMain.removeAttribute("data-gjoa-compact");
+    sidebarMain.removeAttribute("gjoa-has-hover");
 
     urlbarCompactObserver?.disconnect();
     urlbarCompactObserver = null;
@@ -662,14 +662,14 @@ export function makeCompact(deps: CompactDeps): CompactAPI {
   }
 
   function compactEnableHorizontal(): void {
-    if (document.documentElement.hasAttribute("data-pfx-compact-horizontal")) return;
+    if (document.documentElement.hasAttribute("data-gjoa-compact-horizontal")) return;
     dbg("compactEnableHorizontal");
-    document.documentElement.setAttribute("data-pfx-compact-horizontal", "");
+    document.documentElement.setAttribute("data-gjoa-compact-horizontal", "");
 
     if (urlbar && !urlbarCompactObserverHz) {
       urlbar.removeAttribute("popover");
       urlbarCompactObserverHz = new MutationObserver(() => {
-        if (!document.documentElement.hasAttribute("data-pfx-compact-horizontal")) return;
+        if (!document.documentElement.hasAttribute("data-gjoa-compact-horizontal")) return;
         // Floating urlbar owns popover state — see src/drawer/urlbar.ts.
         // Without this bail, breakout-close on Enter strips popover before
         // urlbar.ts removes the floating attr, so during one frame the
@@ -677,7 +677,7 @@ export function makeCompact(deps: CompactDeps): CompactAPI {
         // navigator-toolbox's translateY(-100%) transform → ~200px upward
         // shift visible until deactivate fires. Vertical's observer has the
         // same bail; we'd missed it here because translateX hides the bug.
-        if (document.documentElement.hasAttribute("pfx-urlbar-floating")) return;
+        if (document.documentElement.hasAttribute("gjoa-urlbar-floating")) return;
         if (urlbar.hasAttribute("breakout-extend")) {
           urlbar.setAttribute("popover", "manual");
           if (!urlbar.matches(":popover-open")) (urlbar as any).showPopover();
@@ -693,7 +693,7 @@ export function makeCompact(deps: CompactDeps): CompactAPI {
 
     if (!hoverStripTop || !hoverStripTop.isConnected) {
       hoverStripTop = (document as any).createXULElement("box") as HTMLElement;
-      hoverStripTop.id = "pfx-hover-strip-top";
+      hoverStripTop.id = "gjoa-hover-strip-top";
       document.documentElement.appendChild(hoverStripTop);
       hoverStripTop.addEventListener("mouseenter", () => {
         if (_ignoreNextHover) return;
@@ -707,12 +707,12 @@ export function makeCompact(deps: CompactDeps): CompactAPI {
   }
 
   function compactDisableHorizontal(): void {
-    if (!document.documentElement.hasAttribute("data-pfx-compact-horizontal")) return;
+    if (!document.documentElement.hasAttribute("data-gjoa-compact-horizontal")) return;
     dbg("compactDisableHorizontal");
     clearFlashToolbox();
     cancelHideWatchdogHz();
-    document.documentElement.removeAttribute("data-pfx-compact-horizontal");
-    navigatorToolbox.removeAttribute("pfx-has-hover");
+    document.documentElement.removeAttribute("data-gjoa-compact-horizontal");
+    navigatorToolbox.removeAttribute("gjoa-has-hover");
 
     urlbarCompactObserverHz?.disconnect();
     urlbarCompactObserverHz = null;
@@ -734,7 +734,7 @@ export function makeCompact(deps: CompactDeps): CompactAPI {
   function compactToggle(): void {
     const vertical = Services.prefs.getBoolPref("sidebar.verticalTabs", true);
     if (vertical) {
-      const active = sidebarMain.hasAttribute("data-pfx-compact");
+      const active = sidebarMain.hasAttribute("data-gjoa-compact");
       dbg("compactToggle:vertical", { wasActive: active });
       if (active) {
         compactDisable();
@@ -757,7 +757,7 @@ export function makeCompact(deps: CompactDeps): CompactAPI {
         });
       }
     } else {
-      const active = document.documentElement.hasAttribute("data-pfx-compact-horizontal");
+      const active = document.documentElement.hasAttribute("data-gjoa-compact-horizontal");
       dbg("compactToggle:horizontal", { wasActive: active });
       if (active) {
         compactDisableHorizontal();
@@ -786,12 +786,12 @@ export function makeCompact(deps: CompactDeps): CompactAPI {
     const vertical = Services.prefs.getBoolPref("sidebar.verticalTabs", true);
     if (vertical) {
       if (Services.prefs.getBoolPref(COMPACT_PREF, false)
-          && !sidebarMain.hasAttribute("data-pfx-compact")) {
+          && !sidebarMain.hasAttribute("data-gjoa-compact")) {
         compactEnable();
       }
     } else {
       if (Services.prefs.getBoolPref(HORIZONTAL_COMPACT_PREF, false)
-          && !document.documentElement.hasAttribute("data-pfx-compact-horizontal")) {
+          && !document.documentElement.hasAttribute("data-gjoa-compact-horizontal")) {
         compactEnableHorizontal();
       }
     }
@@ -803,7 +803,7 @@ export function makeCompact(deps: CompactDeps): CompactAPI {
       const vertical = Services.prefs.getBoolPref("sidebar.verticalTabs", true);
       if (!vertical) return;
       const enabled = Services.prefs.getBoolPref(COMPACT_PREF, false);
-      const active = sidebarMain.hasAttribute("data-pfx-compact");
+      const active = sidebarMain.hasAttribute("data-gjoa-compact");
       if (enabled && !active) compactEnable();
       else if (!enabled && active) compactDisable();
     },
@@ -814,7 +814,7 @@ export function makeCompact(deps: CompactDeps): CompactAPI {
       const vertical = Services.prefs.getBoolPref("sidebar.verticalTabs", true);
       if (vertical) return;
       const enabled = Services.prefs.getBoolPref(HORIZONTAL_COMPACT_PREF, false);
-      const active = document.documentElement.hasAttribute("data-pfx-compact-horizontal");
+      const active = document.documentElement.hasAttribute("data-gjoa-compact-horizontal");
       if (enabled && !active) compactEnableHorizontal();
       else if (!enabled && active) compactDisableHorizontal();
     },
@@ -833,7 +833,7 @@ export function makeCompact(deps: CompactDeps): CompactAPI {
 
   // === External-event listeners (script-dispatched + window-level) ===
 
-  // Other scripts can dismiss the sidebar by dispatching "pfx-dismiss".
+  // Other scripts can dismiss the sidebar by dispatching "gjoa-dismiss".
   function onPfxDismiss(): void {
     _ignoreNextHover = true;
     setHover(false);
@@ -841,9 +841,9 @@ export function makeCompact(deps: CompactDeps): CompactAPI {
     setTimeout(() => { _ignoreNextHover = false; }, KEEP_HOVER_DURATION + 100);
   }
 
-  // Other scripts can flash the sidebar visible by dispatching "pfx-flash".
+  // Other scripts can flash the sidebar visible by dispatching "gjoa-flash".
   function onPfxFlash(): void {
-    if (!sidebarMain.hasAttribute("data-pfx-compact")) return;
+    if (!sidebarMain.hasAttribute("data-gjoa-compact")) return;
     flashSidebar(FLASH_DURATION);
   }
 
@@ -854,7 +854,7 @@ export function makeCompact(deps: CompactDeps): CompactAPI {
   function onWindowBlur(e: FocusEvent): void {
     // The blur event bubbles from any focused element. Only react when the
     // window itself is the target — otherwise we'd reconcile dozens of times
-    // per second of user activity, repeatedly clearing pfx-has-hover.
+    // per second of user activity, repeatedly clearing gjoa-has-hover.
     if (e.target !== window) return;
     reconcileCompactState("window-blur");
   }
@@ -863,8 +863,8 @@ export function makeCompact(deps: CompactDeps): CompactAPI {
 
   document.addEventListener("popupshown", onPopupShown);
   document.addEventListener("popuphidden", onPopupHidden);
-  sidebarMain.addEventListener("pfx-dismiss", onPfxDismiss);
-  sidebarMain.addEventListener("pfx-flash", onPfxFlash);
+  sidebarMain.addEventListener("gjoa-dismiss", onPfxDismiss);
+  sidebarMain.addEventListener("gjoa-flash", onPfxFlash);
   window.addEventListener("sizemodechange", onSizemodeChange);
   window.addEventListener("blur", onWindowBlur as EventListener);
 
@@ -877,20 +877,20 @@ export function makeCompact(deps: CompactDeps): CompactAPI {
   // === Public API ===
 
   function pinSidebar(): void {
-    sidebarMain.setAttribute("pfx-has-hover", "true");
+    sidebarMain.setAttribute("gjoa-has-hover", "true");
     clearFlash();
   }
 
   function pinToolbox(): void {
-    navigatorToolbox.setAttribute("pfx-has-hover", "true");
+    navigatorToolbox.setAttribute("gjoa-has-hover", "true");
     clearFlashToolbox();
   }
 
   function destroy(): void {
     document.removeEventListener("popupshown", onPopupShown);
     document.removeEventListener("popuphidden", onPopupHidden);
-    sidebarMain.removeEventListener("pfx-dismiss", onPfxDismiss);
-    sidebarMain.removeEventListener("pfx-flash", onPfxFlash);
+    sidebarMain.removeEventListener("gjoa-dismiss", onPfxDismiss);
+    sidebarMain.removeEventListener("gjoa-flash", onPfxFlash);
     window.removeEventListener("sizemodechange", onSizemodeChange);
     window.removeEventListener("blur", onWindowBlur as EventListener);
     Services.prefs.removeObserver(COMPACT_PREF, compactObserver);
@@ -910,8 +910,8 @@ export function makeCompact(deps: CompactDeps): CompactAPI {
     reconcileHorizontal: reconcileCompactStateHorizontal,
     pinSidebar,
     pinToolbox,
-    isCompactVertical: () => sidebarMain.hasAttribute("data-pfx-compact"),
-    isCompactHorizontal: () => document.documentElement.hasAttribute("data-pfx-compact-horizontal"),
+    isCompactVertical: () => sidebarMain.hasAttribute("data-gjoa-compact"),
+    isCompactHorizontal: () => document.documentElement.hasAttribute("data-gjoa-compact-horizontal"),
     destroy,
   };
 }

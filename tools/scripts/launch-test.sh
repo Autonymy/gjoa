@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
 # Launch the mach-built gjoa against the gjoa-test profile, capturing
-# stderr/stdout to /tmp/gjoa.log so autoconfig + chrome JS errors are
-# inspectable.
+# stderr/stdout to /tmp/gjoa.log so chrome loader + chrome JS errors
+# are inspectable.
 #
 # Use after `bun run chrome:install`.
 # Inspect log: `tail -f /tmp/gjoa.log` from another terminal, or
-# `grep -iE 'autoconfig|config\.js|palefox|gjoa' /tmp/gjoa.log`.
+# `grep -iE 'gjoa-loader|gjoa' /tmp/gjoa.log`.
 
 set -euo pipefail
 

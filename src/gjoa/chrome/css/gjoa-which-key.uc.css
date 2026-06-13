@@ -1,5 +1,5 @@
 /* ==UserScript==
-// @name           palefox-which-key
+// @name           gjoa-which-key
 // @description    Leader-mode discoverability panel
 // @include        main
 // ==/UserScript== */
@@ -9,15 +9,15 @@
  * on dispatch / Esc / double-leader / timeout. Element created on demand
  * by src/tabs/vim.ts and reused. */
 
-#pfx-which-key {
+#gjoa-which-key {
   position: fixed !important;
   top: 50% !important;
   left: 50% !important;
   transform: translate(-50%, -50%) !important;
   z-index: 10002 !important;
-  background-color: var(--pfx-bg-elevated) !important;
-  color: var(--pfx-fg) !important;
-  border: 1px solid var(--pfx-border) !important;
+  background-color: var(--gjoa-bg-elevated) !important;
+  color: var(--gjoa-fg) !important;
+  border: 1px solid var(--gjoa-border) !important;
   border-radius: 6px !important;
   padding: 8px 10px !important;
   font-family: ui-monospace, SFMono-Regular, monospace !important;
@@ -30,42 +30,42 @@
   pointer-events: none !important;
 }
 
-#pfx-which-key[hidden] {
+#gjoa-which-key[hidden] {
   display: none !important;
 }
 
-#pfx-which-key .pfx-wk-header {
+#gjoa-which-key .gjoa-wk-header {
   font-weight: 600 !important;
-  color: var(--pfx-fg-muted) !important;
+  color: var(--gjoa-fg-muted) !important;
   font-size: 11px !important;
   letter-spacing: 0.04em !important;
   text-transform: uppercase !important;
   margin-bottom: 6px !important;
   padding-bottom: 4px !important;
-  border-bottom: 1px solid var(--pfx-border) !important;
+  border-bottom: 1px solid var(--gjoa-border) !important;
 }
 
-#pfx-which-key .pfx-wk-row {
+#gjoa-which-key .gjoa-wk-row {
   display: flex !important;
   gap: 10px !important;
   align-items: baseline !important;
 }
 
-#pfx-which-key .pfx-wk-key {
+#gjoa-which-key .gjoa-wk-key {
   display: inline-block !important;
   min-width: 1.4em !important;
   padding: 0 6px !important;
   text-align: center !important;
-  background-color: color-mix(in srgb, var(--pfx-fg) 8%, transparent) !important;
+  background-color: color-mix(in srgb, var(--gjoa-fg) 8%, transparent) !important;
   border-radius: 3px !important;
-  color: var(--pfx-accent) !important;
+  color: var(--gjoa-accent) !important;
   font-weight: 600 !important;
 }
 
-#pfx-which-key .pfx-wk-desc {
-  color: var(--pfx-fg) !important;
+#gjoa-which-key .gjoa-wk-desc {
+  color: var(--gjoa-fg) !important;
 }
 
 @media (prefers-reduced-motion: reduce) {
-  #pfx-which-key { transition: none !important; }
+  #gjoa-which-key { transition: none !important; }
 }

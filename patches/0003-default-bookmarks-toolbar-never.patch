@@ -1,3 +1,8 @@
+# gjoa-patch:
+#   baseline-firefox: 151.0.1
+#   touches:
+#     - browser/app/profile/firefox.js
+#
 Default the bookmarks toolbar visibility to "never" instead of "newtab".
 
 Firefox ships the bookmarks toolbar visible on about:newtab. Gjoa's

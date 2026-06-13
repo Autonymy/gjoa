@@ -7,14 +7,14 @@
 
 import { PIN_ATTR } from "./constants.ts";
 import { createLogger } from "./log.ts";
-import { rowOf, state, treeOf } from "./state.ts";
+import { state, treeOf } from "./state.ts";
 import type { Group, Row, Tab, TreeData } from "./types.ts";
 
 
 const log = createLogger("tabs");
 
 // =============================================================================
-// SessionStore — palefox-id persistence via persistTabAttribute
+// SessionStore — gjoa-id persistence via persistTabAttribute
 // =============================================================================
 
 /** SessionStore module. In some chrome-script contexts the global isn't
@@ -32,13 +32,13 @@ export const SS: any = (() => {
       "resource:///modules/sessionstore/SessionStore.sys.mjs",
     ).SessionStore;
   } catch (e) {
-    console.error("palefox-tabs: SessionStore unavailable", e);
+    console.error("gjoa-tabs: SessionStore unavailable", e);
     return null;
   }
 })();
 
 let pinAttrRegistered = false;
-/** Idempotent: registers PIN_ATTR with SessionStore so palefox-ids survive
+/** Idempotent: registers PIN_ATTR with SessionStore so gjoa-ids survive
  *  browser restart, undoCloseTab, undoCloseWindow. No-op if SS is missing. */
 export function tryRegisterPinAttr(): void {
   if (pinAttrRegistered || !SS?.persistTabAttribute) return;
@@ -46,24 +46,34 @@ export function tryRegisterPinAttr(): void {
     SS.persistTabAttribute(PIN_ATTR);
     pinAttrRegistered = true;
   } catch (e) {
-    console.error("palefox-tabs: persistTabAttribute failed", e);
+    console.error("gjoa-tabs: persistTabAttribute failed", e);
   }
 }
 
-/** Write a tab's palefox-id to the persistent XUL attribute. */
+/** Write a tab's gjoa-id to the persistent XUL attribute. */
 export function pinTabId(tab: Tab, id: number): void {
   try {
     tab.setAttribute(PIN_ATTR, String(id));
   } catch {}
 }
 
-/** Read a tab's persisted palefox-id, or 0 if none / unparseable. */
+/** Read a tab's persisted gjoa-id, or 0 if none / unparseable.
+ *  Legacy migration: if no gjoa-id but the old palefox-era pfx-id is present,
+ *  adopt it as the gjoa-id (write forward so future reads are direct). */
 export function readPinnedId(tab: Tab): number {
   try {
     const v = tab.getAttribute?.(PIN_ATTR);
     if (v) {
       const n = Number(v);
       if (n) return n;
+    }
+    const legacy = tab.getAttribute?.("pfx-id");
+    if (legacy) {
+      const n = Number(legacy);
+      if (n) {
+        try { tab.setAttribute(PIN_ATTR, String(n)); } catch {}
+        return n;
+      }
     }
   } catch {}
   return 0;
@@ -74,7 +84,7 @@ export function readPinnedId(tab: Tab): number {
 // =============================================================================
 
 /** Get-or-init: fetches the TreeData for a tab. On first call for a tab,
- *  reads its persisted pfx-id (or assigns a fresh one), records the entry in
+ *  reads its persisted gjoa-id (or assigns a fresh one), records the entry in
  *  treeOf, and advances state.nextTabId. Always returns a valid TreeData. */
 export function treeData(tab: Tab): TreeData {
   if (!treeOf.has(tab)) {
@@ -98,7 +108,7 @@ export function treeData(tab: Tab): TreeData {
   return treeOf.get(tab)!;
 }
 
-/** Look up a tab by palefox-id. Returns null if no match, or if `id` is a
+/** Look up a tab by gjoa-id. Returns null if no match, or if `id` is a
  *  string (group id) — those don't refer to tabs. O(N) over tabs. */
 export function tabById(id: number | string | null | undefined): Tab | null {
   if (id == null || typeof id !== "number" || !id) return null;
@@ -176,14 +186,14 @@ export function allTabs(): Tab[] {
   return [...gBrowser.tabs] as Tab[];
 }
 
-/** All palefox rows (tabs + groups) in visual order: pinned container first,
+/** All gjoa rows (tabs + groups) in visual order: pinned container first,
  *  then the tree panel. Returns an array — safe to iterate while mutating. */
 export function allRows(): Row[] {
   const pinned = state.pinnedContainer
-    ? [...state.pinnedContainer.querySelectorAll<HTMLElement>(".pfx-tab-row")] as Row[]
+    ? [...state.pinnedContainer.querySelectorAll<HTMLElement>(".gjoa-tab-row")] as Row[]
     : [];
   const treeRows = state.panel
-    ? [...state.panel.querySelectorAll<HTMLElement>(".pfx-tab-row, .pfx-group-row")] as Row[]
+    ? [...state.panel.querySelectorAll<HTMLElement>(".gjoa-tab-row, .gjoa-group-row")] as Row[]
     : [];
   return [...pinned, ...treeRows];
 }
@@ -216,7 +226,7 @@ export function subtreeRows(row: Element | null | undefined): Row[] {
 
 /** True when the panel is in horizontal layout mode. */
 export function isHorizontal(): boolean {
-  return !!state.panel?.hasAttribute("pfx-horizontal");
+  return !!state.panel?.hasAttribute("gjoa-horizontal");
 }
 
 // =============================================================================
@@ -246,7 +256,7 @@ export function tabUrl(tab: Tab): string {
         }
       }
     } catch (e) {
-      console.error("palefox-tabs: getTabState failed", e);
+      console.error("gjoa-tabs: getTabState failed", e);
     }
   }
   return spec || "";

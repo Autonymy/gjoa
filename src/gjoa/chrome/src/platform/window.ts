@@ -1,8 +1,8 @@
-// Window-scoped facade — the object you get from `Palefox.windows.current()`.
+// Window-scoped facade — the object you get from `Gjoa.windows.current()`.
 //
-// Each chrome window has exactly one PalefoxWindow. It groups the
+// Each chrome window has exactly one GjoaWindow. It groups the
 // window-local APIs: tabs, events (future), urlbar (future), sidebar
-// (future). Multi-window aggregation lives at the top-level Palefox
+// (future). Multi-window aggregation lives at the top-level Gjoa
 // namespace, NOT here.
 
 import type { SchedulerAPI } from "./scheduler.ts";
@@ -12,7 +12,7 @@ import { makeWindowTabs, type WindowTabsAPI } from "./window-tabs.ts";
 // INTERFACE
 // =============================================================================
 
-export type PalefoxWindow = {
+export type GjoaWindow = {
   /** Per-window stable id. Today: a generated UUID per chrome window;
    *  used by cross-window queries (M12) to attribute results. */
   readonly windowId: string;
@@ -24,7 +24,7 @@ export type PalefoxWindow = {
 // IMPLEMENTATION
 // =============================================================================
 
-export function makePalefoxWindow(scheduler: SchedulerAPI): PalefoxWindow {
+export function makeGjoaWindow(scheduler: SchedulerAPI): GjoaWindow {
   // crypto.randomUUID() guarantees uniqueness across chrome windows. A
   // module-local counter would collide because each chrome window loads
   // its own bundle (own module scope) and would restart at 1.

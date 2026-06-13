@@ -14,9 +14,18 @@
     "chrome:watch": "bun --watch tools/chrome-bundle/build.ts",
     "chrome:dist": "bun tools/chrome-bundle/dist.ts",
     "chrome:install": "bun tools/chrome-bundle/install.ts",
-    "test": "bun test"
+    "security:check": "bun tools/security/check.ts",
+    "security:bump": "bun tools/security/bump.ts",
+    "status": "bun tools/scripts/status.ts",
+    "preflight": "bun tools/scripts/preflight.ts",
+    "test": "bun test",
+    "test:integration": "bun run chrome:dist && bun run chrome:install && bun tools/test-driver/runner.ts",
+    "test:integration:headed": "bun run chrome:dist && bun run chrome:install && bun tools/test-driver/runner.ts --headed --verbose",
+    "test:integration:nix": "GJOA_BIN=$PWD/result/bin/gjoa bun tools/test-driver/runner.ts",
+    "test:integration:nix:headed": "GJOA_BIN=$PWD/result/bin/gjoa bun tools/test-driver/runner.ts --headed --verbose"
   },
   "devDependencies": {
+    "@types/bun": "^1.3.14",
     "happy-dom": "^20.9.0"
   }
 }

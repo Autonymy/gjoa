@@ -9,7 +9,64 @@
   outputs = { self, nixpkgs, flake-utils }:
     flake-utils.lib.eachDefaultSystem (system:
       let
-        pkgs = import nixpkgs { inherit system; };
+        # NSS leapfrog overlay — auto-disabling.
+        #
+        # Firefox bumps its NSS floor faster than nixpkgs ships it (e.g. 151
+        # needs 3.123.1 while nixpkgs may still be on 3.123.0). When nixpkgs
+        # is behind, we substitute Mozilla's upstream RTM tarball; when it
+        # catches up, the overlay short-circuits and we use nixpkgs's
+        # nss_latest unchanged.
+        #
+        # The auto-off uses a two-pass nixpkgs evaluation:
+        #   1. Import a bare nixpkgs (no overlays) → basePkgs
+        #   2. Compare basePkgs.nss_latest.version against minNssVersion
+        #   3. Apply the overlay only when basePkgs is strictly behind
+        #
+        # This avoids the recursion you hit if you probe `prev.nss_latest`
+        # from inside the overlay closure (final↔prev fixed-point).
+        #
+        # To raise minNssVersion when Firefox needs a newer NSS than the
+        # hardcoded floor:
+        #   1. Bump minNssVersion to the new requirement
+        #   2. Update nssUrl (RTM tarball from
+        #      https://ftp.mozilla.org/pub/security/nss/releases/) and
+        #      compute nssHash via:
+        #        nix-prefetch-url --unpack <url> \
+        #          | xargs nix hash convert --hash-algo sha256 --to sri
+        #
+        # The block is dead weight (but harmless) once nixpkgs has
+        # permanently outpaced minNssVersion; safe to delete the
+        # let-bindings + the if-branch then.
+        minNssVersion = "3.123.1";
+        nssUrl = "https://github.com/nss-dev/nss/archive/NSS_3_123_1_RTM.tar.gz";
+        nssHash = "sha256-VHlcr/B04ijcZgt9XPLkBsnoJmuHjWZkdrOBYSqyYMg=";
+
+        basePkgs = import nixpkgs { inherit system; };
+        nssOverlayNeeded =
+          builtins.compareVersions basePkgs.nss_latest.version minNssVersion < 0;
+
+        pkgs = if nssOverlayNeeded then
+          import nixpkgs {
+            inherit system;
+            overlays = [
+              (_final: prev: {
+                nss_latest = prev.nss_latest.overrideAttrs (_old: {
+                  version = minNssVersion;
+                  src = prev.fetchurl {
+                    url = nssUrl;
+                    hash = nssHash;
+                  };
+                });
+              })
+            ];
+          }
+        else basePkgs;
+
+        # Single source of truth for the Firefox pin: gjoa.json. Bumping
+        # `bun run security:bump` writes here; flake.nix re-reads on next
+        # `nix build`. No more "I bumped gjoa.json but the build said 150."
+        gjoaConfig = builtins.fromJSON (builtins.readFile ./gjoa.json);
+        firefoxVersion = gjoaConfig.firefox.version;
 
         # Delegate the actual Firefox compile to nixpkgs's `buildMozillaMach`
         # — ~750 lines of carefully-tuned Nix that handles every toolchain
@@ -34,9 +91,9 @@
         #      → set as defaults inside, override via .override
         # The dance: build with user args, then .override the feature flags.
         mkGjoa = { pgoSupport, ltoSupport, crashreporterSupport, suffix ? "" }:
-          (pkgs.buildMozillaMach {
+          ((pkgs.buildMozillaMach {
             pname = "gjoa${suffix}";
-            version = "150.0";
+            version = firefoxVersion;
             applicationName = "Gjoa";
             binaryName = "gjoa";
 
@@ -99,7 +156,44 @@
             };
           }).override {
             inherit pgoSupport ltoSupport crashreporterSupport;
-          };
+          }).overrideAttrs (old: {
+            # nixpkgs's buildMozillaMach applies a set of patches calibrated
+            # to whatever Firefox version nixpkgs currently ships (149 at
+            # time of writing). Two of those patches are macOS-SDK-version
+            # reverts that target lines in `build/moz.configure/toolchain.configure`
+            # which have already shifted in newer Firefox releases — they
+            # fail to apply, and the build bails.
+            #
+            # On Linux those macOS reverts are no-ops anyway, so we drop them
+            # and keep only the two version-stable nixpkgs build-system
+            # patches (`136-no-buildconfig.patch`, `133-env-var-for-system-dir.patch`).
+            patches = pkgs.lib.filter (p:
+              let n = baseNameOf (toString p);
+              in n == "136-no-buildconfig.patch"
+              || n == "133-env-var-for-system-dir.patch"
+            ) (old.patches or []);
+
+            # =================================================================
+            # sccache wiring is DISABLED here for now.
+            #
+            # Background: we tried `__noChroot = true` to give the build
+            # write access to ~/.cache/sccache-gjoa so cache state survives
+            # across nix builds. The nix daemon rejected it with
+            # `sandbox = true` in nix.conf (not just a trusted-users
+            # question — `__noChroot` requires `sandbox = relaxed`). Two
+            # build attempts on 2026-05-26 died at evaluation before we
+            # caught this; see BUILD-LEDGER postmortems.
+            #
+            # To turn sccache persistence back on, either:
+            #   (a) set `sandbox = relaxed` in nixos-config nix-settings
+            #       (system-wide loosening, affects every nix build), or
+            #   (b) run sccache as a daemon outside the sandbox + connect
+            #       via SCCACHE_REDIS (more setup, narrower blast radius)
+            #
+            # Until either lands, this block stays empty and nix builds
+            # are cold every time. Mach builds (the daily path) have no
+            # sandbox and already share state across runs via the objdir.
+          });
 
         # Dev variant — what you build day-to-day. Skips PGO+LTO.
         gjoa-dev-unwrapped = mkGjoa {
@@ -143,29 +237,60 @@
         packages.gjoa-release-unwrapped = gjoa-release-unwrapped;
 
         # ===================================================================
-        # Dev shell — provides EVERYTHING `mach build faster` needs to run
-        # against engine/ directly, bypassing nix build for fast iteration.
-        # The same toolchain buildMozillaMach uses, plus the env vars mach
-        # expects (LIBCLANG_PATH, AS unset, etc).
+        # Dev shells — split into two intentionally:
         #
-        # Use this for daily JS/CSS iteration. Use `nix build .#gjoa`
-        # only for cold-start bootstrap, Firefox version bumps, or release.
+        #   default — minimal. bun + python + git. Tiny closure (~50MB).
+        #             What direnv loads on `cd ~/code/gjoa`. Enough for
+        #             editing TS, running `bun test`, `bun run import`,
+        #             `bun run chrome:dist`. Should never trigger a
+        #             multi-GB substituter fetch on terminal spawn.
+        #
+        #   mach    — full Firefox build toolchain. Heavy (~3GB closure).
+        #             Enter explicitly with `nix develop .#mach` only when
+        #             you're about to `./mach build` / `./mach build faster`.
+        #
+        # Why split: previously, opening any terminal in the repo pulled in
+        # gtk3 + xorg.* + mesa + pulseaudio + cups + etc., which is the
+        # Firefox link/runtime closure. That's ~3GB of substituter fetches
+        # the first time, or whenever nixpkgs renames an attribute. The
+        # user's actual daily workflow (edit TS, run bun) doesn't need any
+        # of it. Splitting the shells gates the heavy fetch behind an
+        # explicit opt-in.
         # ===================================================================
         devShells.default = pkgs.mkShell {
           packages = with pkgs; [
-            # Prep tool + scripting
-            nodejs_20
+            # Bun is the runtime for all tools/* (TS without node).
+            bun
+            # mach itself wants python3, even though we drive it via fish/bun.
+            python3
+            python3Packages.pip
+            python3Packages.virtualenv
+            # tools/prep/patches.ts shells out to git for git-apply.
+            git
+            # SVG → PNG icon rendering (tools/icons/generate.ts).
+            librsvg
+          ];
+
+          shellHook = ''
+            if [[ $- == *i* ]]; then
+              echo "gjoa devShell (minimal). For mach builds: nix develop .#mach"
+            fi
+          '';
+        };
+
+        devShells.mach = pkgs.mkShell {
+          packages = with pkgs; [
+            # Same as default + the Firefox build toolchain.
             bun
             python3
             python3Packages.pip
             python3Packages.virtualenv
-
-            # VCS / build orchestration
             git
             mercurial
             gnumake
+            librsvg
 
-            # Toolchain — match what buildMozillaMach uses (llvm 19+)
+            # Toolchain — match what buildMozillaMach uses (llvm 19+).
             llvmPackages_19.clang
             llvmPackages_19.bintools
             llvmPackages_19.libclang
@@ -183,15 +308,12 @@
             perl
             which
 
-            # Build acceleration
+            # Build acceleration.
             sccache
             ccache
             mold
 
-            # SVG → PNG icon rendering (used by tools/icons/generate.ts)
-            librsvg
-
-            # Native deps Firefox links against (mach build needs at link time)
+            # Native deps Firefox links against at compile/link time.
             gtk3
             glib
             dbus
@@ -200,17 +322,17 @@
             mesa
             libxkbcommon
             wayland
-            xorg.libX11
-            xorg.libXcomposite
-            xorg.libXdamage
-            xorg.libXext
-            xorg.libXfixes
-            xorg.libXrandr
-            xorg.libXtst
-            xorg.libxcb
-            xorg.libXi
-            xorg.libXrender
-            xorg.libXScrnSaver
+            libx11
+            libxcomposite
+            libxdamage
+            libxext
+            libxfixes
+            libxrandr
+            libxtst
+            libxcb
+            libxi
+            libxrender
+            libxscrnsaver
             alsa-lib
             libpulseaudio
             cups
@@ -241,35 +363,17 @@
             # Don't try to send libnotify desktop notifications during build.
             export MOZ_NOSPAM=1
 
-            # ---- Persistent state (NOT in /tmp — survives reboots) ----
-            # mach build state cache. Defaults to ~/.mozbuild but we keep
-            # it in-tree under engine/ so it ties to this checkout.
+            # mach build state cache; in-tree so it ties to this checkout.
             export MOZBUILD_STATE_PATH="$PWD/engine/.mozbuild"
-
-            # Where mach puts compile output. Same as nix build's MOZ_OBJDIR
-            # convention so artifacts match.
             export MOZ_OBJDIR="$PWD/engine/obj-x86_64-pc-linux-gnu"
 
-            # Only print the help banner in interactive shells. `direnv
-            # exec` runs the shellHook in a non-interactive sub-bash to
-            # capture env; printing the banner there spams every `gj sync`
-            # / `gj build` invocation with ~25 lines of help text.
             if [[ $- == *i* ]]; then
-            cat <<'EOF'
+              cat <<'EOF'
 
-gjoa dev shell — mach is on PATH, env wired for direct iteration.
-
-  COLD START (one-time, or when bumping Firefox version):
-    bun run init                 # downloads mozilla-central + applies overlays
-    nix build .#gjoa --impure   # produces ./result/bin/gjoa
+gjoa mach shell — full Firefox build toolchain wired in.
 
   DAILY DEV LOOP (sub-30-sec for JS/CSS, few min for C++):
-    cd engine
-    ./mach build faster          # only re-zips omni.ja
-    $MOZ_OBJDIR/dist/bin/gjoa   # run the built binary
-
-  AFTER EDITING src/gjoa/ OR configs/:
-    bun run import               # re-applies overlays + branding
+    bun run import               # re-apply overlays
     cd engine && ./mach build faster
 
   TROUBLESHOOTING:
@@ -277,8 +381,7 @@ gjoa dev shell — mach is on PATH, env wired for direct iteration.
 
   NIX BUILD WHEN:
     - First time on this machine (or after `git clean`)
-    - Bumping Firefox version (gjoa.json change)
-    - Producing a release artifact for distribution
+    - Bumping Firefox version
     - Toolchain change in flake.nix
 EOF
             fi

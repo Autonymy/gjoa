@@ -136,17 +136,17 @@ export function makeDrag(deps: DragDeps): DragAPI {
   let dropTarget: Row | HTMLElement | null = null;
   let dropPosition: DropPosition | null = null;
 
-  // [pfx-dragging] safety net. The attribute is consumed by compact-mode
+  // [gjoa-dragging] safety net. The attribute is consumed by compact-mode
   // (isGuarded) to know if a drag is in flight. If the per-row dragend
   // misses (source destroyed mid-drop), the attribute sticks and compact
   // never auto-hides. mousedown when no drag is currently active sweeps
-  // any stale attribute. Visual styling for [pfx-dragging] is intentionally
+  // any stale attribute. Visual styling for [gjoa-dragging] is intentionally
   // absent (Firefox's drag preview already covers the source visualization),
   // so even a momentarily-stuck attribute has no visible consequence.
   document.addEventListener("mousedown", () => {
     if (dragSource === null) {
-      document.querySelectorAll("[pfx-dragging]").forEach((el) => {
-        el.removeAttribute("pfx-dragging");
+      document.querySelectorAll("[gjoa-dragging]").forEach((el) => {
+        el.removeAttribute("gjoa-dragging");
       });
     }
   }, true);
@@ -157,7 +157,7 @@ export function makeDrag(deps: DragDeps): DragAPI {
     row.addEventListener("dragstart", (e) => {
       // Don't drag if clicking the close button.
       const t = e.target as HTMLElement;
-      if (t.classList?.contains("pfx-tab-close")) {
+      if (t.classList?.contains("gjoa-tab-close")) {
         e.preventDefault();
         return;
       }
@@ -166,7 +166,7 @@ export function makeDrag(deps: DragDeps): DragAPI {
       const dt = (e as DragEvent).dataTransfer!;
       dt.effectAllowed = "move";
       dt.setData("text/plain", "");
-      row.setAttribute("pfx-dragging", "true");
+      row.setAttribute("gjoa-dragging", "true");
     });
 
     row.addEventListener("dragend", () => {
@@ -182,7 +182,7 @@ export function makeDrag(deps: DragDeps): DragAPI {
           : "other",
         dropPositionWas: dropPosition,
       });
-      dragSource?.removeAttribute("pfx-dragging");
+      dragSource?.removeAttribute("gjoa-dragging");
       dragSource = null;
       clearDropIndicator();
     });
@@ -285,7 +285,7 @@ export function makeDrag(deps: DragDeps): DragAPI {
   // Drop handlers on the pinned container itself: drop in trailing
   // whitespace after the last pinned row pins-and-appends the source.
   // (The "drop into empty pinned area" case is intentionally unsupported
-  // since palefox keeps an empty pinned container hidden — users can pin
+  // since gjoa keeps an empty pinned container hidden — users can pin
   // via right-click or by dragging onto a divider that already has at
   // least one pinned row.)
   function setupPinnedContainerDrop(container: HTMLElement): void {
@@ -300,7 +300,7 @@ export function makeDrag(deps: DragDeps): DragAPI {
       // below pinned, onto the top of unpinned", not "drop into pinned".
       // Reject the drop when the cursor is below the last actual row so
       // the event falls through to the panel/top-group dragover.
-      const lastRow = container.querySelector<HTMLElement>(".pfx-tab-row:last-of-type") as Row | null;
+      const lastRow = container.querySelector<HTMLElement>(".gjoa-tab-row:last-of-type") as Row | null;
       if (lastRow) {
         const lastRect = lastRow.getBoundingClientRect();
         const y = (e as MouseEvent).clientY;
@@ -368,11 +368,11 @@ export function makeDrag(deps: DragDeps): DragAPI {
       let anchor: Row | null = null;
       if (srcPinned) {
         anchor = p.querySelector<HTMLElement>(
-          ".pfx-tab-row:last-of-type, .pfx-group-row:last-of-type",
+          ".gjoa-tab-row:last-of-type, .gjoa-group-row:last-of-type",
         ) as Row | null;
       } else {
         const srcSubtree = new Set(subtreeRows(dragSource));
-        const rows = [...p.querySelectorAll<HTMLElement>(".pfx-tab-row, .pfx-group-row")] as Row[];
+        const rows = [...p.querySelectorAll<HTMLElement>(".gjoa-tab-row, .gjoa-group-row")] as Row[];
         for (let i = rows.length - 1; i >= 0; i--) {
           const candidate = rows[i]!;
           if (levelOfRow(candidate) === 0 && !srcSubtree.has(candidate)) {
@@ -432,10 +432,10 @@ export function makeDrag(deps: DragDeps): DragAPI {
   function showDropIndicator(targetRow: Row, position: DropPosition): void {
     if (!dropIndicator) {
       dropIndicator = document.createXULElement("box") as HTMLElement;
-      dropIndicator.id = "pfx-drop-indicator";
+      dropIndicator.id = "gjoa-drop-indicator";
     }
-    dropIndicator.removeAttribute("pfx-drop-child");
-    dropIndicator.removeAttribute("pfx-fixed");
+    dropIndicator.removeAttribute("gjoa-drop-child");
+    dropIndicator.removeAttribute("gjoa-fixed");
     dropIndicator.style.cssText = "";
 
     log("showDropIndicator", {
@@ -459,9 +459,9 @@ export function makeDrag(deps: DragDeps): DragAPI {
         document.documentElement.appendChild(dropIndicator);
       }
       const rect = targetRow.getBoundingClientRect();
-      dropIndicator.setAttribute("pfx-fixed", "true");
+      dropIndicator.setAttribute("gjoa-fixed", "true");
       if (position === "child") {
-        dropIndicator.setAttribute("pfx-drop-child", "true");
+        dropIndicator.setAttribute("gjoa-drop-child", "true");
         Object.assign(dropIndicator.style, {
           position: "fixed",
           left: rect.left + "px",
@@ -484,7 +484,7 @@ export function makeDrag(deps: DragDeps): DragAPI {
 
     // Vertical mode — original in-flow indicator.
     if (position === "child") {
-      dropIndicator.setAttribute("pfx-drop-child", "true");
+      dropIndicator.setAttribute("gjoa-drop-child", "true");
       targetRow.after(dropIndicator);
       dropIndicator.style.marginInlineStart = ((levelOfRow(targetRow) + 1) * INDENT + 8) + "px";
     } else if (position === "before") {
@@ -505,6 +505,12 @@ export function makeDrag(deps: DragDeps): DragAPI {
   }
 
   function executeDrop(srcRow: Row, tgtRow: Row, position: DropPosition): void {
+    // The drop indicator (inserted by showDropIndicator during dragover) is
+    // still in the DOM at this point — dragend hasn't fired yet. Remove it
+    // first so subtreeRows / nextElementSibling walks see the REAL tree, not
+    // an indicator div sitting between a group and its first child.
+    clearDropIndicator();
+
     const tgtLevel = levelOfRow(tgtRow);
     if (!dataOf(tgtRow)) {
       log("executeDrop:abort", { reason: "no-tgt-data", target: rowDesc(tgtRow) });
@@ -647,7 +653,7 @@ export function makeDrag(deps: DragDeps): DragAPI {
     }
 
     // Move Firefox tabs via gBrowser.moveTabTo so our panel and Firefox's tab
-    // strip stay aligned. TabMove handlers reorder palefox rows in response.
+    // strip stay aligned. TabMove handlers reorder gjoa rows in response.
     // Groups have no Firefox counterpart; we move them via DOM below.
     const tabsArr = [...gBrowser.tabs] as Tab[];
 
@@ -655,15 +661,46 @@ export function makeDrag(deps: DragDeps): DragAPI {
     let targetIdx: number;
     let idxBranch: string;
     if (tgtRow._group) {
-      const anchorTab = position === "before"
-        ? findClosestTabBefore(tgtRow)
-        : findLastTabInGroupOrBefore(tgtRow);
-      if (anchorTab) {
-        targetIdx = tabsArr.indexOf(anchorTab) + 1;
-        idxBranch = `group/${position}→after-anchor(${anchorTab.label || "?"}@${tabsArr.indexOf(anchorTab)})`;
+      if (position === "child") {
+        // Drop INTO group: tab should land inside, immediately after the
+        // group row in DOM. For a non-empty group, that's right after the
+        // last subtree tab. For an empty group, anchor on the first tab
+        // that comes AFTER the group row in DOM and insert BEFORE it —
+        // that's the Firefox-index slot that maps to "right after the
+        // group row" once TabMove fires and the panel re-DOMs the row.
+        const subtreeTabs = subtreeRows(tgtRow)
+          .slice(1)
+          .filter(r => r._tab)
+          .map(r => r._tab!);
+        if (subtreeTabs.length) {
+          targetIdx = tabsArr.indexOf(subtreeTabs[subtreeTabs.length - 1]!) + 1;
+          idxBranch = `group/child→after-lastSubtreeTab@${targetIdx - 1}`;
+        } else {
+          let next: Element | null = tgtRow.nextElementSibling;
+          let firstAfter: Tab | null = null;
+          while (next) {
+            if ((next as Row)._tab) { firstAfter = (next as Row)._tab!; break; }
+            next = next.nextElementSibling;
+          }
+          if (firstAfter) {
+            targetIdx = tabsArr.indexOf(firstAfter);
+            idxBranch = `group/child(empty)→before-firstAfterGroup@${targetIdx}`;
+          } else {
+            targetIdx = tabsArr.length;
+            idxBranch = `group/child(empty,end)→tabsArr.length`;
+          }
+        }
       } else {
-        targetIdx = tabsArr.length;
-        idxBranch = `group/${position}→no-anchor→end(${tabsArr.length})`;
+        const anchorTab = position === "before"
+          ? findClosestTabBefore(tgtRow)
+          : findLastTabInGroupOrBefore(tgtRow);
+        if (anchorTab) {
+          targetIdx = tabsArr.indexOf(anchorTab) + 1;
+          idxBranch = `group/${position}→after-anchor(${anchorTab.label || "?"}@${tabsArr.indexOf(anchorTab)})`;
+        } else {
+          targetIdx = tabsArr.length;
+          idxBranch = `group/${position}→no-anchor→end(${tabsArr.length})`;
+        }
       }
     } else if (position === "before") {
       targetIdx = tabsArr.indexOf(tgtRow._tab!);

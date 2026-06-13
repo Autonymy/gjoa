@@ -1,7 +1,7 @@
 // Content-focus bridge — JSWindowActor-style frame script that reports the
 // editable-status of content's active element back to chrome.
 //
-// Why: palefox keys live in chrome scope, but we need Tridactyl/Vimium-style
+// Why: gjoa keys live in chrome scope, but we need Tridactyl/Vimium-style
 // "is the user typing into something" detection that's only knowable from
 // content scope. e10s isolation means chrome can't read content DOM. So we
 // inject a tiny frame script that owns the same logic Vimium uses
@@ -31,7 +31,7 @@ export type ContentFocusAPI = {
    *  False otherwise — including when content has focus on body / a button /
    *  a link / nothing at all. */
   contentInputFocused(): boolean;
-  /** Test/debug introspection — exposed via pfxTest.contentFocusDiag(). */
+  /** Test/debug introspection — exposed via gjoaTest.contentFocusDiag(). */
   diag(): { messageCount: number; lastMessageEditable: boolean | null; cachedForCurrent: boolean | undefined };
   /** Tear down message listeners + frame script. Called from window.unload. */
   destroy(): void;
@@ -98,7 +98,7 @@ const FRAME_SCRIPT_SRC = `
       const editable = isEditable(deepActiveElement());
       if (editable === lastReported) return;
       lastReported = editable;
-      sendAsyncMessage("Palefox:FocusState", { editable: editable });
+      sendAsyncMessage("Gjoa:FocusState", { editable: editable });
     } catch (_) {}
   }
 
@@ -115,50 +115,88 @@ const FRAME_SCRIPT_SRC = `
   addEventListener("pagehide", function () {
     if (lastReported === false) return;
     lastReported = false;
-    try { sendAsyncMessage("Palefox:FocusState", { editable: false }); } catch (_) {}
+    try { sendAsyncMessage("Gjoa:FocusState", { editable: false }); } catch (_) {}
   }, true);
 
-  addMessageListener("Palefox:FocusProbe", function () {
+  addMessageListener("Gjoa:FocusProbe", function () {
     lastReported = null;
     report();
   });
 
   // Cross-process smooth scroll. Chrome can't reach content.scrollBy
-  // directly across e10s (and goDoCommand("cmd_scrollLineDown") doesn't
-  // route to content scroll either). The frame script lives in content
-  // scope, so it can call content.scrollBy + content.requestAnimationFrame.
+  // directly across e10s, so the frame script (in content scope) owns
+  // the scroll loop. j/k in src/tabs/vim.ts send Gjoa:ScrollStart on
+  // keydown and Gjoa:ScrollStop on keyup.
   //
-  // The j/k handlers in src/tabs/vim.ts send Palefox:ScrollStart on the
-  // initial keydown and Palefox:ScrollStop on keyup. We drive the scroll
-  // locally with a content-scope rAF loop so it's linear from the very
-  // first frame — unlike OS key auto-repeat, which has a ~500ms delay
-  // before the first repeat fires.
+  // Physics model (vs. the original linear 12px/frame step):
+  //   - press → accelerate from rest toward TARGET_VELOCITY
+  //   - hold  → stay at TARGET_VELOCITY (no oscillation, no over/undershoot)
+  //   - release → decelerate to 0 (a brief momentum tail, not an instant stop)
+  // Sub-pixel position is accumulated in 'pos' so dt-irregular frames
+  // (typical when other rendering work delays rAF) don't show as a
+  // jittery scroll position.
   //
-  // Pattern lifted from Vimium's content_scripts/scroller.js CoreScroller.
-  let scrollDir = 0;
-  const SCROLL_PX_PER_FRAME = 12; // ~720px/sec at 60fps
-  function scrollFrame() {
-    if (scrollDir === 0) return; // loop self-terminates
-    try {
-      if (content) content.scrollBy(0, scrollDir * SCROLL_PX_PER_FRAME);
-    } catch (_) {}
-    if (content && content.requestAnimationFrame) {
-      content.requestAnimationFrame(scrollFrame);
+  // Tuning:
+  //   TARGET_VELOCITY  ~1200 px/sec  (≈ +60% over the prior 720 px/sec)
+  //   ACCEL  4500 px/sec²  reaches terminal in ~0.27s — perceived as "instant
+  //                        but not jarring" per Vimium/Tridactyl ranges
+  //   DECEL  6000 px/sec²  release feels crisp without an abrupt cut
+  let scrollDir = 0;          // +1 down, -1 up, 0 idle
+  let velocity = 0;           // signed px/sec
+  let pos = 0;                // sub-pixel accumulator
+  let lastTs = 0;             // last rAF timestamp; 0 means "first frame"
+  const TARGET_VELOCITY = 1200;
+  const ACCEL = 4500;
+  const DECEL = 6000;
+
+  function scrollFrame(ts) {
+    const now = typeof ts === "number" ? ts : (content && content.performance ? content.performance.now() : Date.now());
+    const dt = lastTs > 0 ? Math.min((now - lastTs) / 1000, 0.05) : 0;
+    lastTs = now;
+
+    if (scrollDir !== 0) {
+      // Approach signed target. Sign(target - velocity) gives direction
+      // of acceleration; magnitude limited by ACCEL * dt per frame.
+      const target = scrollDir * TARGET_VELOCITY;
+      const diff = target - velocity;
+      const maxStep = ACCEL * dt;
+      velocity += Math.abs(diff) <= maxStep ? diff : Math.sign(diff) * maxStep;
+    } else {
+      // Decelerate toward 0.
+      const decel = DECEL * dt;
+      velocity = Math.abs(velocity) <= decel ? 0 : velocity - Math.sign(velocity) * decel;
+    }
+
+    pos += velocity * dt;
+    const whole = pos >= 0 ? Math.floor(pos) : Math.ceil(pos);
+    if (whole !== 0) {
+      try { if (content) content.scrollBy(0, whole); } catch (_) {}
+      pos -= whole;
+    }
+
+    if (scrollDir !== 0 || velocity !== 0) {
+      if (content && content.requestAnimationFrame) content.requestAnimationFrame(scrollFrame);
+    } else {
+      lastTs = 0;
+      pos = 0;
     }
   }
-  addMessageListener("Palefox:ScrollStart", function (msg) {
+
+  addMessageListener("Gjoa:ScrollStart", function (msg) {
     const data = (msg && msg.data) || {};
     const dy = typeof data.dy === "number" ? data.dy : 0;
     const dir = dy > 0 ? 1 : dy < 0 ? -1 : 0;
     if (dir === 0) return;
-    const wasIdle = scrollDir === 0;
+    const wasIdle = scrollDir === 0 && velocity === 0;
     scrollDir = dir;
     if (wasIdle && content && content.requestAnimationFrame) {
+      lastTs = 0; // first frame's dt is 0; velocity ramps from next frame
       content.requestAnimationFrame(scrollFrame);
     }
   });
-  addMessageListener("Palefox:ScrollStop", function () {
+  addMessageListener("Gjoa:ScrollStop", function () {
     scrollDir = 0;
+    // Loop keeps running until velocity decays to 0 — gives the momentum tail.
   });
 
   report();
@@ -201,18 +239,18 @@ export function makeContentFocus(): ContentFocusAPI {
     log("focusState:received", { editable: msg.data.editable, count: messageCount });
   }
 
-  mm.addMessageListener("Palefox:FocusState", onFocusState);
+  mm.addMessageListener("Gjoa:FocusState", onFocusState);
   mm.loadFrameScript(dataUrl, /* allowDelayedLoad */ true);
   log("init", { dataUrlSize: dataUrl.length });
 
   // On tab switch, ask the newly-selected tab's frame script to re-report.
   // Without this, a tab that hasn't yet emitted a focus event keeps the
   // cache empty (treated as "not editable"). The frame script handles
-  // "Palefox:FocusProbe" by busting its dedupe and re-running report().
+  // "Gjoa:FocusProbe" by busting its dedupe and re-running report().
   function onTabSelect(): void {
     try {
       const browser = (gBrowser as { selectedBrowser?: { messageManager?: any } }).selectedBrowser;
-      browser?.messageManager?.sendAsyncMessage("Palefox:FocusProbe");
+      browser?.messageManager?.sendAsyncMessage("Gjoa:FocusProbe");
     } catch (e) {
       log("probe:error", { msg: String(e) });
     }
@@ -231,7 +269,7 @@ export function makeContentFocus(): ContentFocusAPI {
 
   function destroy(): void {
     try {
-      mm.removeMessageListener("Palefox:FocusState", onFocusState);
+      mm.removeMessageListener("Gjoa:FocusState", onFocusState);
       mm.removeDelayedFrameScript?.(dataUrl);
     } catch (e) {
       log("destroy:error", { msg: String(e) });

@@ -11,7 +11,7 @@
 //   - banner.ts        HTTP not-secure warning
 //   - compact.ts       autohide state machine for vertical AND horizontal
 //   - urlbar.ts        floating urlbar + Ctrl+J/K suggestion nav
-//   - sidebar-button.ts  custom #pfx-sidebar-button + context menu
+//   - sidebar-button.ts  custom #gjoa-sidebar-button + context menu
 //
 // Each factory returns at minimum a `destroy()` method. We aggregate them
 // and wire window.unload to call all destroyers.
@@ -33,7 +33,7 @@ function init(): void {
   const urlbar = document.getElementById("urlbar");
 
   if (!sidebarMain || !navigatorToolbox || !urlbarContainer || !navBar) {
-    console.error("palefox-drawer: missing required elements");
+    console.error("gjoa-drawer: missing required elements");
     return;
   }
 
@@ -86,7 +86,7 @@ function init(): void {
     banner.destroy();
   }, { once: true });
 
-  console.log("palefox-drawer: initialized");
+  console.log("gjoa-drawer: initialized");
 }
 
 init();

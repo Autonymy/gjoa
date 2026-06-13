@@ -31,7 +31,9 @@ import {
 import { createLogger } from "./log.ts";
 import { makeHistory, type HistoryAPI } from "./history.ts";
 import { makeContentFocus, type ContentFocusAPI } from "./content-focus.ts";
-import { makePalefox, type PalefoxAPI } from "../platform/index.ts";
+import { ensureVerticalTabsDefault, migrateLegacyPrefs } from "../firefox/prefs.ts";
+import { makeSpaces, type SpacesAPI } from "../spaces/index.ts";
+import { makeGjoa, type GjoaAPI } from "../platform/index.ts";
 import { makeSaver } from "./snapshot.ts";
 import {
   closedTabs, rowOf, savedTabQueue, selection, state, treeOf,
@@ -55,7 +57,7 @@ const pfxLog = createLogger("tabs");
   // --- Selection (small enough to stay here; vim + drag both consume) ---
 
   function clearSelection() {
-    for (const r of selection) r.removeAttribute("pfx-multi");
+    for (const r of selection) r.removeAttribute("gjoa-multi");
     selection.clear();
   }
 
@@ -72,7 +74,7 @@ const pfxLog = createLogger("tabs");
     const end = Math.max(fromIdx, toIdx);
     for (let i = start; i <= end; i++) {
       selection.add(rows[i]);
-      rows[i].setAttribute("pfx-multi", "true");
+      rows[i].setAttribute("gjoa-multi", "true");
     }
   }
 
@@ -88,7 +90,7 @@ const pfxLog = createLogger("tabs");
       }
     }
     if (state.pinnedContainer) {
-      state.pinnedContainer.hidden = !state.pinnedContainer.querySelector(".pfx-tab-row");
+      state.pinnedContainer.hidden = !state.pinnedContainer.querySelector(".gjoa-tab-row");
     }
     Rows.updateVisibility();
   }
@@ -97,7 +99,7 @@ const pfxLog = createLogger("tabs");
   // --- Persistence ---
 
   // Single source of truth: SQLite-backed temporal substrate at
-  // <profile>/palefox-history.sqlite. Hash-deduped append-only event log
+  // <profile>/gjoa-history.sqlite. Hash-deduped append-only event log
   // with FTS5 for search and tagged points for sessions/checkpoints.
   // See docs/dev/multi-session-architecture.md for the full design.
   const history: HistoryAPI = makeHistory();
@@ -107,15 +109,56 @@ const pfxLog = createLogger("tabs");
   // CodeEditor, contentEditable, role=textbox, etc.). Chrome scope can't see
   // content DOM directly across e10s, so we ship the same isEditable logic
   // Vimium uses (lib/dom_utils.js) and forward a boolean back. Used by
-  // setupGlobalKeys() to bail palefox keymap when content is editing.
+  // setupGlobalKeys() to bail gjoa keymap when content is editing.
   const contentFocus: ContentFocusAPI = makeContentFocus();
 
-  // Palefox semantic platform layer — `Palefox.windows.current().tabs.*`,
+  // Gjoa semantic platform layer — `Gjoa.windows.current().tabs.*`,
   // scheduler + tabs reconciler. See src/platform/index.ts and the
   // strategy doc. New feature code SHOULD import via this surface; legacy
   // code continues to mutate gBrowser directly until M2 migrates it.
-  const Palefox: PalefoxAPI = makePalefox({ history });
-  (window as unknown as { Palefox: PalefoxAPI }).Palefox = Palefox;
+  const Gjoa: GjoaAPI = makeGjoa({ history });
+  (window as unknown as { Gjoa: GjoaAPI }).Gjoa = Gjoa;
+
+  // Spaces (workspaces). Pure data + visibility predicate. Mutations are
+  // batched: any state change schedules a single tree-resync via Rows
+  // (which dedupes), so switching spaces is one render pass, not a
+  // per-tab DOM walk.
+  let Rows: import("./rows.ts").RowsAPI;
+  const spaces: SpacesAPI = makeSpaces({
+    onChange: () => {
+      // Rows is assigned below; the closure captures it lazily.
+      Rows?.scheduleTreeResync();
+      scheduleSave?.();
+      updateSpaceHeader();
+    },
+    onActivated: (_prev, next) => {
+      // Workspace-switch invariant: always re-select to the first tab in
+      // the new space — UNLESS the currently-selected tab is already
+      // there. The "already there" case happens on cross-space selection
+      // (e.g. `~` previous-tab whose previous tab lives elsewhere): the
+      // TabSelect handler below calls setActive to sync the workspace,
+      // and we MUST NOT bounce the user away from the tab they just
+      // landed on. Detect by checking spaceOf the current selection.
+      const current = gBrowser.selectedTab as Tab | undefined;
+      if (current && spaces.spaceOf(current) === next) return;
+
+      const inNext = [...gBrowser.tabs].filter(t => spaces.spaceOf(t as Tab) === next) as Tab[];
+      if (inNext.length) gBrowser.selectedTab = inNext[0]!;
+    },
+  });
+  (window as unknown as { Spaces: SpacesAPI }).Spaces = spaces;
+
+  /** Reflect the active space's name into the sidebar header. Called from
+   *  the spaces onChange callback (covers create/rename/delete/switch) and
+   *  on initial header insertion. No-op until state.spaceHeader exists
+   *  (init order: spaces is created before state.spaceHeader). */
+  function updateSpaceHeader(): void {
+    const el = state.spaceHeader;
+    if (!el) return;
+    const label = el.querySelector("#gjoa-space-header-label") as HTMLElement | null;
+    if (!label) return;
+    label.setAttribute("value", spaces.active().name);
+  }
 
   // Write-on-every-change: pulls a fresh snapshot for every flush, coalesces
   // overlapping schedules, hands off to history (which dedupes by content
@@ -128,6 +171,13 @@ const pfxLog = createLogger("tabs");
     nextTabId: state.nextTabId,
     tabUrl,
     treeData,
+    spaces: {
+      spaces: spaces.list(),
+      activeId: spaces.activeId(),
+      tabSpaces: ([...gBrowser.tabs] as import("./types.ts").Tab[]).map(
+        (t) => [treeData(t).id, spaces.spaceOf(t)] as const,
+      ),
+    },
   }), history);
 
   // drag ↔ Rows ↔ vim form a small cycle of mutual deps:
@@ -138,7 +188,8 @@ const pfxLog = createLogger("tabs");
   //     AND the layout API (setUrlbarTopLayer)
   // We break the cycle with `let` declarations + thunks. Each thunk is only
   // invoked later at runtime, by which point all factories have been wired.
-  let Rows: import("./rows.ts").RowsAPI;
+  // (Rows is forward-declared above so the spaces onChange closure can
+  // capture it.)
   let vim: import("./vim.ts").VimAPI;
   const drag = makeDrag({
     clearSelection,
@@ -153,6 +204,9 @@ const pfxLog = createLogger("tabs");
     cloneAsSibling:   (tab) => vim.cloneAsSibling(tab),
     startRename:    (row) => vim.startRename(row),
     scheduleSave,
+    isTabInActiveSpace: (tab) => spaces.isVisible(tab),
+    getActiveSpaceId: () => spaces.activeId(),
+    isGroupInActiveSpace: (group) => spaces.isSpaceActive(group.spaceId),
   });
   const layout = makeLayout({
     sidebarMain,
@@ -167,11 +221,13 @@ const pfxLog = createLogger("tabs");
     sidebarMain,
     history,
     contentFocus,
+    spaces,
   });
   const events = makeEvents({
     rows: Rows,
     vim,
     scheduleSave,
+    spaces,
   });
 
   async function loadFromHistory() {
@@ -193,12 +249,12 @@ const pfxLog = createLogger("tabs");
       // Belt-and-suspenders: advance state.nextTabId past every saved node ID before
       // any tab calls treeData(). saved.nextTabId covers this normally, but if
       // it was missing/stale, fresh startup tabs (localhost, etc.) would get an
-      // ID that collides with a restored session tab's pfx-id attribute, causing
+      // ID that collides with a restored session tab's gjoa-id attribute, causing
       // the wrong tab to resolve as parent in the tree.
       for (const s of tabNodes) {
         if (s.id && s.id >= state.nextTabId) state.nextTabId = s.id + 1;
       }
-      pfxLog("loadFromHistory", { nextTabId: state.nextTabId, savedNextTabId: env.nextTabId, tabNodes: tabNodes.length, liveTabs: tabs.length, tabNodeIds: tabNodes.map(s => s.id), liveTabPfxIds: tabs.map(t => t.getAttribute?.("pfx-id") || 0) });
+      pfxLog("loadFromHistory", { nextTabId: state.nextTabId, savedNextTabId: env.nextTabId, tabNodes: tabNodes.length, liveTabs: tabs.length, tabNodeIds: tabNodes.map(s => s.id), liveTabPfxIds: tabs.map(t => t.getAttribute?.("gjoa-id") || 0) });
 
       const applied = new Set();
       const apply = (tab, s, i) => {
@@ -243,7 +299,7 @@ const pfxLog = createLogger("tabs");
       }
 
       console.log(
-        `palefox-tabs: loaded ${tabNodes.length} saved tab nodes, ` +
+        `gjoa-tabs: loaded ${tabNodes.length} saved tab nodes, ` +
         `matched ${applied.size} to live tabs (of ${tabs.length}).`
       );
 
@@ -258,10 +314,23 @@ const pfxLog = createLogger("tabs");
         savedTabQueue.push(s);
       });
 
+      // Spaces hydration: replay the spaces snapshot (if present) and
+      // bind tab→space pairs via gjoa-id resolution against live tabs.
+      if (env.spaces) {
+        const tabByGjoaId = (gjoaId: number): Tab | null => {
+          for (const t of tabs) {
+            const td = treeOf.get(t);
+            if (td?.id === gjoaId) return t;
+          }
+          return null;
+        };
+        spaces.hydrate(env.spaces, tabByGjoaId);
+      }
+
       // Full node list drives buildFromSaved for groups + order.
       loadedNodes = env.nodes;
     } catch (e) {
-      console.error("palefox-tabs: loadFromHistory apply error", e);
+      console.error("gjoa-tabs: loadFromHistory apply error", e);
     }
   }
 
@@ -290,6 +359,10 @@ const pfxLog = createLogger("tabs");
       const row = Rows.createGroupRow(g.name || "", g.level || 0);
       row._group!.state = g.state || null;
       row._group!.collapsed = !!g.collapsed;
+      // Restore saved space ownership. Snapshots from before groups were
+      // space-scoped lack `spaceId`; leave the createGroupRow default
+      // (active space at hydration time, typically "Main") in place.
+      if (g.spaceId) row._group!.spaceId = g.spaceId;
       Rows.syncGroupRow(row);
       return row;
     };
@@ -311,7 +384,7 @@ const pfxLog = createLogger("tabs");
       }
     }
     if (state.pinnedContainer) {
-      state.pinnedContainer.hidden = !state.pinnedContainer.querySelector(".pfx-tab-row");
+      state.pinnedContainer.hidden = !state.pinnedContainer.querySelector(".gjoa-tab-row");
     }
 
     loadedNodes = null;
@@ -325,35 +398,61 @@ const pfxLog = createLogger("tabs");
   // --- Init ---
 
   async function init() {
-    tryRegisterPinAttr();
+    // Defensive: every pre-panel step is wrapped so an unexpected throw
+    // here can NEVER block panel construction. A profile with weird state
+    // (legacy prefs, half-migrated DB, missing capabilities) must still
+    // get a tab panel — otherwise the sidebar looks broken and the user
+    // can't see their tabs.
+    try { ensureVerticalTabsDefault(); }
+    catch (e) { console.error("gjoa-tabs: ensureVerticalTabsDefault threw — continuing", e); }
+    try { migrateLegacyPrefs(); }
+    catch (e) { console.error("gjoa-tabs: migrateLegacyPrefs threw — continuing", e); }
+    try { tryRegisterPinAttr(); }
+    catch (e) { console.error("gjoa-tabs: tryRegisterPinAttr threw — continuing", e); }
     try {
       await loadFromHistory();
     } catch (e) {
-      console.error("palefox-tabs: loadFromHistory threw — init proceeds with empty state", e);
+      console.error("gjoa-tabs: loadFromHistory threw — init proceeds with empty state", e);
     }
     await new Promise((r) => requestAnimationFrame(r));
 
     state.pinnedContainer = document.createXULElement("vbox");
-    state.pinnedContainer.id = "pfx-pinned-container";
+    state.pinnedContainer.id = "gjoa-pinned-container";
     state.pinnedContainer.hidden = true;
     drag.setupPinnedContainerDrop(state.pinnedContainer);
 
     state.panel = document.createXULElement("vbox");
-    state.panel.id = "pfx-tab-panel";
+    state.panel.id = "gjoa-tab-panel";
 
     state.spacer = document.createXULElement("box");
-    state.spacer.id = "pfx-tab-spacer";
+    state.spacer.id = "gjoa-tab-spacer";
     state.spacer.setAttribute("flex", "1");
     state.panel.appendChild(state.spacer);
     drag.setupPanelDrop(state.panel);
 
+    // Active-space header. Sits above pinned-container so the user always
+    // sees "what space am I in" while scanning the tab list. Click opens
+    // the :sp picker.
+    state.spaceHeader = document.createXULElement("hbox");
+    state.spaceHeader.id = "gjoa-space-header";
+    const headerLabel = document.createXULElement("label");
+    headerLabel.id = "gjoa-space-header-label";
+    state.spaceHeader.appendChild(headerLabel);
+    state.spaceHeader.addEventListener("click", () => {
+      try { vim.runExCommand("spc list"); }
+      catch (e) { console.error("gjoa: space header click failed", e); }
+    });
+    updateSpaceHeader();
+
     layout.positionPanel();
 
-    // Re-position when toolbox moves in/out of sidebar, or expand/collapse
+    // Re-position when toolbox moves in/out of sidebar, or expand/collapse,
+    // OR when gjoa's own compact mode toggles (since CSS depends on
+    // gjoa-sidebar-collapsed which we derive from both signals).
     new MutationObserver(() => layout.positionPanel()).observe(sidebarMain, {
       childList: true,
       attributes: true,
-      attributeFilter: ["sidebar-launcher-expanded"],
+      attributeFilter: ["sidebar-launcher-expanded", "data-gjoa-compact", "gjoa-has-hover"],
     });
 
     // Switch between horizontal/vertical layout
@@ -370,6 +469,7 @@ const pfxLog = createLogger("tabs");
       createGroupRow: Rows.createGroupRow,
       setCursor: vim.setCursor,
       updateVisibility: Rows.updateVisibility,
+      scheduleTreeResync: Rows.scheduleTreeResync,
       scheduleSave,
     });
     buildGroupContextMenu({
@@ -395,6 +495,28 @@ const pfxLog = createLogger("tabs");
     // observers. The returned closure removes the observers on window unload
     // (the listeners die with the window).
     const teardownEvents = events.install();
+
+    // Catch-up: any tab Firefox restored or external apps opened
+    // between gjoa init starting and events.install() firing has no row.
+    // createTabRow them. (buildFromSaved/buildPanel only ran once at init
+    // time on the then-current gBrowser.tabs.)
+    for (const t of gBrowser.tabs as Iterable<Tab>) {
+      if (rowOf.has(t)) continue;
+      const row = Rows.createTabRow(t);
+      if (t.pinned) state.pinnedContainer.appendChild(row);
+      else state.panel.insertBefore(row, state.spacer);
+    }
+    // Ensure selected tab is in the active space so the sidebar isn't empty.
+    {
+      const sel = gBrowser.selectedTab as Tab | undefined;
+      const active = spaces.activeId();
+      if (sel && spaces.spaceOf(sel) !== active) {
+        const inActive = [...gBrowser.tabs].find(t => spaces.spaceOf(t as Tab) === active) as Tab | undefined;
+        if (inActive) gBrowser.selectedTab = inActive;
+        else spaces.setActive(spaces.spaceOf(sel));
+      }
+    }
+    Rows.updateVisibility();
 
     // Click on state.spacer activates vim with last row.
     state.spacer.addEventListener("click", () => {
@@ -423,7 +545,7 @@ const pfxLog = createLogger("tabs");
       observe(_subject: unknown, topic: string) {
         if (topic === "quit-application") {
           history.tagLatest("session").catch((e) => {
-            console.error("palefox-tabs: tagLatest on quit failed", e);
+            console.error("gjoa-tabs: tagLatest on quit failed", e);
           });
         }
       },
@@ -439,7 +561,7 @@ const pfxLog = createLogger("tabs");
     // minutes during long sessions. Cheap when there's nothing to delete.
     setTimeout(() => {
       history.runRetention().catch((e) => {
-        console.error("palefox-tabs: initial retention pass failed", e);
+        console.error("gjoa-tabs: initial retention pass failed", e);
       });
     }, 30_000);
     const retentionTimer = setInterval(() => {
@@ -449,20 +571,20 @@ const pfxLog = createLogger("tabs");
       clearInterval(retentionTimer);
       history.close().catch(() => {});
       contentFocus.destroy();
-      Palefox.destroy();
+      Gjoa.destroy();
     }, { once: true });
 
-    // Test-only debug API. Gated on `pfx.test.exposeAPI` so production
+    // Test-only debug API. Gated on `gjoa.test.exposeAPI` so production
     // builds (where the pref is absent / false) don't expose internals.
     // Tests in tests/integration/* set this pref via the ephemeral
     // profile's user.js; see tools/test-driver/profile.ts.
-    if (Services.prefs.getBoolPref("pfx.test.exposeAPI", false)) {
-      window.pfxTest = {
+    if (Services.prefs.getBoolPref("gjoa.test.exposeAPI", false)) {
+      window.gjoaTest = {
         // Live state references (NOT snapshots — readers see future writes)
         state,
         treeOf,
         rowOf,
-        // Cursor inspection — returns the pfx-id (TreeData.id) at the cursor
+        // Cursor inspection — returns the gjoa-id (TreeData.id) at the cursor
         // or null if no cursor / cursor on a non-tab row.
         cursorId() {
           const r = state.cursor;
@@ -498,16 +620,16 @@ const pfxLog = createLogger("tabs");
         contentInputFocused() { return contentFocus.contentInputFocused(); },
         contentFocusDiag() { return contentFocus.diag(); },
         // Semantic platform layer (M4 + M5 phase 1).
-        Palefox,
+        Gjoa,
       };
-      console.log("palefox-tabs: pfxTest debug API exposed");
+      console.log("gjoa-tabs: gjoaTest debug API exposed");
     }
 
-    // Dev helpers (`window.pfx`) — gated on `pfx.debug` so they're a no-op
-    // in normal use. Flip `pfx.debug = true` in about:config and reload to
+    // Dev helpers (`window.pfx`) — gated on `gjoa.debug` so they're a no-op
+    // in normal use. Flip `gjoa.debug = true` in about:config and reload to
     // get them in the Browser Console. Add new helpers below as they earn
     // their keep in actual debugging workflows.
-    if (Services.prefs.getBoolPref("pfx.debug", false)) {
+    if (Services.prefs.getBoolPref("gjoa.debug", false)) {
     const pfxNs = ((window as unknown as { pfx?: Record<string, unknown> }).pfx ??= {});
 
     /** Short, console-friendly description of an element. */
@@ -521,7 +643,7 @@ const pfxLog = createLogger("tabs");
       return tag + id + cls;
     }
 
-    /** `pfx.measure(temp0, temp1, ...)` — returns x/y/w/h for each element,
+    /** `gjoa.measure(temp0, temp1, ...)` — returns x/y/w/h for each element,
      *  intended for `console.table()` rendering. Coordinates are
      *  viewport-relative (getBoundingClientRect). */
     pfxNs.measure = (...els: Element[]) => els.map((el, i) => {
@@ -539,7 +661,7 @@ const pfxLog = createLogger("tabs");
       };
     });
 
-    /** `pfx.gaps(temp0, temp1, ...)` — for each adjacent pair, the vertical
+    /** `gjoa.gaps(temp0, temp1, ...)` — for each adjacent pair, the vertical
      *  and horizontal gap between them (in document order). Useful for
      *  verifying symmetric spacing. */
     pfxNs.gaps = (...els: Element[]) => els.slice(1).map((el, i) => {
@@ -556,19 +678,28 @@ const pfxLog = createLogger("tabs");
       };
     });
 
-    console.log("palefox-tabs: dev helpers (window.pfx) exposed (pfx.debug=true)");
+    console.log("gjoa-tabs: dev helpers (window.pfx) exposed (gjoa.debug=true)");
     }
 
-    console.log("palefox-tabs: initialized");
+    console.log("gjoa-tabs: initialized");
+  }
+
+  // Wrap init in a top-level catch so a thrown error during one phase
+  // never silently leaves the user with a blank sidebar. The error
+  // surfaces in the Browser Console with the gjoa-tabs prefix so it's
+  // findable without guessing.
+  async function safeInit() {
+    try { await init(); }
+    catch (e) { console.error("gjoa-tabs: init() threw — sidebar may be empty", e); }
   }
 
   if (gBrowserInit.delayedStartupFinished) {
-    init();
+    safeInit();
   } else {
     const obs = (subject, topic) => {
       if (topic === "browser-delayed-startup-finished" && subject === window) {
         Services.obs.removeObserver(obs, topic);
-        init();
+        safeInit();
       }
     };
     Services.obs.addObserver(obs, "browser-delayed-startup-finished");

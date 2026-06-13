@@ -1,0 +1,75 @@
+#!/usr/bin/env bash
+# `gjoa` — launch the locally-built gjoa binary, refreshing its chrome
+# bundle first, and HARD-BLOCKING on out-of-date Firefox pins.
+#
+# Behavior:
+#   1. Resolve repo + binary location.
+#   2. Refresh chrome bundle (Lane 1; ~1s).
+#   3. Run `bun run security:check` (fast network probe, ~500ms).
+#        OK / UNKNOWN  → launch
+#        STALE / CRITICAL → REFUSE, print the bump instructions
+#   4. exec the binary, forwarding all args.
+#
+# Override (rare): `GJOA_ALLOW_INSECURE=1 gjoa` skips the security gate.
+# Env-var form is deliberately ugly to discourage habitual bypass.
+
+set -euo pipefail
+
+SELF="$(readlink -f "$0")"
+REPO="$(cd "$(dirname "$SELF")/.." && pwd)"
+BIN="$REPO/engine/obj-x86_64-pc-linux-gnu/dist/bin/gjoa"
+
+# Re-prepend PATH so rofi/GUI launches find bun.
+export PATH="$HOME/.nix-profile/bin:$HOME/.local/state/nix/profile/bin:/etc/profiles/per-user/$USER/bin:/run/current-system/sw/bin:$PATH"
+
+if ! command -v bun > /dev/null; then
+  echo "✗ bun not on PATH; cannot rebuild chrome bundle" >&2
+  echo "  PATH was: $PATH" >&2
+  exit 1
+fi
+
+if [ ! -x "$BIN" ]; then
+  echo "✗ gjoa engine binary not found at $BIN" >&2
+  echo "  build it once with: cd $REPO && nix build .#gjoa --impure" >&2
+  exit 1
+fi
+
+cd "$REPO"
+
+# Security gate. We invoke security:check directly (not via `bun run`)
+# to avoid the per-script wrapper noise. Exit codes:
+#   0 = OK, 1 = UNKNOWN (network), 2 = STALE, 3 = CRITICAL
+echo "→ checking firefox version freshness" >&2
+SEC_EXIT=0
+bun tools/security/check.ts >&2 || SEC_EXIT=$?
+
+if [ "${GJOA_ALLOW_INSECURE:-}" = "1" ]; then
+  if [ "$SEC_EXIT" -ge 2 ]; then
+    echo "" >&2
+    echo "⚠  GJOA_ALLOW_INSECURE=1 → bypassing security gate" >&2
+  fi
+elif [ "$SEC_EXIT" -ge 2 ]; then
+  bar="$(printf '═%.0s' {1..72})"
+  echo "" >&2
+  echo "$bar" >&2
+  echo "🛑 REFUSED TO LAUNCH — gjoa is out of date." >&2
+  echo "$bar" >&2
+  echo "" >&2
+  echo "To fix, run:" >&2
+  echo "  bun run security:bump                  # write new version to gjoa.json" >&2
+  echo "  bun run import                         # re-apply overlays for the new pin" >&2
+  echo "  nix build .#gjoa --impure              # full rebuild (~30-60 min, Lane 3)" >&2
+  echo "" >&2
+  echo "Emergency override (do not habituate):" >&2
+  echo "  GJOA_ALLOW_INSECURE=1 gjoa" >&2
+  echo "" >&2
+  exit "$SEC_EXIT"
+fi
+# SEC_EXIT 0 (OK) and 1 (UNKNOWN — offline) both pass through.
+
+echo "→ refreshing chrome bundle" >&2
+bun run chrome:dist >&2
+bun run chrome:install >&2
+
+echo "→ launching $BIN" >&2
+exec "$BIN" "$@"

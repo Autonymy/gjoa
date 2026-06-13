@@ -1,7 +1,7 @@
 // Core types used across src/tabs/* modules.
 //
 // Most chrome-scoped types (gBrowser, Services, etc.) live in src/types/chrome.d.ts
-// as ambient `any`. The types below are palefox's own data shapes — the bits
+// as ambient `any`. The types below are gjoa's own data shapes — the bits
 // we put into WeakMaps, persist to disk, and pass between our own functions.
 // These start narrow and tighten over time as files get migrated off @ts-nocheck.
 
@@ -15,7 +15,7 @@ export interface nsIURI {
 
 /** Firefox `<browser>` XUL element — the content-area embed that backs a tab.
  *  Each Tab points at one via `tab.linkedBrowser`. Models only the bits
- *  palefox reaches for; the real surface is much wider (printPreviewURL,
+ *  gjoa reaches for; the real surface is much wider (printPreviewURL,
  *  reload, goBack, etc.). */
 export interface FirefoxBrowser extends HTMLElement {
   /** Live URI for the currently-loaded document. May be `about:blank` for
@@ -25,7 +25,7 @@ export interface FirefoxBrowser extends HTMLElement {
 }
 
 /** Firefox `<tab>` XUL element (MozTabbrowserTab in browser/tabbrowser/content/tab.js).
- *  Models only the surface palefox actually touches:
+ *  Models only the surface gjoa actually touches:
  *
  *    - User-facing state:  label, pinned, selected, hidden, multiselected, muted, owner
  *    - Browser linkage:    linkedBrowser (with currentURI.spec)
@@ -77,7 +77,7 @@ export interface Tab extends HTMLElement {
 
 /** Per-tab tree metadata stored in the `treeOf` WeakMap. */
 export type TreeData = {
-  /** Stable palefox tab ID. Persisted across sessions via SessionStore.persistTabAttribute. */
+  /** Stable gjoa tab ID. Persisted across sessions via SessionStore.persistTabAttribute. */
   id: number;
   /** ID of the parent — number = tab id, string = group id ("g1", "g2", …),
    *  null = root. Pinned tabs are always null. Tabs with a string parentId
@@ -103,15 +103,20 @@ export type Group = {
   level: number;
   state: string | null;
   collapsed: boolean;
+  /** Space this group belongs to. Like tabs, groups are scoped to exactly
+   *  one space. Empty string ("") means unknown/orphan — same fallback
+   *  policy as tabs (visible iff default space is active). */
+  spaceId: string;
 };
 
-/** A palefox row element. Discriminated by which of `_tab`/`_group` is set. */
+/** A gjoa row element. Discriminated by which of `_tab`/`_group` is set. */
 export type Row = HTMLElement & {
   _tab?: Tab;
   _group?: Group;
 };
 
-/** Serialized form of a tab or group node, persisted in palefox-tab-tree.json. */
+/** Serialized form of a tab or group node, persisted via history.appendEvent
+ *  (see snapshot.ts → history.ts SQLite layer). */
 export type SavedNode = {
   id: number;
   /** Mirrors TreeData.parentId — number for tab parent, string for group parent. */
@@ -125,6 +130,9 @@ export type SavedNode = {
   url?: string;
   /** Group nesting level. */
   level?: number;
+  /** Space this group belongs to (group entries only). Same fallback
+   *  rules as tabs — unknown/orphan resolves to default space. */
+  spaceId?: string;
   /** Group anchor — the tab this group sits after. */
   afterTabId?: number | null;
   /** Original index into the saved tab list — used for ordered restore. */

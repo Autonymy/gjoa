@@ -1,10 +1,9 @@
-// Entries that get bundled into dist/chrome/JS/<name>.uc.js for the
-// fx-autoconfig loader. Each entry must produce a valid .uc.js with a
-// UserScript header banner.
+// Entries that get bundled into dist/chrome/JS/<name>.uc.js for
+// GjoaLoader (src/gjoa/browser/components/gjoa/GjoaLoader.sys.mjs).
+// Each entry must produce a valid .uc.js with a UserScript header
+// banner.
 //
 // Mechanically lifted from archive/build.config.ts (palefox v0.43.0).
-// Names kept as `palefox-*` for now — the rename to `gjoa-*` is a
-// post-Batch-1 stretch goal (audit said: don't redesign first).
 
 export type Entry = {
   /** TypeScript source path, relative to repo root. */
@@ -20,22 +19,33 @@ const SRC = "src/gjoa/chrome/src";
 export const entries: Entry[] = [
   {
     src: `${SRC}/hello/index.ts`,
-    out: "palefox-hello.uc.js",
+    out: "gjoa-hello.uc.js",
     banner: [
       "// ==UserScript==",
-      "// @name           Palefox Hello",
-      "// @description    Confirms fx-autoconfig is working",
+      "// @name           Gjoa Hello",
+      "// @description    Confirms the chrome loader is working",
       "// @include        main",
       "// @onlyonce",
       "// ==/UserScript==",
     ].join("\n"),
   },
   {
-    src: `${SRC}/drawer/index.ts`,
-    out: "palefox-drawer.uc.js",
+    src: `${SRC}/security/index.ts`,
+    out: "gjoa-security.uc.js",
     banner: [
       "// ==UserScript==",
-      "// @name           Palefox Drawer",
+      "// @name           Gjoa Security Gate",
+      "// @description    Refuses to keep running if Firefox pin is stale",
+      "// @include        main",
+      "// ==/UserScript==",
+    ].join("\n"),
+  },
+  {
+    src: `${SRC}/drawer/index.ts`,
+    out: "gjoa-drawer.uc.js",
+    banner: [
+      "// ==UserScript==",
+      "// @name           Gjoa Drawer",
       "// @description    Manages sidebar layout, compact mode, and toolbar positioning",
       "// @include        main",
       "// ==/UserScript==",
@@ -43,10 +53,10 @@ export const entries: Entry[] = [
   },
   {
     src: `${SRC}/tabs/index.ts`,
-    out: "palefox-tabs.uc.js",
+    out: "gjoa-tabs.uc.js",
     banner: [
       "// ==UserScript==",
-      "// @name           Palefox Tabs",
+      "// @name           Gjoa Tabs",
       "// @description    Tree-style tab panel with vim keybindings",
       "// @include        main",
       "// ==/UserScript==",

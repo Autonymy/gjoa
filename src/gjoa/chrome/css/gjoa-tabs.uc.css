@@ -280,18 +280,22 @@
 
 /* #region modeline — absolute overlay at bottom, hidden by default */
 
+#appcontent {
+  position: relative;
+}
 #gjoa-modeline {
-  position: fixed;
+  position: absolute;
   bottom: 0;
   left: 0;
   right: 0;
-  height: 20px;
-  padding: 0 8px;
+  height: 22px;
+  padding: 0 10px;
   font-family: monospace;
   font-size: 11px;
-  line-height: 20px;
-  background: color-mix(in srgb, currentColor 8%, transparent);
-  border-top: 1px solid color-mix(in srgb, currentColor 12%, transparent);
+  line-height: 22px;
+  background: rgba(0, 0, 0, 0.55);
+  color: #c0caf5;
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
   z-index: 100;
   display: none;
 }

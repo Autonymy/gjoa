@@ -460,7 +460,8 @@ export function makeVim(deps: VimDeps): VimAPI {
     msgLabel.setAttribute("crop", "end");
 
     modeline.append(modeLabel, chordLabel, msgLabel);
-    document.documentElement.appendChild(modeline);
+    const anchor = document.getElementById("appcontent") ?? document.documentElement;
+    anchor.appendChild(modeline);
   }
 
   function updateModeline(): void {
@@ -1641,20 +1642,18 @@ export function makeVim(deps: VimDeps): VimAPI {
    *  new commands. Aliases live alongside the canonical name; the picker
    *  shows ONE entry per canonical command. */
   const EX_COMMANDS: ReadonlyArray<{ name: string; description: string; takesArgs: boolean }> = [
-    { name: "group",      description: "Create a new group at cursor",           takesArgs: true },
-    { name: "refile",     description: "Refile cursor row under a target",       takesArgs: false },
-    { name: "pin",        description: "Pin the cursor's tab",                   takesArgs: false },
-    { name: "unpin",      description: "Unpin the cursor's tab",                 takesArgs: false },
-    { name: "tabs",       description: "Picker over tabs (add `all` for every window)", takesArgs: true },
-    { name: "checkpoint", description: "Tag current state as a named checkpoint", takesArgs: true },
-    { name: "restore",    description: "Picker over recent checkpoints",         takesArgs: false },
-    { name: "sessions",   description: "Picker over auto-saved sessions",        takesArgs: false },
-    { name: "history",    description: "Picker over the full event log",         takesArgs: true },
-    { name: "blacklist",  description: "Disable gjoa keys on a site (or `list`/`remove`)", takesArgs: true },
-    { name: "unblacklist",description: "Re-enable gjoa keys on a site",       takesArgs: true },
-    { name: "spc",        description: "Spaces: new/rename/delete/switch/list (also :space)", takesArgs: true },
-    { name: "tabpos",     description: "New-tab placement: sibling | root | child", takesArgs: true },
-    { name: "help",       description: "Show the keymap help panel",             takesArgs: false },
+    { name: "group",      description: "Create a named folder at cursor",                    takesArgs: true },
+    { name: "refile",     description: "Move cursor tab into a different group",             takesArgs: false },
+    { name: "pin",        description: "Pin the cursor's tab",                               takesArgs: false },
+    { name: "unpin",      description: "Unpin the cursor's tab",                             takesArgs: false },
+    { name: "tabs",       description: "Fuzzy-find open tabs (`:tabs all` = every window)",  takesArgs: true },
+    { name: "checkpoint", description: "Snapshot tab tree with a name (like a git tag)",     takesArgs: true },
+    { name: "restore",    description: "Restore a saved session or checkpoint",              takesArgs: true },
+    { name: "history",    description: "Browse the full auto-save timeline",                 takesArgs: true },
+    { name: "blacklist",  description: "Disable gjoa keys on a site (`list` / `remove`)",   takesArgs: true },
+    { name: "spc",        description: "Workspaces: new / rename / delete / switch (`:space`)", takesArgs: true },
+    { name: "tabpos",     description: "Where new tabs open: sibling | root | child",       takesArgs: true },
+    { name: "help",       description: "Show the keymap cheatsheet",                         takesArgs: false },
   ];
 
   /** Discoverable picker over ex-commands. Triggered by the global `:` key.
@@ -1831,36 +1830,6 @@ export function makeVim(deps: VimDeps): VimAPI {
         })();
         break;
       }
-      case "sessions": {
-        const q = args.slice(1).join(" ").trim();
-        (async () => {
-          try {
-            const evs = q
-              ? await history.search(q, { taggedOnly: true, limit: 100 })
-              : await history.getTagged(100);
-            if (!evs.length) {
-              modelineMsg(q ? `No sessions match "${q}"` : "No sessions yet", 3000);
-              return;
-            }
-            picker.show({
-              prompt: "sessions ›",
-              items: evs.map((e) => sessionPickerItem(e)),
-              onSelect: async (item) => {
-                const ev = item.data as import("./history.ts").HistoryEvent;
-                try {
-                  await restoreEvent(ev);
-                  modelineMsg(`Restored: ${labelOf(ev.tag)}`, 4000);
-                } catch (e) {
-                  modelineMsg(`:sessions restore failed: ${(e as Error).message}`, 4000);
-                }
-              },
-            });
-          } catch (e) {
-            modelineMsg(`:sessions failed: ${(e as Error).message}`, 4000);
-          }
-        })();
-        break;
-      }
       case "tabs": {
         // `:tabs`         — current window
         // `:tabs all`     — all chrome windows (Gjoa.tabs.all() aggregator)
@@ -1896,6 +1865,10 @@ export function makeVim(deps: VimDeps): VimAPI {
         const host = args[1]?.trim() || currentHost();
         if (!host) { modelineMsg("No host to remove", 3000); break; }
         modelineMsg(blacklistRemove(host) ? `Removed: ${host}` : `Not in blacklist: ${host}`, 3000);
+        break;
+      }
+      case "sessions": {
+        modelineMsg("Use :restore instead", 3000);
         break;
       }
       case "help": {

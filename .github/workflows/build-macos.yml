@@ -32,6 +32,14 @@ jobs:
           mkdir -p engine
           tar -xJf ~/.cache/gjoa/sources/firefox-${FF_VERSION}.source.tar.xz -C engine --strip-components=1
 
+      - name: Patch macOS SDK version check
+        run: |
+          # Mozilla's TaskCluster-hosted macOS SDK (26.4) returns 403 for
+          # external CI. The Xcode SDK on the runner works fine — just
+          # lower the floor so configure accepts it.
+          sed -i '' 's/return "26.4"/return "15.0"/' \
+            engine/build/moz.configure/toolchain.configure
+
       - name: Apply overlays and patches
         run: bun run import
 

@@ -1,0 +1,81 @@
+name: Linux build (x86_64)
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Install system deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential libgtk-3-dev libdbus-glib-1-dev \
+            libpulse-dev libasound2-dev libxt-dev \
+            libx11-xcb-dev libxcomposite-dev libxdamage-dev \
+            libxrandr-dev libxcursor-dev libxi-dev \
+            libcups2-dev libdrm-dev \
+            nasm yasm m4 unzip zip \
+            python3 python3-pip \
+            mercurial clang llvm lld \
+            libclang-dev pkg-config \
+            nodejs
+
+      - name: Download Firefox source
+        run: bun run download
+
+      - name: Apply overlays and patches
+        env:
+          LIBCLANG_PATH: /usr/lib/llvm-14/lib
+        run: bun run import
+
+      - name: Remove generated mozconfig
+        run: |
+          rm -f engine/mozconfig
+          cat > engine/mozconfig <<'MOZCONFIG'
+          ac_add_options --with-branding=browser/branding/gjoa
+          ac_add_options --with-distribution-id=org.gjoa
+          ac_add_options --with-app-name=gjoa
+          ac_add_options --with-app-basename=Gjoa
+          ac_add_options --without-wasm-sandboxed-libraries
+          ac_add_options --disable-updater
+          ac_add_options --disable-tests
+          ac_add_options --enable-optimize
+          ac_add_options --enable-release
+          export CC=clang
+          export CXX=clang++
+          MOZCONFIG
+
+      - name: Bootstrap mach
+        working-directory: engine
+        run: |
+          ./mach bootstrap --application-choice=browser --no-interactive
+
+      - name: Build
+        working-directory: engine
+        run: |
+          ./mach build
+
+      - name: Package
+        working-directory: engine
+        run: |
+          ./mach package
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: gjoa-linux-x86_64
+          path: engine/obj-*/dist/gjoa-*.tar.bz2
+          if-no-files-found: warn

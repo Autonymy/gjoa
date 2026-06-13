@@ -1,0 +1,82 @@
+name: macOS build (Apple Silicon)
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: macos-14
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Install system deps
+        run: |
+          brew install llvm@19 nasm yasm mercurial
+
+      - name: Download Firefox source
+        run: bun run download
+
+      - name: Apply overlays and patches
+        env:
+          LIBCLANG_PATH: /opt/homebrew/opt/llvm@19/lib
+        run: bun run import
+
+      - name: Remove generated mozconfig
+        run: |
+          # The prep tool writes a mozconfig tuned for NixOS dev builds.
+          # macOS mach needs its own configure flags.
+          rm -f engine/mozconfig
+          cat > engine/mozconfig <<'MOZCONFIG'
+          ac_add_options --with-branding=browser/branding/gjoa
+          ac_add_options --with-distribution-id=org.gjoa
+          ac_add_options --with-app-name=gjoa
+          ac_add_options --with-app-basename=Gjoa
+          ac_add_options --without-wasm-sandboxed-libraries
+          ac_add_options --disable-updater
+          ac_add_options --disable-tests
+          ac_add_options --enable-optimize
+          ac_add_options --enable-release
+          ac_add_options --target=aarch64-apple-darwin
+          export CC=/opt/homebrew/opt/llvm@19/bin/clang
+          export CXX=/opt/homebrew/opt/llvm@19/bin/clang++
+          ac_add_options --with-libclang-path=/opt/homebrew/opt/llvm@19/lib
+          MOZCONFIG
+
+      - name: Bootstrap mach
+        working-directory: engine
+        run: |
+          ./mach bootstrap --application-choice=browser --no-interactive
+
+      - name: Build
+        working-directory: engine
+        run: |
+          ./mach build
+
+      - name: Package
+        working-directory: engine
+        run: |
+          ./mach package
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: gjoa-macos-arm64
+          path: engine/obj-*/dist/*.dmg
+          if-no-files-found: warn
+
+      - name: Upload app bundle (fallback)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: gjoa-macos-arm64-app
+          path: engine/obj-*/dist/Gjoa.app
+          if-no-files-found: warn

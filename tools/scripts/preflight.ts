@@ -128,10 +128,10 @@ function gateB(): void {
 function gateC(): void {
   const prodFiles = [
     "src/gjoa/browser/components/gjoa/GjoaLoader.sys.mjs",
-    "src/gjoa/chrome/src/security/index.ts",
-    "src/gjoa/chrome/src/drawer/index.ts",
-    "src/gjoa/chrome/src/spaces/index.ts",
-    "src/gjoa/chrome/src/tabs/index.ts",
+    "src/gjoa/chrome/bjs/security/index.bjs",
+    "src/gjoa/chrome/bjs/drawer/index.bjs",
+    "src/gjoa/chrome/bjs/spaces/index.bjs",
+    "src/gjoa/chrome/bjs/tabs/index.bjs",
   ];
   const landmines: string[] = [];
   for (const f of prodFiles) {

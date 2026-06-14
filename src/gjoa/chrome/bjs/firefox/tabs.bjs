@@ -1,0 +1,53 @@
+#lang beagle/js
+(ns gjoa.firefox.tabs)
+(define-mode strict)
+
+(declare-extern [gBrowser Services] Any)
+
+(js/export (defn all-tabs [] :- Any
+  (.-tabs gBrowser)))
+
+(js/export (defn selected-tab [] :- Any
+  (.-selectedTab gBrowser)))
+
+(js/export (defn select-tab [tab :- Any] :- Any
+  (set! (.-selectedTab gBrowser) tab)))
+
+(js/export (defn tab-container [] :- Any
+  (.-tabContainer gBrowser)))
+
+(js/export (defn pin-tab [tab :- Any] :- Any
+  (when (not (.-pinned tab))
+    (.pinTab gBrowser tab))))
+
+(js/export (defn unpin-tab [tab :- Any] :- Any
+  (when (.-pinned tab)
+    (.unpinTab gBrowser tab))))
+
+(js/export (defn toggle-pinned [tab :- Any] :- Any
+  (if (.-pinned tab)
+    (unpin-tab tab)
+    (pin-tab tab))))
+
+(js/export (defn remove-tab [tab :- Any] :- Any
+  (.removeTab gBrowser tab)))
+
+(js/export (defn duplicate-tab [tab :- Any] :- Any
+  (.duplicateTab gBrowser tab)))
+
+(js/export (defn reload-tab [tab :- Any] :- Any
+  (.reloadTab gBrowser tab)))
+
+(js/export (defn move-tab-to [tab :- Any index :- Any] :- Any
+  (.moveTabTo gBrowser tab index)))
+
+(js/export (defn open-tab [url :- Any] :- Any
+  (let [opts {}]
+    (set! (.-triggeringPrincipal opts)
+          (.getSystemPrincipal (.-scriptSecurityManager Services)))
+    (.addTab gBrowser url opts))))
+
+(js/export (defn tab-icon [tab :- Any] :- Any
+  (try
+    (.getIcon gBrowser tab)
+    (catch Any _e nil))))

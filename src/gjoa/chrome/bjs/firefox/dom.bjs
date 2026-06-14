@@ -1,0 +1,26 @@
+#lang beagle/js
+(ns gjoa.firefox.dom
+  (:require [gjoa.macros :refer [xul-new]]))
+(define-mode strict)
+
+(declare-extern [Object String] Any)
+
+(js/export (defn xul [tag :- String attrs :- Any] :- Any
+  (let [el (xul-new tag)]
+    (when attrs
+      (.forEach (.entries Object attrs) (fn [entry]
+        (let [name (aget entry 0) value (aget entry 1)]
+          (when (and (not (= value false))
+                     (not (= value nil))
+                     (not (= value js/undefined)))
+            (.setAttribute el name (String value)))))))
+    el)))
+
+(js/export (defn xul-label [attrs :- Any] :- Any (xul "label" attrs)))
+(js/export (defn xul-hbox [attrs :- Any] :- Any (xul "hbox" attrs)))
+(js/export (defn xul-vbox [attrs :- Any] :- Any (xul "vbox" attrs)))
+(js/export (defn xul-box [attrs :- Any] :- Any (xul "box" attrs)))
+(js/export (defn xul-image [attrs :- Any] :- Any (xul "image" attrs)))
+(js/export (defn xul-menu-popup [attrs :- Any] :- Any (xul "menupopup" attrs)))
+(js/export (defn xul-menu-item [attrs :- Any] :- Any (xul "menuitem" attrs)))
+(js/export (defn xul-menu-separator [attrs :- Any] :- Any (xul "menuseparator" attrs)))

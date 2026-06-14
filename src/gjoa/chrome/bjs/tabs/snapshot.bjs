@@ -1,0 +1,113 @@
+#lang beagle/js
+(ns gjoa.tabs.snapshot
+  (:require [gjoa.macros :refer [bool]]))
+(define-mode strict)
+
+(declare-extern [CLOSED-MEMORY console Map] Any)
+(js/export (defn buildEnvelope [snapshot :- Any] :- Any
+  (let [tab-space-map (Map.)]
+    (when (and (.-spaces snapshot) (.-tabSpaces (.-spaces snapshot)))
+      (.forEach (.-tabSpaces (.-spaces snapshot))
+        #(.set tab-space-map (aget % 0) (aget % 1))))
+    (let [tabEntries (.map (.-tabs snapshot)
+                     #(let [d (.treeData snapshot %)
+                            sp (.get tab-space-map (.-id d))]
+                        {:id (.-id d)
+                         :parentId (.-parentId d)
+                         :url (.tabUrl snapshot %)
+                         :name (.-name d)
+                         :state (.-state d)
+                         :collapsed (.-collapsed d)
+                         :spaceId sp}))
+
+        groupEntries []
+        lastSeen :- Any {:id nil}]
+
+    ;; Walk rows — track last tab id, push group entries
+    (.forEach (Array/from (.rows snapshot))
+      #(if (.-_tab %)
+         (set! (.-id lastSeen) (.-id (.treeData snapshot (.-_tab %))))
+         (when (.-_group %)
+           (.push groupEntries
+             {:id 0
+              :parentId nil
+              :type "group"
+              :name (.-name (.-_group %))
+              :level (.-level (.-_group %))
+              :state (.-state (.-_group %))
+              :collapsed (.-collapsed (.-_group %))
+              :spaceId (.-spaceId (.-_group %))
+              :afterTabId (.-id lastSeen)}))))
+
+    ;; Filter unconsumed saved entries whose URL doesn't collide with live tabs
+    (let [liveUrls (Set. (.filter (.map tabEntries #(.-url %))
+                           Boolean))
+          leftovers (.map
+                      (.filter (.-savedTabQueue snapshot)
+                        #(or (not (.-url %))
+                             (not (.has liveUrls (.-url %)))))
+                      #(Object/assign {} %))
+
+          out (.concat tabEntries groupEntries leftovers)]
+
+      {:nodes out
+       :closedTabs (.slice (.-closedTabs snapshot) (- 0 CLOSED-MEMORY))
+       :nextTabId (.-nextTabId snapshot)
+       :spaces (.-spaces snapshot)})))))
+(defn do-save [flags :- Any getSnapshot :- Any history :- Any onErr :- Any] :- Any
+  (if (.-inFlight flags)
+    (set! (.-pending flags) true)
+    (do
+      (set! (.-inFlight flags) true)
+      (-> (.appendEvent history (buildEnvelope (getSnapshot)))
+          (.catch #(onErr %))
+          (.then (fn []
+            (set! (.-inFlight flags) false)
+            (when (.-pending flags)
+              (set! (.-pending flags) false)
+              (do-save flags getSnapshot history onErr))))))))
+
+(js/export (defn makeSaver [getSnapshot :- Any history :- Any onError :- Any] :- Any
+  (let [fallback #(.error console "gjoa-tabs: save chain" %)
+        onErr (or onError fallback)
+        flags :- Any {:inFlight false :pending false}]
+    #(do-save flags getSnapshot history onErr))))
+(js/export (defn popSavedByUrl [queue :- Any url :- Any] :- Any
+  (when url
+    (let [i (.findIndex queue #(= (.-url %) url))]
+      (when (>= i 0) (aget (.splice queue i 1) 0))))))
+
+(js/export (defn popSavedByIndex [queue :- Any idx :- Int] :- Any
+  (when (>= idx 0)
+    (let [i (.findIndex queue #(= (.-_origIdx %) idx))]
+      (when (>= i 0) (aget (.splice queue i 1) 0))))))
+
+;; popSavedForTab — combined helper for session-restore reconciliation
+;; Priority: 1) gjoa-id, 2) URL match, 3) FIFO (session-restore only)
+(js/export (defn popSavedForTab [queue :- Any ctx :- Any] :- Any
+  (let [currentIdx (.-currentIdx ctx)
+        pinnedId (.-pinnedId ctx)
+        url (.-url ctx)
+        inSessionRestore (.-inSessionRestore ctx)
+        log (.-log ctx)
+        try-url-fifo (fn []
+          (if (and url (not= url "about:blank"))
+            (let [node (popSavedByUrl queue url)]
+              (when log (log "popSavedForTab:url"
+                             {:idx currentIdx :url url :found (bool node)}))
+              node)
+            (when inSessionRestore
+              (let [node (when (.-length queue) (.shift queue))]
+                (when log (log "popSavedForTab:fifo"
+                               {:idx currentIdx :pfxId pinnedId :url url
+                                :nodeId (and node (.-id node))
+                                :nodeOrigIdx (and node (.-_origIdx node))}))
+                node))))]
+    (if pinnedId
+      (let [i (.findIndex queue #(= (.-id %) pinnedId))]
+        (if (>= i 0)
+          (do (when log (log "popSavedForTab:pfxId"
+                             {:idx currentIdx :pfxId pinnedId :url url}))
+              (aget (.splice queue i 1) 0))
+          (try-url-fifo)))
+      (try-url-fifo)))))

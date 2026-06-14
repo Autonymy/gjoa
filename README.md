@@ -5,8 +5,9 @@ near-zero runtime cost, the things most people bolt onto Firefox with a stack
 of extensions — an ad blocker, Dark Reader, tree-style tabs — and ship it as
 one aggressively optimized build.
 
-Built on Firefox 151. The UI lives as TypeScript modules under
-`src/gjoa/chrome/src/`, loaded through a native chrome loader
+Built on Firefox 151. The UI is written in [Beagle](https://github.com/tompassarelli/beagle)
+(a typed Clojure subset) as `.bjs` modules under `src/gjoa/chrome/bjs/`,
+compiled to chrome JS and loaded through a native chrome loader
 (`src/gjoa/browser/components/gjoa/GjoaLoader.sys.mjs`) baked into `omni.ja` —
 no fx-autoconfig, no extension process, no per-page injection.
 

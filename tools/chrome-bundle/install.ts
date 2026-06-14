@@ -55,7 +55,7 @@ async function main(): Promise<void> {
   console.log(`✓ symlinked ${DIST_CHROME} → ${GJOA_DEV}`);
   console.log(`\nLaunch:`);
   console.log(`  ${INSTALL_ROOT}/gjoa --no-remote --profile <profile_dir>`);
-  console.log(`\nDaily loop: edit src/gjoa/chrome/src/* → \`bun run chrome:dist\` → restart gjoa.`);
+  console.log(`\nDaily loop: edit src/gjoa/chrome/bjs/* → \`bun run chrome:dist\` → restart gjoa.`);
 }
 
 await main();

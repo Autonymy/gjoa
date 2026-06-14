@@ -34,7 +34,6 @@ const SCRIPTS = [
   "gjoa-security.uc.js",
   "gjoa-drawer.uc.js",
   "gjoa-tabs.uc.js",
-  "gjoa-dark-mode.uc.js",
 ];
 const STYLES = [
   "gjoa.uc.css",

@@ -1,0 +1,743 @@
+#lang beagle/js
+(ns gjoa.tabs.drag
+  (:require [gjoa.macros :refer [q qa xul-new attr! on! onc! bool has? rmattr! css! tabs! toggle! undef-or]]))
+(define-mode strict)
+
+(declare-extern [document gBrowser Math Set Array requestAnimationFrame INDENT create-logger state row-of selection moving-tabs all-rows data-of is-horizontal level-of level-of-row subtree-rows tab-by-id tree-data] Any)
+
+;; Walk siblings from `start` using `dir` (e.g. .-nextElementSibling),
+;; return the first node satisfying `pred`, or nil.
+(defn find-sib [start :- Any pred :- Any dir :- Any] :- Any
+  (let [box :- Any {:v nil}
+        walk (fn [n]
+               (when n
+                 (if (pred n)
+                   (set! (.-v box) n)
+                   (walk (dir n)))))]
+    (walk start)
+    (.-v box)))
+
+;; Set both targetIdx and idxBranch on a result map in one call.
+(defn set-idx! [r :- Any idx :- Any branch :- Any] :- Any
+  (set! (.-targetIdx r) idx)
+  (set! (.-idxBranch r) branch))
+
+;; Extract tabs from a row array: filter to rows with ._tab, map to the tab.
+(defn tabs-of [rows :- Any] :- Any
+  (.map (.filter rows #(.-_tab %))
+        #(.-_tab %)))
+
+;; Is the row's tab pinned?  Returns a bool.
+;; Covers both tab-rows and the (.-dragSource ds) pattern.
+(defn row-pinned? [row :- Any] :- Any
+  (bool (and (.-_tab row) (.-pinned (.-_tab row)))))
+
+;; Pretty-printer for a row -- used in log lines so we can correlate source
+;; vs target across event boundaries without dumping the whole element.
+(defn row-desc [row :- Any] :- Any
+  (cond
+    (not row)
+    {:row "null"}
+
+    (.-_tab row)
+    {:kind "tab"
+     :id (.-id (tree-data (.-_tab row)))
+     :label (.-label (.-_tab row))
+     :level (level-of (.-_tab row))
+     :pinned (bool (.-pinned (.-_tab row)))
+     :parentId (.-parentId (tree-data (.-_tab row)))}
+
+    (.-_group row)
+    {:kind "group"
+     :id (.-id (.-_group row))
+     :name (.-name (.-_group row))
+     :level (.-level (.-_group row))}
+
+    :else {:kind "?"}))
+
+;; Parent-id for a tab dropped INTO a group.
+(defn find-group-context-parent [group :- Any log-fn :- Any] :- Any
+  (let [id (some-> group .-_group .-id)]
+    (log-fn "findGroupContextParent"
+            {:groupId id
+             :groupLevel (or (some-> group .-_group .-level) 0)})
+    id))
+
+;; Closest preceding tab in DOM. Skips groups. Uses find-sib.
+(defn find-closest-tab-before [row :- Any] :- Any
+  (let [hit (find-sib (.-previousElementSibling row)
+                      #(.-_tab %)
+                      #(.-previousElementSibling %))]
+    (and hit (.-_tab hit))))
+
+;; Last tab inside the group's visual subtree, or -- if the group has no
+;; tabs in its subtree -- the closest preceding tab before the group.
+(defn find-last-tab-in-group-or-before [group :- Any] :- Any
+  (let [subtree-tabs (tabs-of (.slice (subtree-rows group) 1))]
+    (if (.-length subtree-tabs)
+      (aget subtree-tabs (- (.-length subtree-tabs) 1))
+      (find-closest-tab-before group))))
+(js/export (defn make-drag [deps :- Any] :- Any
+  (let [clear-selection (.-clearSelection deps)
+        schedule-tree-resync (.-scheduleTreeResync deps)
+        schedule-save (.-scheduleSave deps)
+        log (create-logger "tabs/drag")
+
+        ;; Closure-private drag/drop cycle state
+        ds :- Any {:dragSource nil
+                   :dropIndicator nil
+                   :dropTarget nil
+                   :dropPosition nil}
+
+        ;; --- clearDropIndicator ---
+        clear-drop-indicator (fn []
+          (when (.-dropIndicator ds)
+            (.remove (.-dropIndicator ds)))
+          (set! (.-dropTarget ds) nil)
+          (set! (.-dropPosition ds) nil))
+
+        ;; --- handleContainerDrop ---
+        ;; container-action: (fn [tab] ...) when dropTarget IS the container
+        handle-container-drop (fn [e container-ref container-action]
+          (.preventDefault e)
+          (let [tab (.-_tab (.-dragSource ds))]
+            (when tab
+              (if (= (.-dropTarget ds) container-ref)
+                (container-action tab)
+                (when (and (.-dropTarget ds)
+                           (or (some-> ds .-dropTarget .-_tab)
+                               (some-> ds .-dropTarget .-_group))
+                           (.-dropPosition ds))
+                  (execute-drop (.-dragSource ds)
+                    (.-dropTarget ds) (.-dropPosition ds)))))
+            (clear-drop-indicator)))
+
+        ;; --- showDropIndicator ---
+        show-drop-indicator (fn [target-row position]
+          (when-not (.-dropIndicator ds)
+            (let [el (xul-new "box")]
+              (set! (.-id el) "gjoa-drop-indicator")
+              (set! (.-dropIndicator ds) el)))
+          (let [ind (.-dropIndicator ds)]
+            (rmattr! ind "gjoa-drop-child")
+            (rmattr! ind "gjoa-fixed")
+            (css! ind "")
+            (log "showDropIndicator"
+                 {:target (row-desc target-row)
+                  :position position
+                  :horizontal (is-horizontal)})
+            (if (is-horizontal)
+              (do
+                (when (or (not (.-parentNode ind))
+                          (not= (.-parentNode ind)
+                                (.-documentElement document)))
+                  (.appendChild (.-documentElement document) ind))
+                (let [rect (.getBoundingClientRect target-row)
+                      s (.-style ind)]
+                  (attr! ind "gjoa-fixed" "true")
+                  (set! (.-position s) "fixed")
+                  (if (= position "child")
+                    (do
+                      (attr! ind "gjoa-drop-child" "true")
+                      (set! (.-left s) (str (.-left rect) "px"))
+                      (set! (.-top s) (str (- (.-bottom rect) 1) "px"))
+                      (set! (.-width s) (str (.-width rect) "px"))
+                      (set! (.-height s) "2px"))
+                    (let [x-edge (if (= position "before")
+                                   (- (.-left rect) 1)
+                                   (- (.-right rect) 1))]
+                      (set! (.-left s) (str x-edge "px"))
+                      (set! (.-top s) (str (.-top rect) "px"))
+                      (set! (.-width s) "2px")
+                      (set! (.-height s) (str (.-height rect) "px"))))))
+              ;; Vertical mode
+              (let [lvl (level-of-row target-row)]
+                (cond
+                  (= position "child")
+                  (do (attr! ind "gjoa-drop-child" "true")
+                      (.after target-row ind))
+
+                  (= position "before")
+                  (.before target-row ind)
+
+                  :else
+                  (let [st (subtree-rows target-row)]
+                    (.after (aget st (- (.-length st) 1)) ind)))
+                (set! (.-marginInlineStart (.-style ind))
+                      (str (+ (* (if (= position "child") (+ lvl 1) lvl)
+                                  INDENT)
+                               8)
+                           "px"))))))
+
+        ;; --- executeDrop ---
+        execute-drop (fn [src-row tgt-row position]
+          (clear-drop-indicator)
+          (let [tgt-level (level-of-row tgt-row)]
+            (if (not (data-of tgt-row))
+              (log "executeDrop:abort"
+                   {:reason "no-tgt-data" :target (row-desc tgt-row)})
+              (let [src-pinned (or (row-pinned? src-row)
+                                   (and (bool (.-_group src-row))
+                                        (= (.-parentNode src-row)
+                                           (.-pinnedContainer state))))
+                    tgt-pinned (or (row-pinned? tgt-row)
+                                   (and (bool (.-_group tgt-row))
+                                        (= (.-parentNode tgt-row)
+                                           (.-pinnedContainer state))))
+                    is-cross-container (not= src-pinned tgt-pinned)]
+
+                (log "executeDrop:enter"
+                     {:source (row-desc src-row) :target (row-desc tgt-row)
+                      :position position :srcPinned src-pinned
+                      :tgtPinned tgt-pinned :isCrossContainer is-cross-container
+                      :tgtLevel tgt-level})
+
+                (let [moved-rows
+                      (cond
+                        (and is-cross-container (.-_tab src-row))
+                        [src-row]
+
+                        (and is-cross-container (.-_group src-row))
+                        (subtree-rows src-row)
+
+                        is-cross-container
+                        []
+
+                        (and (> (.-size selection) 1)
+                             (.has selection src-row))
+                        (.filter (all-rows) #(.has selection %))
+
+                        :else
+                        (subtree-rows src-row))]
+
+                  (if (not (.-length moved-rows))
+                    (log "executeDrop:abort" {:reason "no-movedRows"})
+                    (let [src-level (level-of-row (aget moved-rows 0))
+                          new-src-level (if (= position "child")
+                                          (+ tgt-level 1)
+                                          tgt-level)
+                          delta (- new-src-level src-level)]
+
+                      (log "executeDrop:plan"
+                           {:movedRowsCount (.-length moved-rows)
+                            :srcLevel src-level :newSrcLevel new-src-level
+                            :delta delta})
+
+                      ;; Compute new parent for source
+                      (let [parent-result :- Any {:value nil
+                                                  :branch "no-tab-no-group->null"}]
+                        (cond
+                          (.-_tab tgt-row)
+                          (do
+                            (set! (.-branch parent-result)
+                                  (if (= position "child")
+                                    "tab/child->tgtId"
+                                    "tab/sibling->tgtParentId"))
+                            (set! (.-value parent-result)
+                                  (if (= position "child")
+                                    (.-id (tree-data (.-_tab tgt-row)))
+                                    (.-parentId (tree-data (.-_tab tgt-row))))))
+
+                          (.-_group tgt-row)
+                          (if (= position "child")
+                            (do
+                              (set! (.-branch parent-result)
+                                    "group/child->groupId")
+                              (set! (.-value parent-result)
+                                    (find-group-context-parent tgt-row log)))
+                            (let [group-level (or (some-> tgt-row .-_group .-level) 0)]
+                              (set! (.-branch parent-result)
+                                    (str "group/" position
+                                         "->siblingOfGroup(level="
+                                         group-level ")"))
+                              (if (<= group-level 0)
+                                (set! (.-value parent-result) nil)
+                                (let [enc (find-sib
+                                            (.-previousElementSibling tgt-row)
+                                            (fn [prev]
+                                              (and (.-_group prev)
+                                                   (< (or (.-level (.-_group prev)) 0)
+                                                      group-level)))
+                                            #(.-previousElementSibling %))]
+                                  (set! (.-value parent-result)
+                                        (and enc (.-id (.-_group enc))))))))
+
+                          :else nil)
+
+                        (log "executeDrop:newParent"
+                             {:branch (.-branch parent-result)
+                              :newParentForSource (.-value parent-result)})
+
+                        ;; Update parentId for top-level moved tabs
+                        (let [moved-set (Set. moved-rows)
+                              mutation-count :- Any {:v 0}]
+                          (.forEach moved-rows
+                            (fn [r]
+                              (cond
+                                (.-_tab r)
+                                (let [td (tree-data (.-_tab r))
+                                      parent (tab-by-id
+                                               (undef-or (.-parentId td) 0))]
+                                  (when (or (not parent)
+                                            (not (.has moved-set
+                                                   (.get row-of parent))))
+                                    (let [old-pid (.-parentId td)]
+                                      (set! (.-parentId td)
+                                            (.-value parent-result))
+                                      (set! (.-v mutation-count)
+                                            (+ (.-v mutation-count) 1))
+                                      (log "executeDrop:mutate"
+                                           {:tab (.-label (.-_tab r))
+                                            :tabId (.-id td)
+                                            :oldParentId old-pid
+                                            :newParentId
+                                              (.-value parent-result)}))))
+
+                                (.-_group r)
+                                (set! (.-level (.-_group r))
+                                      (Math/max 0
+                                        (+ (or (.-level (.-_group r)) 0)
+                                           delta)))
+
+                                :else nil))
+                          (log "executeDrop:mutations"
+                               {:parentIdMutations (.-v mutation-count)}))
+
+                        (let [moved-tabs (tabs-of moved-rows)]
+
+                          ;; Cross-container: pin/unpin BEFORE computing
+                          ;; targetIdx
+                          (when is-cross-container
+                            (.forEach moved-tabs
+                              #(cond
+                                 (and tgt-pinned (not (.-pinned %)))
+                                 (.pinTab gBrowser %)
+
+                                 (and (not tgt-pinned) (.-pinned %))
+                                 (.unpinTab gBrowser %)
+
+                                 :else nil)))
+
+                          (let [tabs-arr (tabs!)
+                                idx-result :- Any {:targetIdx 0
+                                                   :idxBranch ""}]
+
+                            ;; Compute target index in Firefox's tab list
+                            (cond
+                              ;; target is a group row
+                              (.-_group tgt-row)
+                              (if (= position "child")
+                                ;; Drop INTO group
+                                (let [sub-tabs
+                                      (tabs-of
+                                        (.slice (subtree-rows tgt-row) 1))]
+                                  (if (.-length sub-tabs)
+                                    (let [idx (+ (.indexOf tabs-arr
+                                                   (aget sub-tabs
+                                                     (- (.-length sub-tabs) 1)))
+                                                 1)]
+                                      (set-idx! idx-result idx
+                                        (str "group/child->after-lastSubtreeTab@"
+                                             (- idx 1))))
+                                    ;; Empty group
+                                    (let [first-after-row
+                                          (find-sib
+                                            (.-nextElementSibling tgt-row)
+                                            #(.-_tab %)
+                                            #(.-nextElementSibling %))
+                                          first-after
+                                          (some-> first-after-row .-_tab)]
+                                      (if first-after
+                                        (let [idx (.indexOf tabs-arr
+                                                    first-after)]
+                                          (set-idx! idx-result idx
+                                            (str "group/child(empty)->before-firstAfterGroup@"
+                                                 idx)))
+                                        (set-idx! idx-result
+                                          (.-length tabs-arr)
+                                          "group/child(empty,end)->tabsArr.length")))))
+                                ;; Drop BEFORE/AFTER group
+                                (let [anchor-tab
+                                      (if (= position "before")
+                                        (find-closest-tab-before tgt-row)
+                                        (find-last-tab-in-group-or-before
+                                          tgt-row))]
+                                  (if anchor-tab
+                                    (set-idx! idx-result
+                                      (+ (.indexOf tabs-arr anchor-tab) 1)
+                                      (str "group/" position
+                                           "->after-anchor"))
+                                    (set-idx! idx-result
+                                      (.-length tabs-arr)
+                                      (str "group/" position
+                                           "->no-anchor->end")))))
+
+                              ;; target is a tab, position "before"
+                              (= position "before")
+                              (let [idx (.indexOf tabs-arr (.-_tab tgt-row))]
+                                (set-idx! idx-result idx
+                                  (str "tab/before->" idx)))
+
+                              ;; target is a tab, "after" or "child"
+                              :else
+                              (let [tgt-subtree
+                                    (.reverse (.slice (subtree-rows tgt-row)))
+                                    tgt-sub-row
+                                    (.find tgt-subtree #(.-_tab %))
+                                    tgt-sub-tab
+                                    (some-> tgt-sub-row .-_tab)
+                                    idx (+ (if tgt-sub-tab
+                                             (.indexOf tabs-arr tgt-sub-tab)
+                                             (.indexOf tabs-arr
+                                               (.-_tab tgt-row)))
+                                           1)]
+                                (set-idx! idx-result idx
+                                  (str "tab/" position "->after->" idx))))
+
+                            ;; Clamp negative
+                            (when (< (.-targetIdx idx-result) 0)
+                              (set-idx! idx-result
+                                (.-length tabs-arr)
+                                (str (.-idxBranch idx-result)
+                                     "->clamp(" (.-length tabs-arr)
+                                     ")")))
+
+                            (log "executeDrop:targetIdx"
+                                 {:idxBranch (.-idxBranch idx-result)
+                                  :targetIdx (.-targetIdx idx-result)
+                                  :tabsLen (.-length tabs-arr)})
+
+                            ;; Mark tabs as moving
+                            (.forEach moved-tabs
+                              #(.add moving-tabs %))
+
+                            ;; Move Firefox tabs via gBrowser.moveTabTo
+                            (let [insert-state :- Any
+                                    {:idx (.-targetIdx idx-result)}
+                                  move-count :- Any {:v 0}]
+                              (.forEach moved-tabs
+                                (fn [t]
+                                  (let [current-idx
+                                        (.indexOf
+                                          (tabs!)
+                                          t)]
+                                    (when (>= current-idx 0)
+                                      (when (< current-idx
+                                               (.-idx insert-state))
+                                        (set! (.-idx insert-state)
+                                              (- (.-idx insert-state) 1)))
+                                      (when (not= current-idx
+                                                   (.-idx insert-state))
+                                        (log "executeDrop:moveTabTo"
+                                             {:tab (.-label t)
+                                              :currentIdx current-idx
+                                              :insertIdx
+                                                (.-idx insert-state)})
+                                        (.moveTabTo gBrowser t
+                                          {:tabIndex
+                                            (.-idx insert-state)})
+                                        (set! (.-v move-count)
+                                              (+ (.-v move-count) 1)))
+                                      (set! (.-idx insert-state)
+                                            (+ (.-idx insert-state)
+                                               1))))))
+                              (log "executeDrop:moveSummary"
+                                   {:actualMoves (.-v move-count)
+                                    :totalTabs (.-length moved-tabs)}))
+
+                            ;; Move group rows in DOM
+                            (let [group-rows
+                                  (.filter moved-rows #(.-_group %))]
+                              (when (.-length group-rows)
+                                (if (= position "before")
+                                  (.forEach group-rows
+                                    #(.before tgt-row %))
+                                  (let [st (subtree-rows tgt-row)
+                                        anchor-rows
+                                        (.filter st
+                                          #(not (.includes moved-rows %)))
+                                        anchor
+                                        (if (.-length anchor-rows)
+                                          (aget anchor-rows
+                                            (- (.-length anchor-rows) 1))
+                                          tgt-row)
+                                        last-ins :- Any {:v anchor}]
+                                    (.forEach group-rows
+                                      #(do (.after (.-v last-ins) %)
+                                           (set! (.-v last-ins) %)))))
+                                (log "executeDrop:groupDOMMove"
+                                     {:groupRowsCount
+                                       (.-length group-rows)})))
+
+                            ;; Clear selection
+                            (clear-selection)
+
+                            ;; Settle via requestAnimationFrame
+                            (requestAnimationFrame
+                              (fn []
+                                (.forEach moved-tabs
+                                  #(.delete moving-tabs %))
+                                (.forEach moved-tabs
+                                  #(let [r (.get row-of %)]
+                                     (when r
+                                       (toggle! r "busy"
+                                         (has? % "busy")))))
+                                (log "executeDrop:settled"
+                                     {:sourceFinal (row-desc src-row)
+                                      :sourceParentInTree
+                                      (some-> src-row .-_tab tree-data .-parentId)})
+                                (schedule-tree-resync)
+                                (schedule-save)))))))))))))
+
+        ;; --- [gjoa-dragging] safety net ---
+        _ (onc! document "mousedown"
+            (fn []
+              (when (= (.-dragSource ds) nil)
+                (.forEach
+                  (qa document "[gjoa-dragging]")
+                  #(rmattr! % "gjoa-dragging")))))
+
+        ;; --- setupDrag ---
+        setup-drag (fn [row]
+          (set! (.-draggable row) true)
+
+          ;; dragstart
+          (on! row "dragstart"
+            (fn [e]
+              (let [t (.-target e)]
+                (if (and (.-classList t)
+                         (.contains (.-classList t) "gjoa-tab-close"))
+                  (.preventDefault e)
+                  (do
+                    (set! (.-dragSource ds) row)
+                    (log "dragstart" {:source (row-desc row)})
+                    (let [dt (.-dataTransfer e)]
+                      (set! (.-effectAllowed dt) "move")
+                      (.setData dt "text/plain" ""))
+                    (attr! row "gjoa-dragging" "true"))))))
+
+          ;; dragend
+          (on! row "dragend"
+            (fn []
+              (log "dragend/row"
+                   {:listenerOnRow (row-desc row)
+                    :sourceWas (if (.-dragSource ds)
+                                 (row-desc (.-dragSource ds))
+                                 "already-null")
+                    :dropPositionWas (.-dropPosition ds)})
+              (when (.-dragSource ds)
+                (rmattr! (.-dragSource ds) "gjoa-dragging"))
+              (set! (.-dragSource ds) nil)
+              (clear-drop-indicator)))
+
+          ;; dragover
+          (let [last-logged :- Any {:v nil}]
+            (on! row "dragover"
+              (fn [e]
+                (when (and (.-dragSource ds)
+                           (not= (.-dragSource ds) row)
+                           (not (.includes (subtree-rows (.-dragSource ds))
+                                  row)))
+                  (.preventDefault e)
+                  (set! (.-dropEffect (.-dataTransfer e)) "move")
+                  (let [rect (.getBoundingClientRect row)
+                        x (- (.-clientX e) (.-left rect))
+                        y (- (.-clientY e) (.-top rect))
+                        horizontal (is-horizontal)
+                        pos-info :- Any {:branch ""}]
+                    (if horizontal
+                      (cond
+                        (> y (* (.-height rect) (/ 2 3)))
+                        (do (set! (.-dropPosition ds) "child")
+                            (set! (.-branch pos-info)
+                                  "hz/y>2/3->child"))
+
+                        (< x (/ (.-width rect) 2))
+                        (do (set! (.-dropPosition ds) "before")
+                            (set! (.-branch pos-info)
+                                  "hz/x<w/2->before"))
+
+                        :else
+                        (do (set! (.-dropPosition ds) "after")
+                            (set! (.-branch pos-info)
+                                  "hz/x>=w/2->after")))
+                      ;; Vertical 3-zone on Y
+                      (let [zone (/ (.-height rect) 3)]
+                        (cond
+                          (< y zone)
+                          (do (set! (.-dropPosition ds) "before")
+                              (set! (.-branch pos-info)
+                                    "vt/y<1/3->before"))
+
+                          (> y (* zone 2))
+                          (do (set! (.-dropPosition ds) "after")
+                              (set! (.-branch pos-info)
+                                    "vt/y>2/3->after"))
+
+                          :else
+                          (do (set! (.-dropPosition ds) "child")
+                              (set! (.-branch pos-info)
+                                    "vt/middle->child")))))
+                    (set! (.-dropTarget ds) row)
+                    (when (or (.-_group row)
+                              (not= (.-v last-logged)
+                                    (.-dropPosition ds)))
+                      (log "dragover"
+                           {:target (row-desc row)
+                            :source (row-desc (.-dragSource ds))
+                            :position (.-dropPosition ds)
+                            :posBranch (.-branch pos-info)
+                            :rect {:w (Math/round (.-width rect))
+                                   :h (Math/round (.-height rect))}
+                            :mouse {:x (Math/round x)
+                                    :y (Math/round y)}
+                            :horizontal horizontal})
+                      (set! (.-v last-logged) (.-dropPosition ds)))
+                    (show-drop-indicator row (.-dropPosition ds)))))))
+
+          ;; dragleave
+          (on! row "dragleave"
+            (fn [e]
+              (let [related (.-relatedTarget e)]
+                (when (and (not (.contains row related))
+                           (= (.-dropTarget ds) row))
+                  (clear-drop-indicator)))))
+
+          ;; drop
+          (on! row "drop"
+            (fn [e]
+              (log "drop/row:fired"
+                   {:listenerOnRow (row-desc row)
+                    :hasDragSource (bool (.-dragSource ds))
+                    :sourceEqualsRow (= (.-dragSource ds) row)})
+              (.preventDefault e)
+              (cond
+                (not (.-dragSource ds))
+                (log "drop/row:abort" {:reason "no-dragSource"})
+
+                (= (.-dragSource ds) row)
+                (log "drop/row:abort" {:reason "source-equals-row"})
+
+                (.includes (subtree-rows (.-dragSource ds)) row)
+                (log "drop/row:abort" {:reason "row-in-source-subtree"})
+
+                :else
+                (do
+                  (log "drop/row:proceeding"
+                       {:target (row-desc row)
+                        :source (row-desc (.-dragSource ds))
+                        :position (.-dropPosition ds)})
+                  (if (and (.-dropPosition ds)
+                           (not= (.-dropPosition ds)
+                                 "into-empty-pinned")
+                           (not= (.-dropPosition ds)
+                                 "into-empty-panel"))
+                    (execute-drop (.-dragSource ds) row
+                      (.-dropPosition ds))
+                    (log "drop/row:abort"
+                         {:reason "no-or-empty-zone-position"
+                          :dropPosition (.-dropPosition ds)}))))
+              (clear-drop-indicator)))))
+
+        ;; --- setupPinnedContainerDrop ---
+        setup-pinned-container-drop (fn [container]
+          ;; dragover
+          (on! container "dragover"
+            (fn [e]
+              (when (and (.-dragSource ds)
+                         (not (row-pinned? (.-dragSource ds)))
+                         (= (.-target e) container))
+                  (let [last-row (q container
+                                   ".gjoa-tab-row:last-of-type")
+                        past-end (and last-row
+                                      (> (.-clientY e)
+                                         (.-bottom (.getBoundingClientRect last-row))))]
+                    (when-not past-end
+                      (.preventDefault e)
+                      (set! (.-dropEffect (.-dataTransfer e)) "move")
+                      (if last-row
+                        (do
+                          (set! (.-dropTarget ds) last-row)
+                          (set! (.-dropPosition ds) "after")
+                          (show-drop-indicator last-row "after"))
+                        (do
+                          (set! (.-dropTarget ds) container)
+                          (set! (.-dropPosition ds)
+                                "into-empty-pinned"))))))))
+
+          ;; drop
+          (on! container "drop"
+            (fn [e]
+              (log "drop/pinnedContainer:fired"
+                   {:hasDragSource (bool (.-dragSource ds))
+                    :srcPinned
+                    (row-pinned? (.-dragSource ds))})
+              (when (and (.-dragSource ds)
+                         (not (row-pinned? (.-dragSource ds)))
+                         (or (= (.-target e) container)
+                             (= (.-dropTarget ds) container)))
+                (handle-container-drop e container
+                  #(.pinTab gBrowser %))))))
+
+        ;; --- setupPanelDrop ---
+        setup-panel-drop (fn [p]
+          ;; dragover
+          (on! p "dragover"
+            (fn [e]
+              (when (and (.-dragSource ds)
+                         (or (= (.-target e) p)
+                             (= (.-target e) (.-spacer state))))
+                (let [src-pinned (row-pinned? (.-dragSource ds))
+                      anchor :- Any {:v nil}]
+                  (if src-pinned
+                      (set! (.-v anchor)
+                            (q p
+                              (str ".gjoa-tab-row:last-of-type, "
+                                   ".gjoa-group-row:last-of-type")))
+                      ;; Find last root-level row not in source subtree
+                      (let [src-subtree
+                            (Set. (subtree-rows (.-dragSource ds)))
+                            panel-rows
+                            (Array/from
+                              (qa p
+                                ".gjoa-tab-row, .gjoa-group-row"))]
+                        (loop [i (- (.-length panel-rows) 1)]
+                          (when (>= i 0)
+                            (let [candidate (aget panel-rows i)]
+                              (if (and (= (level-of-row candidate) 0)
+                                       (not (.has src-subtree candidate)))
+                                (set! (.-v anchor) candidate)
+                                (recur (- i 1))))))))
+                    (.preventDefault e)
+                    (set! (.-dropEffect (.-dataTransfer e)) "move")
+                    (if (.-v anchor)
+                      (do
+                        (set! (.-dropTarget ds) (.-v anchor))
+                        (set! (.-dropPosition ds) "after")
+                        (show-drop-indicator (.-v anchor) "after"))
+                      (do
+                        (set! (.-dropTarget ds)
+                              (and src-pinned p))
+                        (set! (.-dropPosition ds)
+                              "into-empty-panel")))))))
+
+          ;; drop
+          (on! p "drop"
+            (fn [e]
+              (log "drop/panel:fired"
+                   {:eventTargetIsPanel (= (.-target e) p)
+                    :eventTargetIsSpacer
+                    (= (.-target e) (.-spacer state))
+                    :hasDragSource (bool (.-dragSource ds))})
+              (when (and (.-dragSource ds)
+                         (or (= (.-target e) p)
+                             (= (.-target e) (.-spacer state))
+                             (= (.-dropTarget ds) p)))
+                (handle-container-drop e p
+                  #(when (.-pinned %)
+                     (.unpinTab gBrowser %)))))))]
+
+    ;; Return public API
+    {:setupDrag setup-drag
+     :setupPinnedContainerDrop setup-pinned-container-drop
+     :setupPanelDrop setup-panel-drop})))

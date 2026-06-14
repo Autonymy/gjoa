@@ -1,0 +1,100 @@
+#lang beagle/js
+(ns gjoa.security.index)
+(define-mode strict)
+
+(declare-extern [Services console fetch AbortSignal setTimeout setInterval parseInt RegExp Error] Any)
+
+(def PRODUCT-DETAILS-URL :- String
+  "https://product-details.mozilla.org/1.0/firefox_versions.json")
+
+(def RECHECK-INTERVAL-MS :- Int (* 60 60 1000))
+
+(def FETCH-TIMEOUT-MS :- Int 8000)
+
+(defn parse-version [v :- String] :- Any
+  (let [cleaned (.trim (.replace v (RegExp. "esr$" "i") ""))
+        parts (.map (.split cleaned ".") (fn [x] (or (parseInt x 10) 0)))]
+    [(or (aget parts 0) 0) (or (aget parts 1) 0) (or (aget parts 2) 0)]))
+
+(defn newer? [a :- String b :- String] :- Boolean
+  (let [av (parse-version a)
+        bv (parse-version b)]
+    (cond
+      (not= (aget bv 0) (aget av 0)) (> (aget bv 0) (aget av 0))
+      (not= (aget bv 1) (aget av 1)) (> (aget bv 1) (aget av 1))
+      (not= (aget bv 2) (aget av 2)) (> (aget bv 2) (aget av 2))
+      :else false)))
+
+(defn get-env [name :- String] :- String
+  (try
+    (or (.get (.-env Services) name) "")
+    (catch Any _e "")))
+
+(def state :- Any {:quitting false})
+
+(defn quit-stale [my-version :- String latest-version :- String] :- Any
+  (when (not (.-quitting state))
+    (set! (.-quitting state) true)
+    (try
+      (let [prompt-svc (.-prompt Services)
+            w (.getMostRecentWindow (.-wm Services) "navigator:browser")]
+        (.alert prompt-svc
+          w
+          "gjoa is out of date — quitting"
+          (str "This build is Firefox " my-version
+               "; the latest stable is " latest-version ".\n\n"
+               "Running an out-of-date browser is unsafe. gjoa will now quit.\n\n"
+               "To rebuild against the latest stable:\n"
+               "  bun run security:bump\n"
+               "  bun run import\n"
+               "  nix build .#gjoa --impure   (~30-60 min)\n\n"
+               "Emergency override (one-off, do not habituate):\n"
+               "  GJOA_ALLOW_INSECURE=1 gjoa")))
+      (catch Any e
+        (.error console "[security] modal failed; quitting anyway" e)))
+    (try
+      (let [startup (.-startup Services)]
+        (.quit startup (.-eForceQuit startup)))
+      (catch Any e
+        (.error console "[security] startup.quit failed" e)))))
+
+(defn probe [] :- Any
+  (let [my-version (.-version (.-appinfo Services))]
+    (-> (fetch PRODUCT-DETAILS-URL {:signal (.timeout AbortSignal FETCH-TIMEOUT-MS)})
+        (.then (fn [r]
+          (when (not (.-ok r))
+            (throw (Error. (str "HTTP " (.-status r)))))
+          (.json r)))
+        (.then (fn [j]
+          (let [latest (or (.-LATEST_FIREFOX_VERSION j) nil)]
+            (when latest
+              (if (not (newer? my-version latest))
+                (.log console (str "[security] OK — " my-version
+                                   " matches or exceeds latest stable " latest))
+                (let [my (parse-version my-version)
+                      up (parse-version latest)
+                      major-behind (- (aget up 0) (aget my 0))]
+                  (if (>= major-behind 1)
+                    (do
+                      (.error console
+                        (str "[security] CRITICAL: running " my-version
+                             ", latest is " latest
+                             " (" major-behind " major(s) behind) — quitting"))
+                      (quit-stale my-version latest))
+                    (.warn console
+                      (str "[security] STALE: running " my-version
+                           ", latest is " latest
+                           " (same major, point behind) — gjoa status will show STALE; queue a rebuild for next Sunday")))))))))
+        (.catch (fn [e]
+          (.log console "[security] probe failed — fail-open (offline?):" (.-message e)))))))
+
+;; init
+(defn init- [] :- Any
+  (if (= (get-env "GJOA_ALLOW_INSECURE") "1")
+    (.log console "[security] GJOA_ALLOW_INSECURE=1 — gate disabled for this process")
+    (when (not (.-__gjoaSecurityRunning Services))
+      (set! (.-__gjoaSecurityRunning Services) true)
+      (setTimeout probe 2000)
+      (setInterval probe RECHECK-INTERVAL-MS))))
+
+(init-)

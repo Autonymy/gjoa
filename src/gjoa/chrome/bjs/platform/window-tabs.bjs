@@ -1,0 +1,88 @@
+#lang beagle/js
+(ns gjoa.platform.window-tabs
+  (:require [gjoa.macros :refer [bool]]))
+(define-mode strict)
+
+(declare-extern [create-logger tab-by-id tree-of adapter-all-tabs adapter-selected-tab adapter-pin-tab adapter-unpin-tab adapter-toggle-pinned adapter-remove-tab adapter-duplicate-tab adapter-reload-tab adapter-select-tab adapter-open-tab window] Any)
+
+(defn resolve-tab [ref :- Any] :- Any
+  (if (= (js/typeof ref) "number")
+    (tab-by-id ref)
+    ref))
+
+(defn depth-of [td :- Any] :- Any
+  (loop [d td lv 0]
+    (if (or (= d nil) (= (.-parentId d) nil))
+      lv
+      (let [parent (if (= (js/typeof (.-parentId d)) "number")
+                     (tab-by-id (.-parentId d))
+                     nil)]
+        (if (= parent nil)
+          (+ lv 1)
+          (recur (.get tree-of parent) (+ lv 1)))))))
+
+(defn project [tab :- Any] :- Any
+  (let [td (.get tree-of tab)]
+    (when td
+      {:id (.-id td)
+       :url (or (some-> tab .-linkedBrowser .-currentURI .-spec) "")
+       :label (or (.-label tab) "")
+       :customName (.-name td)
+       :pinned (bool (.-pinned tab))
+       :selected (bool (.-selected tab))
+       :hidden (bool (.-hidden tab))
+       :parentId (.-parentId td)
+       :depth (depth-of td)})))
+
+(defn list-tabs [] :- Any
+  (let [out []
+        tabs (adapter-all-tabs)]
+    (.forEach tabs #(let [p (project %)]
+      (when p (.push out p))))
+    out))
+
+(defn selected-tab [] :- Any
+  (project (adapter-selected-tab)))
+
+(defn get-tab [ref :- Any] :- Any
+  (let [t (resolve-tab ref)]
+    (when t (project t))))
+
+(defn with-tab [ref :- Any op :- Any reason :- Any scheduler :- Any log :- Any] :- Any
+  (let [t (resolve-tab ref)]
+    (if (not t)
+      (log "ref:not-found" {:ref (if (= (js/typeof ref) "number") ref "(Tab elem)")})
+      (do
+        (op t)
+        (.markDirty scheduler "tabs" reason)))))
+
+(js/export (defn make-window-tabs [scheduler :- Any] :- Any
+  (let [log (create-logger "platform/tabs")]
+    {:list #(list-tabs)
+     :selected #(selected-tab)
+     :get #(get-tab %)
+     :pin #(with-tab % adapter-pin-tab "Gjoa.tabs.pin" scheduler log)
+     :unpin #(with-tab % adapter-unpin-tab "Gjoa.tabs.unpin" scheduler log)
+     :togglePinned #(with-tab % adapter-toggle-pinned "Gjoa.tabs.togglePinned" scheduler log)
+     :close #(with-tab % adapter-remove-tab "Gjoa.tabs.close" scheduler log)
+     :duplicate (fn [r]
+       (let [t (resolve-tab r)]
+         (when t
+           (let [dup (adapter-duplicate-tab t)]
+             (.markDirty scheduler "tabs" "Gjoa.tabs.duplicate")
+             (project dup)))))
+     :reload #(with-tab % adapter-reload-tab "Gjoa.tabs.reload" scheduler log)
+     :select #(with-tab % adapter-select-tab "Gjoa.tabs.select" scheduler log)
+     :activate (fn [r]
+       (let [t (resolve-tab r)]
+         (if (not t)
+           (do (log "activate:not-found") false)
+           (do
+             (adapter-select-tab t)
+             (try (.focus window) (catch Any e nil))
+             (.markDirty scheduler "tabs" "Gjoa.tabs.activate")
+             true))))
+     :open (fn [url]
+       (let [t (adapter-open-tab url)]
+         (.markDirty scheduler "tabs" "Gjoa.tabs.open")
+         (project t)))})))

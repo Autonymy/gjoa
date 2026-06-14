@@ -1,0 +1,25 @@
+#lang beagle/js
+(ns gjoa.firefox.observers)
+(define-mode strict)
+
+(declare-extern [Services console] Any)
+
+(js/export (defn on [topic :- String handler :- Any] :- Any
+  (let [observer {:observe (fn [subject _topic data]
+                    (try
+                      (handler subject data)
+                      (catch Any e
+                        (.error console (str "gjoa obs handler " topic ":") e))))}]
+    (try
+      (.addObserver (.-obs Services) observer topic)
+      (catch Any _e nil))
+    (fn []
+      (try
+        (.removeObserver (.-obs Services) observer topic)
+        (catch Any _e nil))))))
+
+(js/export (defn notify [topic :- String subject :- Any data :- Any] :- Any
+  (try
+    (.notifyObservers (.-obs Services) subject topic data)
+    (catch Any e
+      (.error console (str "gjoa obs notify " topic ":") e)))))

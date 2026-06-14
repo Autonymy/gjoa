@@ -1,0 +1,88 @@
+#lang beagle/js
+(ns gjoa.drawer.drag-overlay
+  (:require [gjoa.macros :refer [qa by-id xul-new pref-bool]]))
+(define-mode strict)
+
+(declare-extern [Math create-logger ResizeObserver MutationObserver] Any)
+
+(def PREF :- String "gjoa.view.draggable-sidebar")
+
+(def st :- Any
+  {:overlay nil
+   :resize-obs nil
+   :mutation-obs nil
+   :sidebar-main nil
+   :arrowscrollbox nil
+   :observer nil
+   :log nil})
+
+(defn update [] :- Any
+  (let [ov (.-overlay st)
+        asb (.-arrowscrollbox st)]
+    (when (and ov asb)
+      (let [container-rect (.getBoundingClientRect (.-sidebar-main st))
+            asb-rect (.getBoundingClientRect asb)
+            tabs (qa asb "tab.tabbrowser-tab")
+            last-tab (if (> (.-length tabs) 0)
+                       (aget tabs (- (.-length tabs) 1))
+                       nil)
+            top (if last-tab
+                  (.-bottom (.getBoundingClientRect last-tab))
+                  (.-top asb-rect))
+            bottom (.-bottom asb-rect)
+            height (.max Math 0 (- bottom top))]
+        (set! (.-left (.-style ov)) (str (- (.-left asb-rect) (.-left container-rect)) "px"))
+        (set! (.-top (.-style ov)) (str (- top (.-top container-rect)) "px"))
+        (set! (.-width (.-style ov)) (str (.-width asb-rect) "px"))
+        (set! (.-height (.-style ov)) (str height "px"))
+        (set! (.-display (.-style ov)) (if (> height 0) "" "none"))))))
+
+(defn enable [] :- Any
+  (when (not (.-overlay st))
+    (let [el (xul-new "box")
+          asb (.-arrowscrollbox st)
+          log (.-log st)]
+      (set! (.-id el) "gjoa-drag-overlay")
+      (.appendChild (.-sidebar-main st) el)
+      (set! (.-overlay st) el)
+      (when asb
+        (let [ro (ResizeObserver. update)]
+          (.observe ro asb)
+          (set! (.-resize-obs st) ro))
+        (let [mo (MutationObserver. update)]
+          (.observe mo asb {:childList true})
+          (set! (.-mutation-obs st) mo)))
+      (update)
+      (log "enable"))))
+
+(defn disable [] :- Any
+  (when (.-overlay st)
+    (let [log (.-log st)]
+      (when (.-resize-obs st) (.disconnect (.-resize-obs st)))
+      (when (.-mutation-obs st) (.disconnect (.-mutation-obs st)))
+      (set! (.-resize-obs st) nil)
+      (set! (.-mutation-obs st) nil)
+      (.remove (.-overlay st))
+      (set! (.-overlay st) nil)
+      (log "disable"))))
+
+(defn destroy [] :- Any
+  (try (.removeObserver (.-prefs Services) PREF (.-observer st))
+    (catch Any e nil))
+  (disable))
+
+(js/export (defn make-drag-overlay [deps] :- Any
+  (set! (.-log st) (create-logger "drawer/drag-overlay"))
+  (set! (.-sidebar-main st) (.-sidebarMain deps))
+  (set! (.-arrowscrollbox st) (by-id "tabbrowser-arrowscrollbox"))
+
+  (when (pref-bool PREF true) (enable))
+
+  (let [obs {:observe (fn []
+              (if (pref-bool PREF true)
+                (enable)
+                (disable)))}]
+    (set! (.-observer st) obs)
+    (.addObserver (.-prefs Services) PREF obs))
+
+  {:destroy destroy}))

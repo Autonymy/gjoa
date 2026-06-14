@@ -1,25 +1,15 @@
-// Entries that get bundled into dist/chrome/JS/<name>.uc.js for
-// GjoaLoader (src/gjoa/browser/components/gjoa/GjoaLoader.sys.mjs).
-// Each entry must produce a valid .uc.js with a UserScript header
-// banner.
-//
-// Mechanically lifted from archive/build.config.ts (palefox v0.43.0).
-
 export type Entry = {
-  /** TypeScript source path, relative to repo root. */
-  src: string;
-  /** Output basename (no path); written into dist/chrome/JS/. */
   out: string;
-  /** UserScript-format header injected at the top of the bundled output. */
+  files: string[];
   banner: string;
 };
 
-const SRC = "src/gjoa/chrome/src";
+const B = ".beagle-out";
 
 export const entries: Entry[] = [
   {
-    src: `${SRC}/hello/index.ts`,
     out: "gjoa-hello.uc.js",
+    files: [`${B}/hello/index.js`],
     banner: [
       "// ==UserScript==",
       "// @name           Gjoa Hello",
@@ -30,8 +20,8 @@ export const entries: Entry[] = [
     ].join("\n"),
   },
   {
-    src: `${SRC}/security/index.ts`,
     out: "gjoa-security.uc.js",
+    files: [`${B}/security/index.js`],
     banner: [
       "// ==UserScript==",
       "// @name           Gjoa Security Gate",
@@ -41,8 +31,18 @@ export const entries: Entry[] = [
     ].join("\n"),
   },
   {
-    src: `${SRC}/drawer/index.ts`,
     out: "gjoa-drawer.uc.js",
+    files: [
+      `${B}/tabs/log.js`,
+      `${B}/drawer/timing.js`,
+      `${B}/drawer/banner.js`,
+      `${B}/drawer/compact.js`,
+      `${B}/drawer/drag-overlay.js`,
+      `${B}/drawer/layout.js`,
+      `${B}/drawer/sidebar-button.js`,
+      `${B}/drawer/urlbar.js`,
+      `${B}/drawer/index.js`,
+    ],
     banner: [
       "// ==UserScript==",
       "// @name           Gjoa Drawer",
@@ -52,23 +52,45 @@ export const entries: Entry[] = [
     ].join("\n"),
   },
   {
-    src: `${SRC}/tabs/index.ts`,
     out: "gjoa-tabs.uc.js",
+    files: [
+      `${B}/tabs/log.js`,
+      `${B}/tabs/types.js`,
+      `${B}/tabs/constants.js`,
+      `${B}/tabs/state.js`,
+      `${B}/firefox/dom.js`,
+      `${B}/firefox/files.js`,
+      `${B}/firefox/observers.js`,
+      `${B}/firefox/prefs.js`,
+      `${B}/firefox/tabs.js`,
+      `${B}/firefox/window.js`,
+      `${B}/tabs/helpers.js`,
+      `${B}/tabs/snapshot.js`,
+      `${B}/tabs/history.js`,
+      `${B}/spaces/types.js`,
+      `${B}/spaces/visibility.js`,
+      `${B}/spaces/manager.js`,
+      `${B}/platform/scheduler.js`,
+      `${B}/platform/window-tabs.js`,
+      `${B}/platform/window.js`,
+      `${B}/platform/history.js`,
+      `${B}/platform/tabs-reconciler.js`,
+      `${B}/platform/cross-window-tabs.js`,
+      `${B}/platform/index.js`,
+      `${B}/tabs/layout.js`,
+      `${B}/tabs/rows.js`,
+      `${B}/tabs/drag.js`,
+      `${B}/tabs/menu.js`,
+      `${B}/tabs/events.js`,
+      `${B}/tabs/picker.js`,
+      `${B}/tabs/content-focus.js`,
+      `${B}/tabs/vim.js`,
+      `${B}/tabs/index.js`,
+    ],
     banner: [
       "// ==UserScript==",
       "// @name           Gjoa Tabs",
       "// @description    Tree-style tab panel with vim keybindings",
-      "// @include        main",
-      "// ==/UserScript==",
-    ].join("\n"),
-  },
-  {
-    src: `${SRC}/dark-mode/index.ts`,
-    out: "gjoa-dark-mode.uc.js",
-    banner: [
-      "// ==UserScript==",
-      "// @name           Gjoa Dark Mode",
-      "// @description    Chrome-level dark mode: content agent stylesheet (color-scheme) + optional CSS inversion filter",
       "// @include        main",
       "// ==/UserScript==",
     ].join("\n"),

@@ -19,7 +19,6 @@ browser.jar:
   content/gjoa/scripts/gjoa-security.uc.js (content/scripts/gjoa-security.uc.js)
   content/gjoa/scripts/gjoa-drawer.uc.js (content/scripts/gjoa-drawer.uc.js)
   content/gjoa/scripts/gjoa-tabs.uc.js (content/scripts/gjoa-tabs.uc.js)
-  content/gjoa/scripts/gjoa-dark-mode.uc.js (content/scripts/gjoa-dark-mode.uc.js)
   content/gjoa/styles/gjoa.uc.css (content/styles/gjoa.uc.css)
   content/gjoa/styles/gjoa-tabs.uc.css (content/styles/gjoa-tabs.uc.css)
   content/gjoa/styles/gjoa-which-key.uc.css (content/styles/gjoa-which-key.uc.css)

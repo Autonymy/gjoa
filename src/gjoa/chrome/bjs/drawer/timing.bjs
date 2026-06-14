@@ -1,0 +1,24 @@
+#lang beagle/js
+(ns gjoa.drawer.timing)
+(define-mode strict)
+
+(def FALLBACK-TRANSITION-MS :- Int 250)
+
+(js/export (def COLLAPSE-PROTECTION-MARGIN-MS :- Int 30))
+
+(js/export (defn transition-duration-ms [] :- Int
+  (let [raw (.trim
+              (.getPropertyValue
+                (js/getComputedStyle (.-documentElement js/document))
+                "--gjoa-transition-duration"))]
+    (cond
+      (.endsWith raw "ms")
+        (let [v (js/parseFloat raw)]
+          (if (and (js/Number.isFinite v) (> v 0)) v FALLBACK-TRANSITION-MS))
+      (.endsWith raw "s")
+        (let [v (* (js/parseFloat raw) 1000)]
+          (if (and (js/Number.isFinite v) (> v 0)) v FALLBACK-TRANSITION-MS))
+      :else FALLBACK-TRANSITION-MS))))
+
+(js/export (defn collapse-protection-duration-ms [] :- Int
+  (+ (transition-duration-ms) COLLAPSE-PROTECTION-MARGIN-MS)))

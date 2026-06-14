@@ -1,0 +1,1540 @@
+#lang beagle/js
+(ns gjoa.tabs.vim
+  (:require [gjoa.macros :refer [q by-id key= xul-new xul-id html-new attr! pref-bool pref-int pref-str set-pref-bool! set-pref-str! dispatch-key on! on1! onc! xul htm bool rmattr! tabs! toggle! css!]]))
+(define-mode strict)
+
+;; Browser globals
+(declare-extern [document window gBrowser Services console setTimeout clearTimeout Event CustomEvent URL Map Set Math Array Date MutationObserver RegExp CHORD-TIMEOUT all-rows data-of has-children is-horizontal level-of level-of-row subtree-rows tab-by-id tree-data create-logger hz-display row-of saved-tab-queue selection state tree-of make-picker] Any)
+
+;; Sibling module externs (no import)
+(defn insert-after-each [anchor :- Any rows-arr :- Any] :- Any
+  (let [cur {:ref anchor}]
+    (.forEach rows-arr (fn [r]
+      (.after (.-ref cur) r)
+      (set! (.-ref cur) r)))))
+
+(defn hide-children [el :- Any] :- Any
+  (.forEach (.from Array (.-children el)) #(set! (.-hidden %) true)))
+
+(defn show-children [el :- Any] :- Any
+  (.forEach (.from Array (.-children el)) #(set! (.-hidden %) false)))
+
+(def PRIVILEGED-BAIL-URI-PREFIXES :- Any
+  ["about:preferences" "about:addons" "about:debugging"
+   "about:profiles" "about:logins" "about:protections"
+   "about:performance" "about:processes" "about:config"
+   "about:profiling" "about:certificate" "view-source:"])
+(def LEADER-BINDINGS :- Any
+  [{:key "t" :desc "tabs (this window)"}
+   {:key "T" :desc "tabs (all windows)"}
+   {:key "o" :desc "urlbar"}
+   {:key "O" :desc "urlbar (new tab)"}
+   {:key "x" :desc "close tab"}
+   {:key "`" :desc "last tab"}
+   {:key "h" :desc "history back"}
+   {:key "l" :desc "history forward"}
+   {:key "j" :desc "scroll down"}
+   {:key "k" :desc "scroll up"}
+   {:key "e" :desc "toggle compact mode"}
+   {:key "?" :desc "show this help"}])
+(def EX-COMMANDS :- Any
+  [{:name "group"      :description "Create a named folder at cursor"                    :takesArgs true}
+   {:name "refile"     :description "Move cursor tab into a different group"             :takesArgs false}
+   {:name "pin"        :description "Pin the cursor's tab"                               :takesArgs false}
+   {:name "unpin"      :description "Unpin the cursor's tab"                             :takesArgs false}
+   {:name "tabs"       :description "Fuzzy-find open tabs (`:tabs all` = every window)"  :takesArgs true}
+   {:name "checkpoint" :description "Snapshot tab tree with a name (like a git tag)"     :takesArgs true}
+   {:name "restore"    :description "Restore a saved session or checkpoint"              :takesArgs true}
+   {:name "history"    :description "Browse auto-save timeline (`:history space` = current workspace)" :takesArgs true}
+   {:name "blacklist"  :description "Disable gjoa keys on a site (`list` / `remove`)"   :takesArgs true}
+   {:name "space"      :description "Workspaces: new / rename / delete / switch"            :takesArgs true}
+   {:name "tabpos"     :description "Where new tabs open: sibling | root | child"       :takesArgs true}
+   {:name "help"       :description "Show the keymap cheatsheet"                         :takesArgs false}])
+(js/export (defn make-vim [deps :- Any] :- Any
+  (let [{:keys [rows layout scheduleSave clearSelection selectRange sidebarMain history contentFocus spaces]} deps
+
+        log (create-logger "tabs/vim")
+
+        ;; Spotlight picker
+        picker (make-picker
+                 {:restoreFocus #(when (.-panel state) (.focus (.-panel state)))
+                  :modelineMsg  #(modeline-msg %1 %2)})
+
+        ;; Consolidated mutable state
+        vs :- Any
+          {:chord nil
+           :chord-timer 0
+           :pending-ctrl-w false
+           :pending-cursor-move false
+           :hz-expanded-root nil
+           :modeline nil
+           :modeline-timer 0
+           :panel-active false
+           :refile-source nil
+           :selection-anchor nil
+           :search-input nil
+           :search-active false
+           :search-matches []
+           :search-idx -1
+           :last-tab nil
+           :current-selected-tab nil
+           :leader-armed false
+           :leader-timer nil
+           :which-key-el nil
+           :leader-prev-focus nil
+           :leader-focus-stash nil}
+
+        commit-tree (fn [targets]
+          (.forEach targets #(.syncAnyRow rows %))
+          (.updateVisibility rows)
+          (scheduleSave))
+
+        tab-spec (fn [tab]
+          (or (some-> tab .-linkedBrowser .-currentURI .-spec) ""))
+
+        current-spec (fn []
+          (or (some-> gBrowser .-selectedBrowser .-currentURI .-spec) ""))
+
+
+        tree-root (fn [row]
+          (let [all-r (all-rows)
+                idx (.indexOf all-r row)]
+            (or (loop [i idx]
+                  (cond
+                    (< i 0) nil
+                    (= (level-of-row (aget all-r i)) 0) (aget all-r i)
+                    :else (recur (- i 1))))
+                row)))
+
+        set-cursor (fn [row]
+          (when (.-cursor state) (rmattr! (.-cursor state) "gjoa-cursor"))
+          (set! (.-cursor state) row)
+          (when row
+            (attr! row "gjoa-cursor" "true")
+            (.scrollIntoView row {:block "nearest" :inline "nearest"})
+            (when (is-horizontal) (update-horizontal-expansion))))
+
+        collapse-hz-tree (fn [root]
+          (let [d (data-of root)]
+            (when (and d (has-children root))
+              (when (and (some-> state .-cursor .-_tab)
+                         (not= (.-cursor state) root))
+                (let [cur-root (tree-root (.-cursor state))]
+                  (when (= cur-root root)
+                    (.set hz-display root (.-_tab (.-cursor state))))))
+              (set! (.-collapsed d) true)
+              (.syncAnyRow rows root)
+              (when (is-horizontal) (.setUrlbarTopLayer layout true)))))
+
+        expand-hz-tree (fn [root]
+          (let [d (data-of root)]
+            (when (and d (has-children root))
+              (.delete hz-display root)
+              (set! (.-collapsed d) false)
+              (.syncAnyRow rows root)
+              (when (is-horizontal) (.setUrlbarTopLayer layout false)))))
+
+        update-horizontal-expansion (fn []
+          (when (.-cursor state)
+            (let [root (tree-root (.-cursor state))]
+              (when (not= root (.-hz-expanded-root vs))
+                (when (.-hz-expanded-root vs)
+                  (collapse-hz-tree (.-hz-expanded-root vs)))
+                (expand-hz-tree root)
+                (set! (.-hz-expanded-root vs) root)
+                (.updateVisibility rows)))))
+
+        move-to-level0 (fn [delta] :- Bool
+          (if (not (.-cursor state))
+            false
+            (let [all-r (all-rows)
+                  cur-idx (.indexOf all-r (.-cursor state))]
+              (if (< cur-idx 0)
+                false
+                (let [step (if (> delta 0) 1 -1)
+                      candidate (loop [i (+ cur-idx step)]
+                                  (cond
+                                    (or (< i 0) (>= i (.-length all-r))) nil
+                                    (= (level-of-row (aget all-r i)) 0) (aget all-r i)
+                                    :else (recur (+ i step))))]
+                  (if candidate
+                    (do (set-cursor candidate)
+                        (when (.-_tab candidate)
+                          (set! (.-selectedTab gBrowser) (.-_tab candidate)))
+                        true)
+                    false))))))
+
+        activate-vim (fn [row]
+          (focus-panel)
+          (set-cursor row))
+
+        move-cursor (fn [delta] :- Bool
+          (if (not (.-cursor state))
+            (do (log "moveCursor:noCursor" {:delta delta}) false)
+            (let [all-arr (all-rows)
+                  idx (.indexOf all-arr (.-cursor state))]
+              (if (< idx 0)
+                (do (log "moveCursor:cursorNotInAllRows"
+                         {:delta delta :allLen (.-length all-arr)}) false)
+                (let [step (if (> delta 0) 1 -1)
+                      target (loop [i (+ idx step)]
+                               (cond
+                                 (or (< i 0) (>= i (.-length all-arr))) nil
+                                 (not (.-hidden (aget all-arr i))) (aget all-arr i)
+                                 :else (recur (+ i step))))]
+                  (if target
+                    (do (log "moveCursor:landed" {:delta delta :fromIdx idx})
+                        (set-cursor target)
+                        (when (.-_tab target)
+                          (set! (.-selectedTab gBrowser) (.-_tab target)))
+                        true)
+                    (do (log "moveCursor:noTarget"
+                             {:delta delta :fromIdx idx :allLen (.-length all-arr)})
+                        false)))))))
+
+
+        prev-sibling-tab (fn [row]
+          (when (and row (.-_tab row))
+            (let [my-td (tree-data (.-_tab row))
+                  my-level (level-of (.-_tab row))
+                  my-parent-id (.-parentId my-td)]
+              (loop [r (.-previousElementSibling row)]
+                (cond
+                  (not r) nil
+                  (not (.-_tab r)) (recur (.-previousElementSibling r))
+                  (< (level-of (.-_tab r)) my-level) nil
+                  (and (= (level-of (.-_tab r)) my-level)
+                       (= (.-parentId (tree-data (.-_tab r))) my-parent-id))
+                    (.-_tab r)
+                  :else (recur (.-previousElementSibling r)))))))
+
+        indent-row (fn [row]
+          (if (.-_group row)
+            (let [all-r (all-rows)
+                  i (.indexOf all-r row)]
+              (when (> i 0)
+                (let [d (.-_group row)
+                      prev-lv (level-of-row (aget all-r (- i 1)))]
+                  (when (not (> (.-level d) prev-lv))
+                    (set! (.-level d) (+ (.-level d) 1))
+                    (.syncAnyRow rows row)))))
+            (when (.-_tab row)
+              (let [prev (.-previousElementSibling row)]
+                (if (and prev (.-_group prev))
+                  (do (set! (.-parentId (tree-data (.-_tab row)))
+                            (.-id (.-_group prev)))
+                      (.forEach (subtree-rows row) #(.syncAnyRow rows %)))
+                  (let [sibling (prev-sibling-tab row)]
+                    (when sibling
+                      (set! (.-parentId (tree-data (.-_tab row)))
+                            (.-id (tree-data sibling)))
+                      (.forEach (subtree-rows row) #(.syncAnyRow rows %))))))))
+          (.updateVisibility rows)
+          (scheduleSave))
+
+        outdent-row (fn [row]
+          (if (.-_group row)
+            (let [d (.-_group row)]
+              (when (> (or (.-level d) 0) 0)
+                (set! (.-level d) (.max Math 0 (- (.-level d) 1)))
+                (.syncAnyRow rows row)))
+            (when (.-_tab row)
+              (let [td (tree-data (.-_tab row))]
+                (when (not= (.-parentId td) nil)
+                  (if (= (js/typeof (.-parentId td)) "string")
+                    (set! (.-parentId td) nil)
+                    (let [parent (tab-by-id (.-parentId td))]
+                      (set! (.-parentId td)
+                            (and parent (.-parentId (tree-data parent))))))
+                  (.forEach (subtree-rows row) #(.syncAnyRow rows %))))))
+          (.updateVisibility rows)
+          (scheduleSave))
+
+        move-to-root (fn [row]
+          (when (and row (.-_tab row))
+            (let [td (tree-data (.-_tab row))]
+              (when (.-parentId td)
+                (set! (.-parentId td) nil)
+                (commit-tree (subtree-rows row))))))
+
+        make-child-of-above (fn [row]
+          (when (and row (.-_tab row))
+            (let [prev (.-previousElementSibling row)]
+              (when prev
+                (if (.-_group prev)
+                  (set! (.-parentId (tree-data (.-_tab row)))
+                        (.-id (.-_group prev)))
+                  (when (.-_tab prev)
+                    (set! (.-parentId (tree-data (.-_tab row)))
+                          (.-id (tree-data (.-_tab prev))))))
+                (commit-tree (subtree-rows row))))))
+
+        swap-down (fn [row]
+          (when (data-of row)
+            (let [my-level (level-of-row row)
+                  sub (subtree-rows row)
+                  last-row (aget sub (- (.-length sub) 1))
+                  next-row (.-nextElementSibling last-row)]
+              (when (and next-row (not= next-row (.-spacer state))
+                         (= (level-of-row next-row) my-level))
+                (let [next-sub (subtree-rows next-row)
+                      anchor (aget next-sub (- (.-length next-sub) 1))]
+                  (insert-after-each anchor sub))
+                (.updateVisibility rows)
+                (scheduleSave)))))
+
+        swap-up (fn [row]
+          (when (data-of row)
+            (let [my-level (level-of-row row)
+                  prev (loop [el (.-previousElementSibling row)]
+                         (cond
+                           (not el) nil
+                           (> (level-of-row el) my-level) (recur (.-previousElementSibling el))
+                           :else el))]
+              (when (and prev (= (level-of-row prev) my-level))
+                (.forEach (subtree-rows row) #(.before prev %))
+                (.updateVisibility rows)
+                (scheduleSave)))))
+
+
+        create-modeline (fn []
+          (let [ml (xul-id "hbox" "gjoa-modeline")
+                mode-label (xul-id "label" "gjoa-modeline-mode")
+                chord-label (xul-id "label" "gjoa-modeline-chord")
+                msg-label (xul-id "label" "gjoa-modeline-msg")]
+            (attr! ml "align" "center")
+            (attr! mode-label "value" "-- INSERT --")
+            (attr! chord-label "value" "")
+            (attr! chord-label "flex" "1")
+            (attr! msg-label "value" "")
+            (attr! msg-label "crop" "end")
+            (.appendChild ml mode-label)
+            (.appendChild ml chord-label)
+            (.appendChild ml msg-label)
+            (let [anchor (or (by-id "appcontent") (.-documentElement document))]
+              (.appendChild anchor ml)
+              (set! (.-modeline vs) ml))))
+
+        update-modeline (fn []
+          (when (.-modeline vs)
+            (let [mode-label (by-id "gjoa-modeline-mode")
+                  chord-label (by-id "gjoa-modeline-chord")
+                  msg-label (by-id "gjoa-modeline-msg")
+                  pending (if (.-pending-ctrl-w vs) "C-w-"
+                            (if (= (.-chord vs) "g") "g-" ""))]
+              (when mode-label (attr! mode-label "value" ""))
+              (when chord-label (attr! chord-label "value" pending))
+              (let [has-content (or pending
+                                    (some-> msg-label (.getAttribute "value"))
+                                    (.-search-active vs)
+                                    (q (.-modeline vs) ".gjoa-search-input"))]
+                (toggle! (.-modeline vs) "gjoa-visible"
+                                  has-content)))))
+
+        modeline-msg (fn [text duration]
+          (let [dur (if (= duration js/undefined) 3000 duration)]
+            (when (.-modeline vs)
+              (let [msg (by-id "gjoa-modeline-msg")]
+                (when msg
+                  (attr! msg "value" text)
+                  (attr! (.-modeline vs) "gjoa-visible" "true")
+                  (clearTimeout (.-modeline-timer vs))
+                  (set! (.-modeline-timer vs)
+                        (setTimeout (fn []
+                                      (attr! msg "value" "")
+                                      (update-modeline))
+                                    dur)))))))
+
+
+        focus-panel (fn []
+          (set! (.-panel-active vs) true)
+          (.focus (.-panel state))
+          (when (not (.-cursor state))
+            (let [row (.get row-of (.-selectedTab gBrowser))]
+              (when row (set-cursor row))))
+          (update-modeline))
+
+        blur-panel (fn []
+          (set! (.-panel-active vs) false)
+          (set! (.-chord vs) nil)
+          (set! (.-pending-ctrl-w vs) false)
+          (clearTimeout (.-chord-timer vs))
+          (when (and (is-horizontal) (.-hz-expanded-root vs))
+            (collapse-hz-tree (.-hz-expanded-root vs))
+            (set! (.-hz-expanded-root vs) nil)
+            (.updateVisibility rows))
+          (update-modeline))
+
+
+        activate-urlbar (fn [intent]
+          (try
+            (let [u (.-gURLBar window)]
+              (when u
+                (when (.-focus u) (.focus u))
+                (when (.-select u) (.select u))
+                (when (some-> u .-view .-autoOpen)
+                  (.autoOpen (.-view u) {:event (Event. "command")}))))
+            (catch Any _e nil))
+          (.dispatchEvent document
+            (CustomEvent. "gjoa-urlbar-activate" {:detail {:intent intent}})))
+
+        toggle-last-tab (fn []
+          (let [target (.-last-tab vs)]
+            (when target
+              (try
+                (when (.-isOpen target)
+                  (set! (.-selectedTab gBrowser) target))
+                (catch Any e
+                  (.error console "gjoa-tabs: toggleLastTab failed" e))))))
+
+        key-enabled (fn [name] :- Bool
+          (pref-bool (str "gjoa.keys." name ".enabled") true))
+
+        blacklisted-hosts (fn []
+          (let [raw (pref-str "gjoa.keys.blacklist" "")]
+            (.filter (.map (.split raw ",") #(.toLowerCase (.trim %)))
+                     #(bool %))))
+
+        current-host (fn [] :- String
+          (try
+            (let [uri (current-spec)]
+              (if (not uri) "" (.toLowerCase (.-hostname (URL. uri)))))
+            (catch Any _e "")))
+
+        is-privileged-uri (fn [] :- Bool
+          (try
+            (.some PRIVILEGED-BAIL-URI-PREFIXES #(.startsWith (current-spec) %))
+            (catch Any _e false)))
+
+        current-host-blacklisted (fn [] :- Bool
+          (let [host (current-host)]
+            (and (bool host)
+                 (.some (blacklisted-hosts)
+                   #(or (= host %) (.endsWith host (str "." %)))))))
+
+        blacklist-add (fn [host]
+          (let [list (blacklisted-hosts)
+                h (.toLowerCase (.trim host))]
+            (when (and h (not (.includes list h)))
+              (.push list h)
+              (set-pref-str! "gjoa.keys.blacklist" (.join list ",")))))
+
+        blacklist-remove (fn [host] :- Bool
+          (let [list (blacklisted-hosts)
+                h (.toLowerCase (.trim host))
+                next (.filter list #(not= % h))]
+            (if (= (.-length next) (.-length list))
+              false
+              (do (set-pref-str! "gjoa.keys.blacklist" (.join next ","))
+                  true))))
+
+
+        leader-key (fn []
+          (when (pref-bool "gjoa.keys.useLeader" false)
+            (let [v (pref-str "gjoa.keys.leader" " ")]
+              (if (= (.-length v) 0) nil v))))
+
+        leader-timeout-ms (fn [] :- Int
+          (pref-int "gjoa.keys.leader_timeout" 1500))
+
+        binding-pref-name (fn [key] :- String
+          (cond
+            (= key ":") "colon"
+            (= key "`") "backtick"
+            :else key))
+
+        which-key-ensure (fn []
+          (if (some-> vs .-which-key-el .-isConnected)
+            (.-which-key-el vs)
+            (let [el (html-new "div")
+                  header (htm "div" "gjoa-wk-header")]
+              (set! (.-id el) "gjoa-which-key")
+              (set! (.-hidden el) true)
+              (set! (.-textContent header) "leader")
+              (.appendChild el header)
+              (.forEach LEADER-BINDINGS (fn [b]
+                (when (key-enabled (binding-pref-name (.-key b)))
+                  (let [row (htm "div" "gjoa-wk-row")
+                        k (htm "span" "gjoa-wk-key")
+                        d (htm "span" "gjoa-wk-desc")]
+                    (set! (.-textContent k) (if (= (.-key b) " ") "Space" (.-key b)))
+                    (set! (.-textContent d) (.-desc b))
+                    (.appendChild row k)
+                    (.appendChild row d)
+                    (.appendChild el row)))))
+              (.appendChild (.-documentElement document) el)
+              (set! (.-which-key-el vs) el)
+              el)))
+
+        ensure-leader-focus-stash (fn []
+          (if (some-> vs .-leader-focus-stash .-isConnected)
+            (.-leader-focus-stash vs)
+            (let [el (html-new "div")]
+              (set! (.-id el) "gjoa-leader-focus-stash")
+              (attr! el "aria-hidden" "true")
+              (attr! el "tabindex" "-1")
+              (css! el "position:fixed;top:-9999px;left:-9999px;width:1px;height:1px;opacity:0;pointer-events:none")
+              (.appendChild (.-documentElement document) el)
+              (set! (.-leader-focus-stash vs) el)
+              el)))
+
+        arm-leader (fn []
+          (set! (.-leader-armed vs) true)
+          (when (not= (.-leader-timer vs) nil) (clearTimeout (.-leader-timer vs)))
+          (set! (.-leader-timer vs)
+                (setTimeout #(disarm-leader) (leader-timeout-ms)))
+          (let [a (.-activeElement document)]
+            (when (and a (not= a (.-leader-focus-stash vs)))
+              (set! (.-leader-prev-focus vs) a)))
+          (try (.focus (ensure-leader-focus-stash)) (catch Any _e nil)))
+
+        disarm-leader (fn []
+          (set! (.-leader-armed vs) false)
+          (when (not= (.-leader-timer vs) nil)
+            (clearTimeout (.-leader-timer vs))
+            (set! (.-leader-timer vs) nil))
+          (try
+            (when (and (.-leader-prev-focus vs)
+                       (= (.-activeElement document) (.-leader-focus-stash vs)))
+              (when (.-focus (.-leader-prev-focus vs))
+                (.focus (.-leader-prev-focus vs))))
+            (catch Any _e nil))
+          (set! (.-leader-prev-focus vs) nil))
+
+        toggle-which-key (fn []
+          (let [el (which-key-ensure)]
+            (set! (.-hidden el) (not (.-hidden el)))))
+
+        hide-which-key (fn []
+          (when (.-which-key-el vs)
+            (set! (.-hidden (.-which-key-el vs)) true)))
+
+
+        try-dispatch-binding (fn [e] :- Bool
+          (if (or (.-ctrlKey e) (.-altKey e) (.-metaKey e))
+            false
+            (cond
+              (key= e "t") (dispatch-key e "t" (open-tabs-picker "space"))
+              (key= e "T") (dispatch-key e "T" (open-tabs-picker "current"))
+              (key= e ":") (dispatch-key e "colon" (open-ex-command-picker))
+              (key= e "x") (dispatch-key e "x"
+                (try (.removeTab gBrowser (.-selectedTab gBrowser)) (catch Any _e nil)))
+              (key= e "o") (dispatch-key e "o" (activate-urlbar "current"))
+              (key= e "O") (dispatch-key e "O" (activate-urlbar "newTab"))
+              (key= e "`") (dispatch-key e "backtick" (toggle-last-tab))
+              (key= e "h") (dispatch-key e "h"
+                (try (.goBack (.-selectedBrowser gBrowser)) (catch Any _e nil)))
+              (key= e "l") (dispatch-key e "l"
+                (try (.goForward (.-selectedBrowser gBrowser)) (catch Any _e nil)))
+              (key= e "j") (dispatch-key e "j"
+                (when (not (.-repeat e))
+                  (try (some-> gBrowser .-selectedBrowser .-messageManager
+                         (.sendAsyncMessage "Gjoa:ScrollStart" {:dy 1}))
+                       (catch Any _e nil))))
+              (key= e "k") (dispatch-key e "k"
+                (when (not (.-repeat e))
+                  (try (some-> gBrowser .-selectedBrowser .-messageManager
+                         (.sendAsyncMessage "Gjoa:ScrollStart" {:dy -1}))
+                       (catch Any _e nil))))
+              (key= e "e") (dispatch-key e "e"
+                (let [cur (pref-bool "gjoa.sidebar.compact" false)]
+                  (set-pref-bool! "gjoa.sidebar.compact" (not cur))))
+              (key= e "?") (dispatch-key e "question" (toggle-which-key))
+              :else false)))
+
+
+        focus-content (fn []
+          (.focus (.-selectedBrowser gBrowser)))
+
+        pane-switch (fn [key]
+          (let [k (.toLowerCase key)]
+            (cond
+              (= k "h") (focus-panel)
+              (= k "l") (focus-content)
+              (= k "w") (if (= (.-activeElement document) (.-panel state))
+                           (focus-content) (focus-panel))
+              :else nil)))
+
+
+        go-to-end (fn [idx]
+          (let [visible (.filter (all-rows) #(not (.-hidden %)))]
+            (when (> (.-length visible) 0)
+              (let [r (aget visible (if (< idx 0) (+ (.-length visible) idx) idx))]
+                (set-cursor r)
+                (when (.-_tab r)
+                  (set! (.-selectedTab gBrowser) (.-_tab r)))))))
+
+        go-to-top (fn [] (go-to-end 0))
+        go-to-bottom (fn [] (go-to-end -1))
+
+
+        close-focused (fn []
+          (if (> (.-size selection) 1)
+            ;; Multi-select
+            (let [sel (.from Array selection)]
+              (clearSelection)
+              (let [last-r (aget sel (- (.-length sel) 1))
+                    find-valid (fn [n]
+                                 (when n
+                                   (if (or (.-hidden n) (= n (.-spacer state))
+                                           (.includes sel n))
+                                     (find-valid (.-nextElementSibling n))
+                                     n)))
+                    next (find-valid (.-nextElementSibling last-r))]
+                (when (and next (not= next (.-spacer state)))
+                  (set-cursor next))
+                (loop [i (- (.-length sel) 1)]
+                  (when (>= i 0)
+                    (let [row (aget sel i)]
+                      (if (.-_tab row)
+                        (.removeTab gBrowser (.-_tab row))
+                        (when (.-_group row) (.remove row))))
+                    (recur (- i 1))))
+                (.updateVisibility rows)
+                (scheduleSave)))
+            ;; Single cursor
+            (when (.-cursor state)
+              (if (.-_tab (.-cursor state))
+                (.removeTab gBrowser (.-_tab (.-cursor state)))
+                (when (.-_group (.-cursor state))
+                  (let [d (.-_group (.-cursor state))
+                        my-level (or (.-level d) 0)
+                        group-id (.-id d)]
+                    (.forEach (tabs!)
+                      (fn [tab]
+                        (let [td (tree-data tab)]
+                          (when (= (.-parentId td) group-id)
+                            (set! (.-parentId td) nil)))))
+                    (let [dec-groups (fn [nxt]
+                                      (when (and nxt (not= nxt (.-spacer state)))
+                                        (let [lv (level-of-row nxt)]
+                                          (when (> lv my-level)
+                                            (when (.-_group nxt)
+                                              (set! (.-level (.-_group nxt))
+                                                    (.max Math 0 (- (or (.-level (.-_group nxt)) 0) 1)))
+                                              (.syncGroupRow rows nxt))
+                                            (dec-groups (.-nextElementSibling nxt))))))]
+                      (dec-groups (.-nextElementSibling (.-cursor state))))
+                    (let [dying (.-cursor state)]
+                      (when (not (move-cursor 1)) (move-cursor -1))
+                      (.remove dying)
+                      (.updateVisibility rows)
+                      (scheduleSave))))))))
+
+
+        clone-as-sibling (fn [tab]
+          (let [source-row (.get row-of tab)]
+            (when source-row
+              (let [sibling-parent-id (.-parentId (tree-data tab))]
+                (set! (.-pending-cursor-move vs) true)
+                (let [clone (.duplicateTab gBrowser tab)
+                      obs (MutationObserver.
+                            (fn []
+                              (let [clone-row (.get row-of clone)]
+                                (when clone-row
+                                  (.disconnect obs)
+                                  (set! (.-parentId (tree-data clone)) sibling-parent-id)
+                                  (let [st (subtree-rows source-row)]
+                                    (.after (aget st (- (.-length st) 1)) clone-row))
+                                  (.syncTabRow rows clone)
+                                  (.updateVisibility rows)
+                                  (scheduleSave)))))]
+                  (.observe obs (.-panel state) {:childList true}))))))
+
+
+        build-window-items (fn [filter-fn]
+          (let [items []]
+            (.forEach (tabs!) (fn [tab]
+              (when (filter-fn tab)
+                (let [td (.get tree-of tab)]
+                  (when td
+                    (let [url (tab-spec tab)
+                          host (try (.-hostname (URL. url)) (catch Any _e ""))
+                          icon (try (or (.getIcon gBrowser tab) js/undefined)
+                                    (catch Any _e js/undefined))]
+                      (.push items
+                        {:display (or (.-name td) (.-label tab) "(untitled)")
+                         :secondary (or host url "")
+                         :icon icon
+                         :id (.-id td)
+                         :parentId (if (= (js/typeof (.-parentId td)) "number")
+                                     (.-parentId td) nil)
+                         :depth (level-of tab)
+                         :data tab})))))))
+            items))
+
+        open-tabs-picker (fn [scope]
+          (let [gjoa-api (.-Gjoa window)]
+            (if (and (= scope "all") gjoa-api)
+              (let [all-tabs (.all (.-tabs gjoa-api))]
+                (if (not (.-length all-tabs))
+                  (modeline-msg "No tabs" 3000)
+                  (let [window-labels (Map.)]
+                    (.forEach all-tabs (fn [t]
+                      (when (not (.has window-labels (.-windowId t)))
+                        (.set window-labels (.-windowId t)
+                              (str "Window " (+ (.-size window-labels) 1))))))
+                    (let [items (.map all-tabs (fn [t]
+                                  (let [w-label (or (.get window-labels (.-windowId t)) "Window ?")
+                                        host (try (.-hostname (URL. (.-url t)))
+                                                   (catch Any _e ""))]
+                                    {:display (or (.-customName t) (.-label t) "(untitled)")
+                                     :secondary (if host (str host "  ·  " w-label) w-label)
+                                     :data {:id (.-id t) :windowId (.-windowId t)}})))]
+                      (.show picker
+                        {:prompt "tabs (all windows) >"
+                         :items items
+                         :preserveTree false
+                         :onSelect (fn [item]
+                                     (let [d (.-data item)]
+                                       (try (.activate (.-tabs gjoa-api) (.-id d) (.-windowId d))
+                                            (catch Any _e nil))))})))))
+              ;; Current window / space
+              (let [filter-fn (if (and (= scope "space") spaces)
+                                #(.isVisible spaces %)
+                                #(do % true))
+                    prompt-label (if (= scope "space")
+                                   (str "tabs (" (.-name (.active spaces)) ") >")
+                                   "tabs (window) >")
+                    items (build-window-items filter-fn)]
+                (if (not (.-length items))
+                  (modeline-msg "No tabs" 3000)
+                  (.show picker
+                    {:prompt prompt-label
+                     :items items
+                     :preserveTree true
+                     :onSelect #(try (set! (.-selectedTab gBrowser) (.-data %))
+                                     (catch Any _e nil))
+                     :actions
+                       [{:label "Close" :key "x"
+                         :run #(try (.removeTab gBrowser (.-data %))
+                                    (catch Any _e nil))}
+                        {:label "Duplicate" :key "d"
+                         :run #(try (.duplicateTab gBrowser (.-data %))
+                                    (catch Any _e nil))}
+                        {:label "Pin / Unpin" :key "p"
+                         :run #(try
+                                 (if (.-pinned (.-data %))
+                                   (.unpinTab gBrowser (.-data %))
+                                   (.pinTab gBrowser (.-data %)))
+                                 (catch Any _e nil))}
+                        {:label "Reload" :key "r"
+                         :run #(try (.reloadTab gBrowser (.-data %))
+                                    (catch Any _e nil))}]}))))))
+
+
+        label-of (fn [tag]
+          (when tag
+            (let [i (.indexOf tag ":")]
+              (if (>= i 0) (.slice tag (+ i 1)) tag))))
+
+        tag-kind (fn [tag]
+          (when tag
+            (if (.startsWith tag "checkpoint:") "checkpoint" "session")))
+
+        relative-time (fn [ts] :- String
+          (let [now (.now Date)
+                delta (- now ts)
+                mins (.floor Math (/ delta 60000))]
+            (cond
+              (< mins 1) "just now"
+              (< mins 60) (str mins "m ago")
+              :else
+              (let [hrs (.floor Math (/ mins 60))]
+                (cond
+                  (< hrs 24) (str hrs "h ago")
+                  :else
+                  (let [days (.floor Math (/ hrs 24))]
+                    (cond
+                      (= days 1) "yesterday"
+                      (< days 7) (str days "d ago")
+                      :else
+                      (let [weeks (.floor Math (/ days 7))]
+                        (if (< weeks 5)
+                          (str weeks "w ago")
+                          (.toLocaleDateString (Date. ts) []
+                            {:month "short" :day "numeric"}))))))))))
+
+        top-hosts (fn [nodes max-count]
+          (let [mx (if (= max-count js/undefined) 3 max-count)
+                seen (Set.)
+                hosts []]
+            (.forEach nodes (fn [n]
+              (when (and (not= (.-type n) "group") (.-url n)
+                         (< (.-length hosts) mx))
+                (let [host (try (.replace (.-hostname (URL. (.-url n)))
+                                          (RegExp. "^www\\.") "")
+                                (catch Any _e ""))]
+                  (when (and host (not= host "newtab") (not (.has seen host)))
+                    (.add seen host)
+                    (.push hosts host))))))
+            hosts))
+
+        tab-count (fn [nodes] :- Int
+          (.-length (.filter nodes #(not= (.-type %) "group"))))
+
+        event-has-space (fn [ev space-id]
+          (let [snap (.-snapshot ev)
+                ts (and snap (.-spaces snap) (.-tabSpaces (.-spaces snap)))]
+            (if (not ts)
+              true
+              (.some ts #(= (aget % 1) space-id)))))
+
+        history-picker-item (fn [ev]
+          (let [nodes (or (.-nodes (.-snapshot ev)) [])
+                count (tab-count nodes)
+                hosts (top-hosts nodes 3)
+                tag (label-of (.-tag ev))
+                when-str (relative-time (.-timestamp ev))
+                display (if tag
+                          (str tag "  --  " (or (.join hosts ", ") "empty"))
+                          (or (.join hosts ", ") "(empty)"))
+                parts [when-str (str count " tab" (if (not= count 1) "s" ""))]]
+            (when tag
+              (.unshift parts
+                (if (= (tag-kind (.-tag ev)) "checkpoint") "checkpoint" "session")))
+            {:display display :secondary (.join parts " . ") :data ev}))
+
+        session-picker-item (fn [ev]
+          (let [nodes (or (.-nodes (.-snapshot ev)) [])
+                count (tab-count nodes)
+                hosts (top-hosts nodes 4)
+                kind (tag-kind (.-tag ev))
+                label (or (label-of (.-tag ev)) "untitled")
+                when-str (relative-time (.-timestamp ev))
+                parts []]
+            (when (= kind "checkpoint") (.push parts "checkpoint"))
+            (.push parts when-str (str count " tab" (if (not= count 1) "s" "")))
+            (when (.-length hosts) (.push parts (.join hosts ", ")))
+            {:display label :secondary (.join parts " . ") :data ev}))
+
+
+        restore-event (fn [event]
+          (let [env (.-snapshot event)
+                tab-nodes (.filter (.-nodes env) #(not= (.-type %) "group"))
+                tab-space-map (Map.)]
+            (when (and (.-spaces env) (.-tabSpaces (.-spaces env)))
+              (.forEach (.-tabSpaces (.-spaces env))
+                #(.set tab-space-map (aget % 0) (aget % 1))))
+            (if (not (.-length tab-nodes))
+              (do (modeline-msg "Restore: no tabs in event" 3000) nil)
+              (let [max-saved-id (.apply (.-max Math) nil
+                                   (.concat [0] (.map tab-nodes #(or (.-id %) 0))))
+                    offset (.-nextTabId state)]
+                (set! (.-nextTabId state) (+ (.-nextTabId state) max-saved-id 1))
+                (let [group-name (or (label-of (.-tag event))
+                                     (str "Restored " (.toLocaleString
+                                                        (Date. (.-timestamp event)))))
+                      group-row (.createGroupRow rows group-name 0)]
+                  (.insertBefore (.-panel state) group-row (.-spacer state))
+                  (.syncAnyRow rows group-row)
+                  (.forEach tab-nodes (fn [n]
+                    (let [new-id (+ (or (.-id n) 0) offset)
+                          new-parent-id (if (= (js/typeof (.-parentId n)) "number")
+                                          (+ (.-parentId n) offset)
+                                          (.-id (.-_group group-row)))
+                          orig-space (.get tab-space-map (or (.-id n) 0))]
+                      (.push saved-tab-queue
+                        {:type (.-type n) :url (.-url n) :name (.-name n)
+                         :id new-id :parentId new-parent-id
+                         :state (.-state n) :collapsed (.-collapsed n)
+                         :spaceId orig-space
+                         :_origIdx (.-length saved-tab-queue)}))))
+                  (.forEach tab-nodes (fn [n]
+                    (let [url (or (.-url n) "about:blank")]
+                      (try (.addTab gBrowser url
+                             {:triggeringPrincipal
+                              (.getSystemPrincipal (.-scriptSecurityManager Services))})
+                           (catch Any e
+                             (log "restore:addTab-failed" {:url url :err (str e)}))))))
+                  (scheduleSave))))))
+
+
+        execute-refile (fn [target]
+          (when (and (.-refile-source vs) target
+                     (not= target (.-refile-source vs)))
+            (let [src-rows (subtree-rows (.-refile-source vs))]
+              (if (.includes src-rows target)
+                (modeline-msg "Can't refile under own subtree" 3000)
+                (let [src-data (data-of (.-refile-source vs))
+                      tgt-data (data-of target)]
+                  (when (and src-data tgt-data)
+                    (if (and (.-_tab (.-refile-source vs)) (.-_tab target))
+                      (set! (.-parentId (tree-data (.-_tab (.-refile-source vs))))
+                            (.-id (tree-data (.-_tab target))))
+                      (let [tgt-level (level-of-row target)
+                            src-level (level-of-row (.-refile-source vs))
+                            delta (- (+ tgt-level 1) src-level)]
+                        (.forEach src-rows (fn [r]
+                          (when (.-_group r)
+                            (set! (.-level (.-_group r))
+                                  (.max Math 0 (+ (or (.-level (.-_group r)) 0) delta))))))))
+                    (let [tgt-sub (subtree-rows target)]
+                      (insert-after-each (aget tgt-sub (- (.-length tgt-sub) 1)) src-rows))
+                    (.forEach src-rows #(.syncAnyRow rows %))
+                    (.updateVisibility rows)
+                    (scheduleSave)
+                    (let [label (or (.-name src-data)
+                                    (some-> vs .-refile-source .-_tab .-label)
+                                    "tab")
+                          tgt-label (or (.-name tgt-data)
+                                        (some-> target .-_tab .-label)
+                                        "tab")]
+                      (modeline-msg (str "Refiled \"" label "\" -> \"" tgt-label "\"")))
+                    (set! (.-refile-source vs) nil)
+                    (set! (.-search-matches vs) [])
+                    (set! (.-search-idx vs) -1)))))))
+
+        cancel-refile (fn []
+          (when (.-refile-source vs)
+            (set! (.-refile-source vs) nil)
+            (set! (.-search-matches vs) [])
+            (set! (.-search-idx vs) -1)
+            (modeline-msg "Refile cancelled")))
+
+
+        clear-filter (fn []
+          (.forEach (all-rows) #(set! (.-hidden %) false))
+          (.updateVisibility rows))
+
+        apply-filter (fn [query]
+          (let [q (.toLowerCase (.trim query))]
+            (if (not q)
+              (clear-filter)
+              (let [all-r (all-rows)
+                    matched (Set.)]
+                (.forEach all-r (fn [row]
+                  (let [d (data-of row)]
+                    (when d
+                      (let [label (.toLowerCase
+                                    (or (.-name d)
+                                        (if (.-_tab row) (.-label (.-_tab row)) "") ""))
+                            url (.toLowerCase (tab-spec (.-_tab row)))]
+                        (when (or (.includes label q) (.includes url q))
+                          (.add matched row)))))))
+                ;; Mark ancestors
+                (let [walk-anc (fn [prev lv-ref]
+                                 (when prev
+                                   (let [plv (level-of-row prev)]
+                                     (when (< plv (.-v lv-ref))
+                                       (.add matched prev)
+                                       (set! (.-v lv-ref) plv))
+                                     (when (not= plv 0)
+                                       (walk-anc (.-previousElementSibling prev) lv-ref)))))]
+                  (.forEach (.from Array matched) (fn [row]
+                    (walk-anc (.-previousElementSibling row)
+                              {:v (level-of-row row)}))))
+                (.forEach all-r #(set! (.-hidden %) (not (.has matched %))))))))
+
+        start-search (fn []
+          (when (and (not (.-search-active vs)) (.-modeline vs))
+            (set! (.-search-active vs) true)
+            (hide-children (.-modeline vs))
+            (attr! (.-modeline vs) "gjoa-visible" "true")
+            (let [input (htm "input" "gjoa-search-input")]
+              (set! (.-search-input vs) input)
+              (set! (.-placeholder input) "")
+              (.appendChild (.-modeline vs) input)
+              (.focus input)
+              (let [prefix (xul "label" "gjoa-search-prefix")]
+                (attr! prefix "value" "/")
+                (.insertBefore (.-modeline vs) prefix input))
+              (on! input "input"
+                #(apply-filter (.-value input)))
+              (on! input "keydown"
+                (fn [e]
+                  (.stopImmediatePropagation e)
+                  (.stopPropagation e)
+                  (cond
+                    (key= e "Escape") (end-search false)
+                    (key= e "Enter") (end-search true)
+                    (and (key= e "Backspace") (not (.-value input)))
+                    (end-search false)
+                    :else nil))))))
+
+        teardown-search-ui (fn []
+          (when (.-search-input vs) (.remove (.-search-input vs)))
+          (set! (.-search-input vs) nil)
+          (let [pfx (some-> vs .-modeline (.querySelector ".gjoa-search-prefix"))]
+            (when pfx (.remove pfx)))
+          (show-children (.-modeline vs))
+          (update-modeline))
+
+        end-search (fn [accept]
+          (set! (.-search-active vs) false)
+          (if accept
+            (let [q (or (some-> vs .-search-input .-value (.trim) (.toLowerCase)) "")]
+              (set! (.-search-matches vs) [])
+              (set! (.-search-idx vs) -1)
+              (let [excluded (if (.-refile-source vs)
+                               (Set. (subtree-rows (.-refile-source vs)))
+                               nil)]
+                (when q
+                  (.forEach (all-rows) (fn [row]
+                    (when (not (and excluded (.has excluded row)))
+                      (let [d (data-of row)]
+                        (when d
+                          (let [label (.toLowerCase
+                                        (or (.-name d)
+                                            (if (.-_tab row) (.-label (.-_tab row)) "") ""))
+                                url (.toLowerCase (tab-spec (.-_tab row)))]
+                            (when (or (.includes label q) (.includes url q))
+                              (.push (.-search-matches vs) row))))))))))
+              (let [dtc {:v false}]
+                (if (= (.-length (.-search-matches vs)) 1)
+                  (let [match (aget (.-search-matches vs) 0)]
+                    (set-cursor match)
+                    (when (.-_tab match) (set! (.-selectedTab gBrowser) (.-_tab match)))
+                    (if (.-refile-source vs)
+                      (execute-refile match)
+                      (do (set! (.-panel-active vs) false)
+                          (set! (.-search-matches vs) [])
+                          (set! (.-search-idx vs) -1)
+                          (.dispatchEvent sidebarMain (Event. "gjoa-dismiss"))
+                          (set! (.-v dtc) true))))
+                  (if (> (.-length (.-search-matches vs)) 0)
+                    (do (set! (.-search-idx vs) 0)
+                        (let [fm (aget (.-search-matches vs) 0)]
+                          (set-cursor fm)
+                          (when (.-_tab fm)
+                            (set! (.-selectedTab gBrowser) (.-_tab fm)))
+                          (let [hint (if (.-refile-source vs) "  Enter=refile, n/N=cycle" "")]
+                            (modeline-msg
+                              (str "/" q "  [1/" (.-length (.-search-matches vs)) "]" hint)))))
+                    (when (.-refile-source vs) (modeline-msg "No refile targets found"))))
+                (clear-filter)
+                (teardown-search-ui)
+                (when (not (.-v dtc)) (focus-panel))))
+            ;; reject
+            (do (set! (.-search-matches vs) [])
+                (set! (.-search-idx vs) -1)
+                (clear-filter)
+                (when (.-refile-source vs) (cancel-refile))
+                (teardown-search-ui)
+                (focus-panel))))
+
+
+        start-rename (fn [row]
+          (when row
+            (let [label (q row ".gjoa-tab-label")]
+              (when label
+                (let [d (data-of row)]
+                  (when d
+                    (let [original (or (.-name d)
+                                       (if (.-_tab row) (.-label (.-_tab row)) "") "")]
+                      (set! (.-textContent label) original)
+                      (attr! label "contenteditable" "plaintext-only")
+                      (.add (.-classList label) "gjoa-renaming")
+                      (.removeProperty (.-style label) "overflow")
+                      (.removeProperty (.-style label) "text-overflow")
+                      (.focus label)
+                      (let [sel (and (.-getSelection window) (.getSelection window))]
+                        (when sel
+                          (let [range (.createRange document)]
+                            (.selectNodeContents range label)
+                            (.removeAllRanges sel)
+                            (.addRange sel range))))
+                      (let [done-flag {:v false}
+                            finish (fn [commit]
+                                     (when (not (.-v done-flag))
+                                       (set! (.-v done-flag) true)
+                                       (let [value (.trim (or (.-textContent label) ""))]
+                                         (rmattr! label "contenteditable")
+                                         (.remove (.-classList label) "gjoa-renaming")
+                                         (when (and (.-getSelection window) (.getSelection window))
+                                           (.removeAllRanges (.getSelection window)))
+                                         (when commit
+                                           (if (.-_group row)
+                                             (set! (.-name d) (or value "New Group"))
+                                             (set! (.-name d)
+                                                   (if (and value (not= value (.-label (.-_tab row))))
+                                                     value nil)))
+                                           (scheduleSave))
+                                         (if (.-_tab row)
+                                           (.syncTabRow rows (.-_tab row))
+                                           (.syncAnyRow rows row))
+                                         (.focus (.-panel state)))))]
+                        (on! label "keydown"
+                          (fn [e]
+                            (when (key= e "Enter") (.preventDefault e) (finish true) (focus-panel))
+                            (when (key= e "Escape") (.preventDefault e) (finish false) (focus-panel))
+                            (.stopPropagation e)))
+                        (on1! label "blur" #(finish true))))))))))
+
+
+        cycle-space (fn [dir]
+          (let [list (.list spaces)]
+            (if (< (.-length list) 2)
+              (modeline-msg "Only one space -- :space new <name> to add" 2500)
+              (let [cur (.activeId spaces)
+                    idx (.findIndex list #(= (.-id %) cur))
+                    next-idx (% (+ (% (+ idx dir) (.-length list)) (.-length list))
+                               (.-length list))
+                    next (aget list next-idx)]
+                (.setActive spaces (.-id next))
+                (modeline-msg (str ":space -> \"" (.-name next) "\"") 1500)))))
+
+        end-ex-mode (fn [cmd]
+          (let [sp (q (.-modeline vs) ".gjoa-search-prefix")]
+            (when sp (.remove sp)))
+          (let [si (q (.-modeline vs) ".gjoa-search-input")]
+            (when si (.remove si)))
+          (show-children (.-modeline vs))
+          (update-modeline)
+          (when cmd
+            (let [args (.split cmd (RegExp. "\\s+"))
+                  name (.toLowerCase (or (aget args 0) ""))]
+              (cond
+                (or (= name "group") (= name "grp") (= name "folder"))
+                (let [label (or (.join (.slice args 1) " ") "New Group")
+                      row (.createGroupRow rows label
+                            (if (.-cursor state) (level-of-row (.-cursor state)) 0))]
+                  (if (.-cursor state)
+                    (let [st (subtree-rows (.-cursor state))]
+                      (.after (aget st (- (.-length st) 1)) row))
+                    (.insertBefore (.-panel state) row (.-spacer state)))
+                  (set-cursor row)
+                  (.updateVisibility rows)
+                  (scheduleSave)
+                  (modeline-msg (str ":group " label)))
+
+                (or (= name "re") (= name "refile") (= name "rf"))
+                (if (not (.-cursor state))
+                  (modeline-msg "No cursor -- place cursor on tab to refile" 3000)
+                  (do (set! (.-refile-source vs) (.-cursor state))
+                      (let [src-label (or (some-> (.-cursor state) data-of .-name)
+                                          (some-> state .-cursor .-_tab .-label)
+                                          "tab")]
+                        (modeline-msg (str "Refile: \"" src-label "\" -> search for target...")))
+                      (setTimeout #(start-search) 0)))
+
+                (or (= name "pin") (= name "unpin"))
+                (let [t (some-> state .-cursor .-_tab)
+                      want-pin (= name "pin")]
+                  (if (not t)
+                    (modeline-msg "No tab at cursor" 3000)
+                    (if (= (.-pinned t) want-pin)
+                      (modeline-msg (str (if want-pin "Already pinned" "Not pinned")
+                                         ": " (.-label t)) 2000)
+                      (do (if want-pin (.pinTab gBrowser t) (.unpinTab gBrowser t))
+                          (modeline-msg (str ":" name " " (.-label t)))))))
+
+                (or (= name "checkpoint") (= name "cp"))
+                (let [label (.trim (.join (.slice args 1) " "))]
+                  (if (not label)
+                    (modeline-msg "Usage: :checkpoint <label>" 3000)
+                    (do (scheduleSave)
+                        (setTimeout
+                          (fn []
+                            (-> (.tagLatest history "checkpoint" label)
+                                (.then #(modeline-msg
+                                    (if % (str ":checkpoint \"" label "\"")
+                                      "Nothing to tag (no events yet)")
+                                    3000))
+                                (.catch #(modeline-msg
+                                    (str ":checkpoint failed: " (.-message %)) 4000))))
+                          100))))
+
+                (= name "restore")
+                (let [arg (.trim (.join (.slice args 1) " "))]
+                  (-> (.getTagged history 100)
+                      (.then (fn [tagged]
+                        (if (not (.-length tagged))
+                          (modeline-msg "No tagged sessions yet" 4000)
+                          (if (not arg)
+                            (.show picker
+                              {:prompt "restore >"
+                               :items (.map tagged #(session-picker-item %))
+                               :onSelect (fn [item]
+                                 (-> (restore-event (.-data item))
+                                     (.then #(modeline-msg
+                                       (str "Restored: " (label-of (.-tag (.-data item)))) 4000))
+                                     (.catch #(modeline-msg
+                                       (str ":restore failed: " (.-message %)) 4000))))})
+                            (let [needle (.toLowerCase arg)
+                                  matches (.filter tagged
+                                    #(.includes
+                                      (.toLowerCase (or (label-of (.-tag %)) "")) needle))]
+                              (if (not (.-length matches))
+                                (modeline-msg (str "No sessions match \"" arg "\"") 3000)
+                                (-> (restore-event (aget matches 0))
+                                    (.then #(modeline-msg
+                                      (str "Restored: " (label-of (.-tag (aget matches 0)))) 4000))
+                                    (.catch #(modeline-msg
+                                      (str ":restore failed: " (.-message %)) 4000))))))))
+                      (.catch #(modeline-msg (str ":restore failed: " (.-message %)) 4000)))))
+
+                (= name "tabs")
+                (let [sub (.toLowerCase (or (aget args 1) ""))
+                      scope (cond
+                              (or (= sub "all") (= sub "*")) "all"
+                              (or (= sub "window") (= sub "win")) "current"
+                              :else "space")]
+                  (open-tabs-picker scope))
+
+                (or (= name "blacklist") (= name "bl"))
+                (let [sub (.toLowerCase (or (aget args 1) ""))]
+                  (cond
+                    (or (= sub "list") (= sub "ls"))
+                    (let [list (blacklisted-hosts)]
+                      (modeline-msg
+                        (if (.-length list) (str "Blacklist: " (.join list ", "))
+                          "Blacklist is empty") 5000))
+                    (or (= sub "remove") (= sub "rm") (= sub "del"))
+                    (let [host (or (some-> (aget args 2) (.trim)) (current-host))]
+                      (if (not host) (modeline-msg "No host to remove" 3000)
+                        (modeline-msg
+                          (if (blacklist-remove host) (str "Removed: " host)
+                            (str "Not in blacklist: " host)) 3000)))
+                    :else
+                    (let [host (or (some-> (aget args 1) (.trim)) (current-host))]
+                      (if (not host) (modeline-msg "No host to blacklist" 3000)
+                        (do (blacklist-add host)
+                            (modeline-msg (str "Blacklisted: " host) 3000))))))
+
+                (or (= name "unblacklist") (= name "ubl"))
+                (let [host (or (some-> (aget args 1) (.trim)) (current-host))]
+                  (if (not host) (modeline-msg "No host to remove" 3000)
+                    (modeline-msg
+                      (if (blacklist-remove host) (str "Removed: " host)
+                        (str "Not in blacklist: " host)) 3000)))
+
+                (= name "sessions") (modeline-msg "Use :restore instead" 3000)
+                (= name "help") (toggle-which-key)
+
+                (= name "tabpos")
+                (let [valid ["sibling" "root" "child"]
+                      arg (.toLowerCase (or (aget args 1) ""))]
+                  (if (not arg)
+                    (let [cur (.getCharPref (.-prefs Services)
+                                "gjoa.tabs.newTabPosition" "sibling")]
+                      (modeline-msg (str ":tabpos = " cur
+                                         " (options: sibling | root | child)") 4000))
+                    (if (not (.includes valid arg))
+                      (modeline-msg "Usage: :tabpos <sibling|root|child>" 3500)
+                      (do (.setCharPref (.-prefs Services)
+                            "gjoa.tabs.newTabPosition" arg)
+                          (modeline-msg (str ":tabpos -> " arg) 2500)))))
+
+                (or (= name "space") (= name "spc"))
+                (let [sub (.toLowerCase (or (aget args 1) "list"))
+                      rest (.trim (.join (.slice args 2) " "))]
+                  (cond
+                    (= sub "new")
+                    (let [sn (or rest "Untitled")
+                          s (.create spaces sn)]
+                      (.setActive spaces (.-id s))
+                      (modeline-msg (str ":space new \"" (.-name s) "\" -> switched") 2500))
+                    (= sub "rename")
+                    (if (not rest) (modeline-msg "Usage: :space rename <name>" 3000)
+                      (do (.rename spaces (.activeId spaces) rest)
+                          (modeline-msg (str ":space rename \"" rest "\"") 2500)))
+                    (= sub "delete")
+                    (let [cur (.active spaces)
+                          all (.list spaces)]
+                      (if (or (<= (.-length all) 1) (= (.-id (aget all 0)) (.-id cur)))
+                        (modeline-msg "Can't delete the default space" 3000)
+                        (do (.delete spaces (.-id cur))
+                            (modeline-msg (str ":space delete \"" (.-name cur) "\"") 2500))))
+                    (= sub "switch")
+                    (if (not rest) (modeline-msg "Usage: :space switch <name>" 3000)
+                      (let [match (.find (.list spaces)
+                                    #(= (.toLowerCase (.-name %))
+                                        (.toLowerCase rest)))]
+                        (if (not match)
+                          (modeline-msg (str "No space named \"" rest "\"") 3000)
+                          (do (.setActive spaces (.-id match))
+                              (modeline-msg (str ":space -> \"" (.-name match) "\"") 2000)))))
+                    :else
+                    (let [items (.map (.list spaces) (fn [s]
+                                  (let [r {:display (.-name s)
+                                           :secondary (if (= (.-id s) (.activeId spaces)) "(active)" "")
+                                           :data s}] r)))]
+                      (.show picker
+                        {:prompt "spaces >"
+                         :items items
+                         :onSelect (fn [item]
+                           (.setActive spaces (.-id (.-data item)))
+                           (modeline-msg
+                             (str ":space -> \"" (.-name (.-data item)) "\"") 2000))}))))
+
+                (= name "history")
+                (let [raw-args (.slice args 1)
+                      space-scoped (and (> (.-length raw-args) 0)
+                                       (= (.toLowerCase (aget raw-args 0)) "space"))
+                      q-args (if space-scoped (.slice raw-args 1) raw-args)
+                      q (.trim (.join q-args " "))
+                      active-space (and spaces (.activeId spaces))]
+                  (-> (if q
+                        (.search history q {:taggedOnly false :limit 200})
+                        (.getRecent history 200))
+                      (.then (fn [evs]
+                        (let [filtered (if (and space-scoped active-space)
+                                         (.filter evs #(event-has-space % active-space))
+                                         evs)
+                              display-evs (.slice filtered 0 100)]
+                          (if (not (.-length display-evs))
+                            (modeline-msg
+                              (if q (str "No events match \"" q "\"") "No history yet") 3000)
+                            (.show picker
+                              {:prompt (if space-scoped
+                                         (str "history (" (.-name (.active spaces)) ") >")
+                                         "history >")
+                               :items (.map display-evs #(history-picker-item %))
+                               :onSelect (fn [item]
+                                 (let [ev (.-data item)]
+                                   (-> (restore-event ev)
+                                       (.then #(let [lbl (label-of (.-tag ev))]
+                                           (modeline-msg
+                                             (str "Restored: "
+                                               (or lbl (.toLocaleString
+                                                         (Date. (.-timestamp ev)))))
+                                             4000)))
+                                       (.catch #(modeline-msg
+                                           (str ":history restore failed: " (.-message %))
+                                           4000)))))})))))
+                      (.catch #(modeline-msg (str ":history failed: " (.-message %)) 4000))))
+
+                :else (modeline-msg (str "Unknown command: " name) 3000)))))
+
+        open-ex-command-picker (fn []
+          (let [items (.map EX-COMMANDS (fn [cmd]
+                        (let [r {:display (str ":" (.-name cmd))
+                                 :secondary (.-description cmd)
+                                 :data cmd}] r)))]
+            (.show picker
+              {:prompt "ex >"
+               :items items
+               :filterItem (fn [item q]
+                 (let [cmd (.-data item)
+                       first-word (or (aget (.split (.toLowerCase (.trim q))
+                                                    (RegExp. "\\s+")) 0) "")]
+                   (if (not first-word) true
+                     (let [hay (.toLowerCase (str (.-name cmd) " "
+                                                  (or (.-secondary item) "")))]
+                       (.includes hay first-word)))))
+               :onSelect (fn [item query]
+                 (let [cmd (.-data item)
+                       q (.trim (or query ""))
+                       lower (.toLowerCase q)
+                       use-qa (or (.startsWith lower
+                                    (str (.toLowerCase (.-name cmd)) " "))
+                                  (= lower (.toLowerCase (.-name cmd))))
+                       ex-cmd (if use-qa q (.-name cmd))]
+                   (end-ex-mode ex-cmd)))})))
+
+
+        visual-move (fn [dir]
+          (when (not (.-selection-anchor vs))
+            (set! (.-selection-anchor vs) (.-cursor state)))
+          (when (and (move-cursor dir) (.-selection-anchor vs))
+            (selectRange (.-selection-anchor vs)))
+          true)
+
+        handle-action-keys (fn [e] :- Bool
+          (cond
+            (key= e "Enter")
+            (if (.-refile-source vs)
+              (do (when (.-cursor state) (execute-refile (.-cursor state))) true)
+              (if (.-_tab (.-cursor state))
+                (do (set! (.-selectedTab gBrowser) (.-_tab (.-cursor state)))
+                    (blur-panel) (.focus (.-selectedBrowser gBrowser)) true)
+                (do (.toggleCollapse rows (.-cursor state)) true)))
+            (key= e "Tab")
+            (do (.toggleCollapse rows (.-cursor state)) true)
+            (key= e "Escape")
+            (do (when (.-refile-source vs) (cancel-refile)) true)
+            (key= e "r")
+            (do (start-rename (.-cursor state)) true)
+            (key= e "G")
+            (do (go-to-bottom) true)
+            (key= e "x")
+            (do (close-focused) true)
+            (key= e ":")
+            (do (open-ex-command-picker) true)
+            (key= e "J") (visual-move 1)
+            (key= e "K") (visual-move -1)
+            :else false))
+
+
+        handle-normal-key (fn [e] :- Bool
+          (when (and (not= (.-key e) "J") (not= (.-key e) "K"))
+            (set! (.-selection-anchor vs) nil))
+          (cond
+            (.-pending-ctrl-w vs)
+            (do (set! (.-pending-ctrl-w vs) false)
+                (clearTimeout (.-chord-timer vs))
+                (if (or (key= e "h") (key= e "H") (key= e "l") (key= e "L")
+                        (key= e "w") (key= e "W"))
+                  (do (pane-switch (.-key e)) true)
+                  (do (when (.-selectedTab gBrowser)
+                        (.removeTab gBrowser (.-selectedTab gBrowser)))
+                      false)))
+
+            (and (.-ctrlKey e) (or (key= e "w") (= (.-code e) "KeyW")))
+            (do (set! (.-pending-ctrl-w vs) true)
+                (set! (.-chord-timer vs)
+                      (setTimeout (fn []
+                        (when (.-pending-ctrl-w vs)
+                          (set! (.-pending-ctrl-w vs) false)
+                          (when (.-selectedTab gBrowser)
+                            (.removeTab gBrowser (.-selectedTab gBrowser)))))
+                        CHORD-TIMEOUT))
+                true)
+
+            (.-chord vs)
+            (let [combo (str (.-chord vs) (.-key e))]
+              (set! (.-chord vs) nil)
+              (clearTimeout (.-chord-timer vs))
+              (cond
+                (= combo "gg") (do (go-to-top) true)
+                (= combo "gC")
+                (do (when (some-> state .-cursor .-_tab)
+                      (clone-as-sibling (.-_tab (.-cursor state)))) true)
+                (or (= combo "gs") (= combo "gS"))
+                (do (cycle-space (if (= combo "gs") 1 -1)) true)
+                :else true))
+
+            (and (key= e "g") (not (.-shiftKey e)) (not (.-ctrlKey e)) (not (.-altKey e)))
+            (do (set! (.-chord vs) (.-key e))
+                (set! (.-chord-timer vs)
+                      (setTimeout #(set! (.-chord vs) nil) CHORD-TIMEOUT))
+                true)
+
+            (key= e "i")
+            (do (blur-panel) (.focus (.-selectedBrowser gBrowser)) true)
+
+            (and (.-altKey e) (or (key= e "h") (= (.-code e) "KeyH") (key= e "ArrowLeft")))
+            (do (when (.-cursor state) (move-to-root (.-cursor state))) true)
+
+            (and (.-altKey e) (or (key= e "l") (= (.-code e) "KeyL") (key= e "ArrowRight")))
+            (do (when (.-cursor state) (make-child-of-above (.-cursor state))) true)
+
+            (and (.-altKey e) (or (key= e "j") (= (.-code e) "KeyJ") (key= e "ArrowDown")))
+            (do (when (.-cursor state) (swap-down (.-cursor state))) true)
+
+            (and (.-altKey e) (or (key= e "k") (= (.-code e) "KeyK") (key= e "ArrowUp")))
+            (do (when (.-cursor state) (swap-up (.-cursor state))) true)
+
+            :else
+            (do
+              (when (and (not (.-cursor state)) (.includes "jklhG/rnNx" (.-key e)))
+                (let [row (.get row-of (.-selectedTab gBrowser))]
+                  (when row (set-cursor row))))
+              (if (not (.-cursor state)) false
+                (if (and (not (.-ctrlKey e)) (not (.-metaKey e)))
+                  (cond
+                    (or (key= e "j") (key= e "ArrowDown")) (do (move-cursor 1) true)
+                    (or (key= e "k") (key= e "ArrowUp")) (do (move-cursor -1) true)
+                    (or (key= e "h") (key= e "ArrowLeft"))
+                      (do (if (is-horizontal) (move-to-level0 -1) (outdent-row (.-cursor state))) true)
+                    (or (key= e "l") (key= e "ArrowRight"))
+                      (do (if (is-horizontal) (move-to-level0 1) (indent-row (.-cursor state))) true)
+                    :else (handle-action-keys e))
+                  (handle-action-keys e))))))
+
+
+        setup-global-keys (fn []
+          (set! (.-current-selected-tab vs) (.-selectedTab gBrowser))
+          (on! (.-tabContainer gBrowser) "TabSelect"
+            (fn [e]
+              (let [new-tab (.-target e)]
+                (when (not= new-tab (.-current-selected-tab vs))
+                  (set! (.-last-tab vs) (.-current-selected-tab vs))
+                  (set! (.-current-selected-tab vs) new-tab)))))
+          (onc! document "keydown"
+            (fn [e]
+              (let [a (.-activeElement document)]
+                (when (and (not (.isActive picker))
+                           (not (is-privileged-uri))
+                           (not (.contentInputFocused contentFocus))
+                           (not (current-host-blacklisted))
+                           (not (and a (not= a (.-panel state))
+                                      (or (= (.-tagName a) "INPUT") (= (.-tagName a) "input")
+                                          (= (.-tagName a) "TEXTAREA") (= (.-tagName a) "textarea")
+                                          (.-isContentEditable a))))
+                           (not (and a
+                                  (or (and (.-closest a) (.closest a "#urlbar"))
+                                      (and (.-closest a) (.closest a "findbar"))
+                                      (and (.-closest a) (.closest a ".gjoa-search-input"))
+                                      (and (.-closest a) (.closest a ".gjoa-picker")))))
+                           (not (or (key= e "Shift") (key= e "Control")
+                                     (key= e "Alt") (key= e "Meta"))))
+                  (if (and (key= e "Escape")
+                           (.-which-key-el vs)
+                           (not (.-hidden (.-which-key-el vs))))
+                    (do (.preventDefault e) (.stopImmediatePropagation e)
+                        (hide-which-key))
+                    (let [leader (leader-key)]
+                      (if (not= leader nil)
+                        (if (not (.-leader-armed vs))
+                          (when (key= e leader)
+                            (.preventDefault e) (.stopImmediatePropagation e)
+                            (arm-leader))
+                          (if (or (key= e leader) (key= e "Escape"))
+                            (do (.preventDefault e) (.stopImmediatePropagation e)
+                                (disarm-leader))
+                            (let [handled (try-dispatch-binding e)]
+                              (disarm-leader)
+                              (when (not handled)
+                                (.preventDefault e)
+                                (.stopImmediatePropagation e)))))
+                        (try-dispatch-binding e))))))
+          (onc! document "keyup"
+            (fn [e]
+              (when (or (key= e "j") (key= e "k"))
+                (try
+                  (some-> gBrowser .-selectedBrowser .-messageManager
+                    (.sendAsyncMessage "Gjoa:ScrollStop"))
+                  (catch Any _e nil)))))))
+
+
+        setup-vim-keys (fn []
+          (attr! (.-panel state) "tabindex" "0")
+          (onc! document "keydown"
+            (fn [e]
+              (when (and (not (.isActive picker)) (.-panel-active vs))
+                (let [active (.-activeElement document)]
+                    (if (and active (not= active (.-panel state))
+                             (or (= (.-tagName active) "INPUT") (= (.-tagName active) "input")
+                                 (= (.-tagName active) "TEXTAREA") (= (.-tagName active) "textarea")
+                                 (.-isContentEditable active)
+                                 (and (.-closest active) (.closest active "#urlbar"))
+                                 (and (.-closest active) (.closest active "findbar"))))
+                      (blur-panel)
+                      (if (key= e "Escape")
+                        (if (.-search-active vs)
+                          (do (end-search false)
+                              (.preventDefault e) (.stopImmediatePropagation e))
+                          (when (some-> vs .-modeline (.querySelector ".gjoa-search-input"))
+                            (end-ex-mode nil)
+                            (.preventDefault e) (.stopImmediatePropagation e)))
+                        (if (handle-normal-key e)
+                          (do (.preventDefault e) (.stopImmediatePropagation e)
+                              (update-modeline))
+                          (when (= (.-length (.-key e)) 1)
+                            (blur-panel)
+                            (when (and (not (.-ctrlKey e)) (not (.-altKey e)) (not (.-metaKey e)))
+                              (.focus (.-selectedBrowser gBrowser))))))))))))
+          (on! (.-tabpanels gBrowser) "mousedown"
+            #(when (.-panel-active vs) (blur-panel))))
+
+
+        consume-pending-cursor-move (fn [] :- Bool
+          (if (not (.-pending-cursor-move vs)) false
+            (do (set! (.-pending-cursor-move vs) false) true)))]
+
+
+    {:setCursor set-cursor
+     :activateVim activate-vim
+     :moveCursor move-cursor
+     :focusPanel focus-panel
+     :blurPanel blur-panel
+     :createModeline create-modeline
+     :setupVimKeys setup-vim-keys
+     :setupGlobalKeys setup-global-keys
+     :cloneAsSibling clone-as-sibling
+     :startRename start-rename
+     :consumePendingCursorMove consume-pending-cursor-move
+     :runExCommand #(end-ex-mode %)
+     :openExCommandPicker open-ex-command-picker})))

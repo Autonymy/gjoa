@@ -1,0 +1,602 @@
+#lang beagle/js
+(ns gjoa.tabs.index
+  (:require [gjoa.macros :refer [q by-id xul-new xul-id attr! pref-bool on! on1! has? bool rmattr! tabs!]]))
+(define-mode strict)
+
+;; Browser globals
+(declare-extern [window document gBrowser gBrowserInit Services requestAnimationFrame setTimeout setInterval clearInterval console Promise Array Set Math MutationObserver RegExp build-context-menu build-group-context-menu build-panel-context-menu make-drag make-events make-layout make-rows make-vim all-rows all-tabs pin-tab-id tab-url tree-data try-register-pin-attr create-logger make-history make-content-focus ensure-vertical-tabs-default migrate-legacy-prefs migrate-toolbar-defaults apply-menubar-default make-spaces make-gjoa make-saver closed-tabs row-of saved-tab-queue selection state tree-of] Any)
+
+;; Module deps — no import, declared extern
+(def pfx-log :- Any (create-logger "tabs"))
+
+;; sidebar-main is looked up once; the boot function exits if nil.
+(def sidebar-main :- Any (by-id "sidebar-main"))
+
+;; --- Selection helpers (small — vim + drag both consume) ---
+
+(defn clear-selection [] :- Any
+  (.forEach (Array/from selection)
+    #(rmattr! % "gjoa-multi"))
+  (.clear selection))
+
+(defn select-range [to-row :- Any] :- Any
+  (let [from-row (or (.-cursor state) (.get row-of (.-selectedTab gBrowser)))]
+    (when from-row
+      (let [rows (.filter (all-rows) #(not (.-hidden %)))
+            from-idx (.indexOf rows from-row)
+            to-idx (.indexOf rows to-row)]
+        (when (and (>= from-idx 0) (>= to-idx 0))
+          (clear-selection)
+          (let [start (Math/min from-idx to-idx)
+                end (Math/max from-idx to-idx)]
+            (.forEach (.slice rows start (+ end 1))
+              (fn [r]
+                (.add selection r)
+                (attr! r "gjoa-multi" "true")))))))))
+
+;; --- Recursive DOM-removal helper ---
+
+(defn remove-children! [container stop-el] :- Any
+  (loop []
+    (when (and (.-firstChild container) (not= (.-firstChild container) stop-el))
+      (.remove (.-firstChild container))
+      (recur))))
+
+(defn clear-all-rows! [] :- Any
+  (remove-children! (.-panel state) (.-spacer state))
+  (remove-children! (.-pinnedContainer state) nil))
+
+;; --- buildPanel — removes children before spacer, creates rows ---
+
+(defn build-panel [rows-api :- Any] :- Any
+  (clear-all-rows!)
+  (.forEach (tabs!)
+    (fn [tab]
+      (let [row (.createTabRow rows-api tab)]
+        (if (and (.-pinned tab) (.-pinnedContainer state))
+          (.appendChild (.-pinnedContainer state) row)
+          (.insertBefore (.-panel state) row (.-spacer state))))))
+  (when (.-pinnedContainer state)
+    (set! (.-hidden (.-pinnedContainer state))
+      (not (q (.-pinnedContainer state) ".gjoa-tab-row"))))
+  (.updateVisibility rows-api))
+
+;; --- Persistence ---
+
+(def history :- Any (make-history))
+(def content-focus :- Any (make-content-focus))
+
+(def gjoa-api :- Any (make-gjoa {:history history}))
+(set! (.-Gjoa window) gjoa-api)
+
+;; Forward refs for cyclic deps
+(def rows-ref :- Any {:v nil})
+(def vim-ref :- Any {:v nil})
+
+;; updateSpaceHeader — reflect active space name into sidebar header
+(defn update-space-header [] :- Any
+  (let [el (.-spaceHeader state)
+        label (some-> el (.querySelector "#gjoa-space-header-label"))]
+    (when (and el label)
+      (attr! label "value" (.-name (.active spaces))))))
+
+;; Spaces (workspaces)
+(def spaces :- Any
+  (make-spaces
+    {:onChange (fn []
+       (when (.-v rows-ref) (.scheduleTreeResync (.-v rows-ref)))
+       (when schedule-save (schedule-save))
+       (update-space-header))
+     :onActivated (fn [_prev next]
+       (let [current (.-selectedTab gBrowser)]
+         (when (not (and current (= (.spaceOf spaces current) next)))
+           (let [in-next (.filter (tabs!)
+                           #(= (.spaceOf spaces %) next))]
+             (when (> (.-length in-next) 0)
+               (set! (.-selectedTab gBrowser) (aget in-next 0)))))))}))
+
+(set! (.-Spaces window) spaces)
+
+;; Write-on-every-change saver
+(def schedule-save :- Any
+  (make-saver
+    (fn []
+      (let [snap {:tabs (tabs!)
+                  :rows #(all-rows)
+                  :savedTabQueue saved-tab-queue
+                  :closedTabs closed-tabs
+                  :nextTabId (.-nextTabId state)
+                  :tabUrl tab-url
+                  :treeData tree-data
+                  :spaces {:spaces (.list spaces)
+                           :activeId (.activeId spaces)
+                           :tabSpaces (.map (tabs!)
+                                        (fn [t]
+                                          (let [id (.-id (tree-data t))
+                                                sp (.spaceOf spaces t)]
+                                            [id sp])))}}]
+        snap))
+    history))
+
+;; --- Factory wiring (drag <-> rows <-> vim cycle) ---
+
+(def drag :- Any
+  (make-drag
+    {:clearSelection clear-selection
+     :scheduleTreeResync #(.scheduleTreeResync (.-v rows-ref))
+     :scheduleSave schedule-save}))
+
+(set! (.-v rows-ref)
+  (make-rows
+    {:setupDrag (.-setupDrag drag)
+     :activateVim #(.activateVim (.-v vim-ref) %)
+     :selectRange select-range
+     :clearSelection clear-selection
+     :cloneAsSibling #(.cloneAsSibling (.-v vim-ref) %)
+     :startRename #(.startRename (.-v vim-ref) %)
+     :scheduleSave schedule-save
+     :isTabInActiveSpace #(.isVisible spaces %)
+     :getActiveSpaceId #(.activeId spaces)
+     :isGroupInActiveSpace #(.isSpaceActive spaces (.-spaceId %))}))
+
+(def layout :- Any
+  (make-layout
+    {:sidebarMain sidebar-main
+     :rows (.-v rows-ref)}))
+
+(set! (.-v vim-ref)
+  (make-vim
+    {:rows (.-v rows-ref)
+     :layout layout
+     :scheduleSave schedule-save
+     :clearSelection clear-selection
+     :selectRange select-range
+     :sidebarMain sidebar-main
+     :history history
+     :contentFocus content-focus
+     :spaces spaces}))
+
+(def events :- Any
+  (make-events
+    {:rows (.-v rows-ref)
+     :vim (.-v vim-ref)
+     :scheduleSave schedule-save
+     :spaces spaces}))
+
+;; --- loadFromHistory — promise chain ---
+
+;; Recursive pairwise matching of saved nodes to live tabs
+(defn match-tabs-loop [tab-nodes :- Any tabs :- Any ni :- Int li-ref :- Any
+                       applied :- Any apply-fn :- Any] :- Any
+  (when (and (< ni (.-length tab-nodes)) (< (.-v li-ref) (.-length tabs)))
+    (let [s (aget tab-nodes ni)
+          live (aget tabs (.-v li-ref))
+          live-url (or (some-> live .-linkedBrowser .-currentURI .-spec) "")
+          pending (= live-url "about:blank")]
+      (if (or (= live-url (.-url s)) pending)
+        (do (apply-fn live s ni)
+            (set! (.-v li-ref) (+ (.-v li-ref) 1))
+            (match-tabs-loop tab-nodes tabs (+ ni 1) li-ref applied apply-fn))
+        (let [off (loop [j 1]
+                    (cond
+                      (or (> j 5) (>= (+ (.-v li-ref) j) (.-length tabs))) 0
+                      (= (or (some-> (aget tabs (+ (.-v li-ref) j)) .-linkedBrowser .-currentURI .-spec) "")
+                         (.-url s)) j
+                      :else (recur (+ j 1))))]
+          (when (> off 0)
+            (apply-fn (aget tabs (+ (.-v li-ref) off)) s ni)
+            (set! (.-v li-ref) (+ (.-v li-ref) off 1)))
+          (match-tabs-loop tab-nodes tabs (+ ni 1) li-ref applied apply-fn))))))
+
+(def loaded-nodes-ref :- Any {:v nil})
+
+(defn load-from-history [] :- Any
+  (-> (.getRecent history 1)
+      (.then (fn [recent]
+        (when (> (.-length recent) 0)
+          (let [env (.-snapshot (aget recent 0))]
+            (try
+              (do
+                (when (not= (.-nextTabId env) nil)
+                  (set! (.-nextTabId state) (.-nextTabId env)))
+                (set! (.-length closed-tabs) 0)
+                (.apply (.-push closed-tabs) closed-tabs (.-closedTabs env))
+
+                (let [tabs (all-tabs)
+                      tab-nodes (.map
+                                  (.filter (.-nodes env)
+                                    #(not= (.-type %) "group"))
+                                  #(clone-node-fields %))]
+
+                  ;; Store last loaded nodes
+                  (set! (.-lastLoadedNodes state)
+                    (.map tab-nodes #(clone-node-fields %)))
+
+                  ;; Advance nextTabId past all saved node IDs
+                  (.forEach tab-nodes
+                    (fn [s]
+                      (when (and (.-id s) (>= (.-id s) (.-nextTabId state)))
+                        (set! (.-nextTabId state) (+ (.-id s) 1)))))
+
+                  (pfx-log "loadFromHistory"
+                    {:nextTabId (.-nextTabId state)
+                     :savedNextTabId (.-nextTabId env)
+                     :tabNodes (.-length tab-nodes)
+                     :liveTabs (.-length tabs)
+                     :tabNodeIds (.map tab-nodes #(.-id %))
+                     :liveTabPfxIds (.map tabs #(or (and (.-getAttribute %) (.getAttribute % "gjoa-id")) 0))})
+
+                  (let [applied (Set.)
+                        apply-fn (fn [tab s i :- Int]
+                                   (let [id (or (.-id s) (let [nid (.-nextTabId state)]
+                                                           (set! (.-nextTabId state) (+ nid 1))
+                                                           nid))]
+                                     (.set tree-of tab
+                                       {:id id
+                                        :parentId (or (.-parentId s) nil)
+                                        :name (or (.-name s) nil)
+                                        :state (or (.-state s) nil)
+                                        :collapsed (bool (.-collapsed s))})
+                                     (pin-tab-id tab id)
+                                     (.add applied i)))
+                        li-ref {:v 0}]
+
+                    ;; Pairwise matching
+                    (match-tabs-loop tab-nodes tabs 0 li-ref applied apply-fn)
+
+                    (.log console
+                      (str "gjoa-tabs: loaded " (.-length tab-nodes) " saved tab nodes, "
+                           "matched " (.-size applied) " to live tabs (of " (.-length tabs) ")."))
+
+                    ;; Leftover nodes
+                    (set! (.-length saved-tab-queue) 0)
+                    (.forEach tab-nodes
+                      (fn [s i :- Int]
+                        (when (not (.has applied i))
+                          (set! (.-_origIdx s) i)
+                          (.push saved-tab-queue s))))
+
+                    ;; Spaces hydration
+                    (when (.-spaces env)
+                      (let [tab-by-gjoa-id (fn [gjoa-id]
+                                            (.find tabs
+                                              #(let [td (.get tree-of %)]
+                                                 (and td (= (.-id td) gjoa-id)))))]
+                        (.hydrate spaces (.-spaces env) tab-by-gjoa-id)))
+
+                    ;; Full node list for buildFromSaved
+                    (set! (.-v loaded-nodes-ref) (.-nodes env)))))
+              (catch Any e
+                (.error console "gjoa-tabs: loadFromHistory apply error" e)))))))))
+
+;; --- buildFromSaved — groups + tab order from saved data ---
+
+(defn build-from-saved [] :- Bool
+  (let [loaded-nodes (.-v loaded-nodes-ref)]
+    (if (or (not loaded-nodes) (not (.-panel state)))
+      false
+      (let [rows-api (.-v rows-ref)
+            group-nodes (.filter loaded-nodes #(= (.-type %) "group"))
+            leading-groups []
+            gafter :- Any {:entries []}]
+
+        ;; Bucket groups by anchor
+        (.forEach group-nodes
+          (fn [g]
+            (if (= (.-afterTabId g) nil)
+              (.push leading-groups g)
+              (let [entry (.find (.-entries gafter) #(= (aget % 0) (.-afterTabId g)))]
+                (if entry
+                  (.push (aget entry 1) g)
+                  (let [arr [g]]
+                    (.push (.-entries gafter) [(.-afterTabId g) arr])))))))
+
+        (let [mk-group (fn [g]
+                         (let [row (.createGroupRow rows-api (or (.-name g) "") (or (.-level g) 0))]
+                           (set! (.-state (.-_group row)) (or (.-state g) nil))
+                           (set! (.-collapsed (.-_group row)) (bool (.-collapsed g)))
+                           (when (.-spaceId g)
+                             (set! (.-spaceId (.-_group row)) (.-spaceId g)))
+                           (.syncGroupRow rows-api row)
+                           row))]
+
+          ;; Remove existing children
+          (clear-all-rows!)
+
+          ;; Insert leading groups
+          (.forEach leading-groups
+            #(.insertBefore (.-panel state) (mk-group %) (.-spacer state)))
+
+          ;; Insert tabs + trailing groups
+          (.forEach (tabs!)
+            (fn [tab]
+              (let [row (.createTabRow rows-api tab)]
+                (if (and (.-pinned tab) (.-pinnedContainer state))
+                  (.appendChild (.-pinnedContainer state) row)
+                  (do
+                    (.insertBefore (.-panel state) row (.-spacer state))
+                    (let [tid (.-id (tree-data tab))
+                          entry (.find (.-entries gafter) #(= (aget % 0) tid))]
+                      (when entry
+                        (.forEach (aget entry 1)
+                          #(.insertBefore (.-panel state) (mk-group %) (.-spacer state))))))))))
+
+          (when (.-pinnedContainer state)
+            (set! (.-hidden (.-pinnedContainer state))
+              (not (q (.-pinnedContainer state) ".gjoa-tab-row"))))
+
+          (set! (.-v loaded-nodes-ref) nil)
+          (.scheduleTreeResync rows-api)
+          (.updateVisibility rows-api)
+          true)))))
+
+;; --- describe helper for dev debug API ---
+
+(defn describe [el :- Any] :- String
+  (if (not el)
+    "null"
+    (let [tag (or (some-> el .-tagName .toLowerCase) "?")
+          id-str (if (.-id el) (str "#" (.-id el)) "")
+          raw (when (= (js/typeof (.-className el)) "string") (.trim (.-className el)))
+          cls (if raw (str "." (.join (.slice (.split raw (RegExp. "\\s+")) 0 2) ".")) "")]
+      (str tag id-str cls))))
+
+;; --- init — the bootstrap, converted from async to promise chains ---
+
+(defn init [] :- Any
+  ;; Defensive: pre-panel steps wrapped in try/catch
+  (try (ensure-vertical-tabs-default)
+    (catch Any e (.error console "gjoa-tabs: ensureVerticalTabsDefault threw — continuing" e)))
+  (try (migrate-legacy-prefs)
+    (catch Any e (.error console "gjoa-tabs: migrateLegacyPrefs threw — continuing" e)))
+  (try (migrate-toolbar-defaults)
+    (catch Any e (.error console "gjoa-tabs: migrateToolbarDefaults threw — continuing" e)))
+  (try (apply-menubar-default document)
+    (catch Any e (.error console "gjoa-tabs: applyMenubarDefault threw — continuing" e)))
+  (try (try-register-pin-attr)
+    (catch Any e (.error console "gjoa-tabs: tryRegisterPinAttr threw — continuing" e)))
+
+  (-> (-> (load-from-history)
+          (.catch #(.error console "gjoa-tabs: loadFromHistory threw — init proceeds with empty state" %)))
+      (.then (fn []
+        ;; await requestAnimationFrame
+        (-> (Promise. #(requestAnimationFrame %))
+            (.then (fn []
+              (let [rows-api (.-v rows-ref)
+                    vim-api (.-v vim-ref)]
+
+                ;; Create pinned container
+                (set! (.-pinnedContainer state) (xul-id "vbox" "gjoa-pinned-container"))
+                (set! (.-hidden (.-pinnedContainer state)) true)
+                (.setupPinnedContainerDrop drag (.-pinnedContainer state))
+
+                ;; Create panel
+                (set! (.-panel state) (xul-id "vbox" "gjoa-tab-panel"))
+
+                ;; Create spacer
+                (set! (.-spacer state) (xul-id "box" "gjoa-tab-spacer"))
+                (attr! (.-spacer state) "flex" "1")
+                (.appendChild (.-panel state) (.-spacer state))
+                (.setupPanelDrop drag (.-panel state))
+
+                ;; Space header
+                (set! (.-spaceHeader state) (xul-id "hbox" "gjoa-space-header"))
+                (let [header-label (xul-id "label" "gjoa-space-header-label")]
+                  (.appendChild (.-spaceHeader state) header-label))
+                (on! (.-spaceHeader state) "click"
+                  (fn []
+                    (try (.runExCommand (.-v vim-ref) "spc list")
+                      (catch Any e (.error console "gjoa: space header click failed" e)))))
+                (update-space-header)
+
+                ;; Position panel
+                (.positionPanel layout)
+
+                ;; MutationObserver for sidebar attribute changes
+                (let [obs (MutationObserver. #(.positionPanel layout))
+                      opts {:childList true
+                            :attributes true
+                            :attributeFilter ["sidebar-launcher-expanded" "data-gjoa-compact" "gjoa-has-hover"]}]
+                  (.observe obs sidebar-main opts))
+
+                ;; Pref observer for vertical tabs
+                (.addObserver (.-prefs Services) "sidebar.verticalTabs"
+                  {:observe #(.positionPanel layout)})
+
+                ;; Build from saved or fresh
+                (when (not (build-from-saved))
+                  (build-panel rows-api))
+
+                ;; Context menus
+                (build-context-menu
+                  {:startRename (.-startRename vim-api)
+                   :toggleCollapse (.-toggleCollapse rows-api)
+                   :createGroupRow (.-createGroupRow rows-api)
+                   :setCursor (.-setCursor vim-api)
+                   :updateVisibility (.-updateVisibility rows-api)
+                   :scheduleTreeResync (.-scheduleTreeResync rows-api)
+                   :scheduleSave schedule-save})
+                (build-group-context-menu
+                  {:startRename (.-startRename vim-api)
+                   :toggleCollapse (.-toggleCollapse rows-api)
+                   :syncGroupRow (.-syncGroupRow rows-api)
+                   :updateVisibility (.-updateVisibility rows-api)
+                   :scheduleSave schedule-save})
+                (let [panel-menu (build-panel-context-menu
+                                  {:createGroupRow (.-createGroupRow rows-api)
+                                   :startRename (.-startRename vim-api)
+                                   :setCursor (.-setCursor vim-api)
+                                   :updateVisibility (.-updateVisibility rows-api)
+                                   :scheduleSave schedule-save})]
+
+                  (.createModeline vim-api)
+                  (.setupVimKeys vim-api)
+                  (.setupGlobalKeys vim-api)
+                  (.focusPanel vim-api)
+
+                  ;; Install event listeners
+                  (let [teardown-events (.install events)]
+
+                    ;; Catch-up: create rows for tabs added between init and install
+                    (.forEach (tabs!)
+                      (fn [t]
+                        (when (not (.has row-of t))
+                          (let [row (.createTabRow rows-api t)]
+                            (if (.-pinned t)
+                              (.appendChild (.-pinnedContainer state) row)
+                              (.insertBefore (.-panel state) row (.-spacer state)))))))
+
+                    ;; Ensure selected tab in active space
+                    (let [sel (.-selectedTab gBrowser)
+                          active (.activeId spaces)]
+                      (when (and sel (not= (.spaceOf spaces sel) active))
+                        (let [in-active (.find (tabs!)
+                                          #(= (.spaceOf spaces %) active))]
+                          (if in-active
+                            (set! (.-selectedTab gBrowser) in-active)
+                            (.setActive spaces (.spaceOf spaces sel))))))
+                    (.updateVisibility rows-api)
+
+                    ;; Spacer click -> activate vim with last visible row
+                    (on! (.-spacer state) "click"
+                      (fn []
+                        (let [visible (.filter (all-rows) #(not (.-hidden %)))]
+                          (when (> (.-length visible) 0)
+                            (.activateVim vim-api (aget visible (- (.-length visible) 1)))))))
+
+                    ;; Spacer right-click -> panel context menu
+                    (on! (.-spacer state) "contextmenu"
+                      (fn [e]
+                        (.preventDefault e)
+                        (.stopPropagation e)
+                        (.openPopupAtScreen panel-menu (.-screenX e) (.-screenY e) true)))
+
+                    ;; Unload teardown
+                    (on1! window "unload" teardown-events)
+
+                    ;; Session tagger — tag latest event on quit-application
+                    (let [session-tagger
+                            {:observe (fn [_subject topic]
+                               (when (= topic "quit-application")
+                                 (.catch
+                                   (.tagLatest history "session")
+                                   #(.error console "gjoa-tabs: tagLatest on quit failed" %))))}]
+                      (.addObserver (.-obs Services) session-tagger "quit-application")
+                      (on1! window "unload"
+                        #(.removeObserver (.-obs Services) session-tagger "quit-application")))
+
+                    ;; Retention timer — prune old events
+                    (setTimeout
+                      #(.catch (.runRetention history)
+                          (fn [e] (.error console "gjoa-tabs: initial retention pass failed" e)))
+                      30000)
+                    (let [retention-timer
+                            (setInterval
+                              #(.catch (.runRetention history) (fn [] nil))
+                              (* 10 60 1000))]
+                      (on1! window "unload"
+                        (fn []
+                          (clearInterval retention-timer)
+                          (.catch (.close history) (fn [] nil))
+                          (.destroy content-focus)
+                          (.destroy gjoa-api))))
+
+                    ;; Test-only debug API
+                    (when (pref-bool "gjoa.test.exposeAPI" false)
+                      (set! (.-gjoaTest window)
+                        {:state state
+                         :treeOf tree-of
+                         :rowOf row-of
+                         :cursorId (fn []
+                                     (let [r (.-cursor state)]
+                                       (when (and r (.-_tab r))
+                                         (let [td (.get tree-of (.-_tab r))]
+                                           (and td (.-id td))))))
+                         :snapshotTree (fn []
+                                         (let [out []]
+                                           (.forEach (tabs!)
+                                             (fn [t]
+                                               (let [td (.get tree-of t)]
+                                                 (when td
+                                                   (.push out
+                                                     {:id (.-id td)
+                                                      :parentId (.-parentId td)
+                                                      :name (.-name td)
+                                                      :collapsed (.-collapsed td)
+                                                      :pinned (bool (.-pinned t))
+                                                      :url (or (some-> t .-linkedBrowser .-currentURI .-spec) "")
+                                                      :label (.-label t)})))))
+                                           out))
+                         :vim vim-api
+                         :rows rows-api
+                         :scheduleSave schedule-save
+                         :history history
+                         :contentFocus content-focus
+                         :contentInputFocused #(.contentInputFocused content-focus)
+                         :contentFocusDiag #(.diag content-focus)
+                         :Gjoa gjoa-api})
+                      (.log console "gjoa-tabs: gjoaTest debug API exposed"))
+
+                    ;; Dev helpers (window.pfx)
+                    (when (pref-bool "gjoa.debug" false)
+                      (let [pfx-ns (or (.-pfx window) (do (set! (.-pfx window) {}) (.-pfx window)))]
+
+                        (set! (.-measure pfx-ns)
+                          (fn [& els]
+                            (.map els (fn [el i :- Int]
+                              (let [r (some-> el .getBoundingClientRect)]
+                                (if (= r nil)
+                                  {:i i :tag (describe el) :error "no rect"}
+                                  {:i i
+                                   :tag (describe el)
+                                   :x (Math/round (.-left r))
+                                   :y (Math/round (.-top r))
+                                   :w (Math/round (.-width r))
+                                   :h (Math/round (.-height r))
+                                   :right (Math/round (.-right r))
+                                   :bottom (Math/round (.-bottom r))}))))))
+
+                        (set! (.-gaps pfx-ns)
+                          (fn [& els]
+                            (.map (.slice els 1) (fn [el i :- Int]
+                              (let [a (some-> (aget els i) .getBoundingClientRect)
+                                    b (some-> el .getBoundingClientRect)]
+                                (if (or (= a nil) (= b nil))
+                                  {:i i :error "no rect"}
+                                  {:i i
+                                   :between (str (describe (aget els i)) " -> " (describe el))
+                                   :gapY (Math/round (- (.-top b) (.-bottom a)))
+                                   :gapX (Math/round (- (.-left b) (.-right a)))
+                                   :sameY (= (Math/round (.-top a)) (Math/round (.-top b)))
+                                   :sameX (= (Math/round (.-left a)) (Math/round (.-left b)))}))))))
+
+                        (.log console "gjoa-tabs: dev helpers (window.pfx) exposed (gjoa.debug=true)")))
+
+                    (.log console "gjoa-tabs: initialized")))))))))))
+
+;; --- safeInit — wraps init in catch-all ---
+
+(defn safe-init [] :- Any
+  (-> (init)
+      (.catch #(.error console "gjoa-tabs: init() threw — sidebar may be empty" %))))
+
+;; --- clone-node-fields: copy the 6 persistence fields into a fresh object ---
+
+(defn clone-node-fields [src :- Any] :- Any
+  {:id        (.-id src)
+   :parentId  (.-parentId src)
+   :url       (.-url src)
+   :name      (.-name src)
+   :state     (.-state src)
+   :collapsed (.-collapsed src)})
+
+;; --- Boot gate: sidebar-main check + delayed startup ---
+
+(when sidebar-main
+  (if (.-delayedStartupFinished gBrowserInit)
+    (safe-init)
+    (let [obs (fn [subject topic]
+                (when (and (= topic "browser-delayed-startup-finished") (= subject window))
+                  (.removeObserver (.-obs Services) obs topic)
+                  (safe-init)))]
+      (.addObserver (.-obs Services) obs "browser-delayed-startup-finished"))))

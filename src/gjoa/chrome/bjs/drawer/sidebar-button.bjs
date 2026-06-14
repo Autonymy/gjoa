@@ -1,0 +1,139 @@
+#lang beagle/js
+(ns gjoa.drawer.sidebar-button
+  (:require [gjoa.macros :refer [by-id q xul-id attr! mi sep pref-bool set-pref-bool! on! off! has?]]))
+(define-mode strict)
+
+(declare-extern [console window getComputedStyle create-logger] Any)
+
+(defn install [sidebar-button :- Any sidebar-main :- Any compact :- Any] :- Any
+  (let [og-icon (q sidebar-button ".toolbarbutton-icon")
+        og-icon-style (if og-icon
+                        (.-listStyleImage (getComputedStyle og-icon))
+                        nil)]
+
+    (set! (.-display (.-style sidebar-button)) "none")
+
+    (let [button (xul-id "toolbarbutton" "gjoa-sidebar-button")]
+      (set! (.-className button) (.-className sidebar-button))
+      (attr! button "tooltiptext" "Toggle compact mode (right-click for more)")
+
+      (.forEach ["cui-areatype" "widget-id" "widget-type" "removable" "overflows"]
+        #(when (has? sidebar-button %)
+           (attr! button % (or (.getAttribute sidebar-button %) ""))))
+
+      (when og-icon-style
+        (set! (.-listStyleImage (.-style button)) og-icon-style))
+
+      (let [nav-bar (by-id "nav-bar")
+            panel-ui (by-id "PanelUI-button")]
+        (if (and nav-bar panel-ui (= (.-parentNode panel-ui) nav-bar))
+          (.after panel-ui button)
+          (.after sidebar-button button)))
+
+      (let [on-click #(when (= (.-button %) 0)
+                         (.toggle compact))]
+        (on! button "click" on-click)
+
+        (let [menu (xul-id "menupopup" "gjoa-sidebar-button-menu")]
+
+          (let [compact-item (mi "Enable Compact" #(.toggle compact))
+
+                collapse-item (mi "Collapse Layout"
+                                (fn []
+                                  (try
+                                    (let [prev-display (.-display (.-style sidebar-button))]
+                                      (set! (.-display (.-style sidebar-button)) "")
+                                      (.click sidebar-button)
+                                      (set! (.-display (.-style sidebar-button)) prev-display))
+                                    (catch Any e
+                                      (.error console "[GJOA:drawer] collapse layout failed" e)))))
+
+                sidebar-item (mi "Enable Sidebar"
+                               (fn []
+                                 (try
+                                   (cond
+                                     (and (.-SidebarController window) (.-toggle (.-SidebarController window)))
+                                     (.toggle (.-SidebarController window))
+                                     (and (.-SidebarUI window) (.-toggle (.-SidebarUI window)))
+                                     (.toggle (.-SidebarUI window))
+                                     :else
+                                     (let [cmd (by-id "cmd_toggleSidebar")]
+                                       (if (and cmd (.-doCommand cmd))
+                                         (.doCommand cmd)
+                                         (.error console "[GJOA:drawer] no sidebar-toggle API available"))))
+                                   (catch Any e
+                                     (.error console "[GJOA:drawer] sidebar toggle failed" e)))))
+
+                layout-item (mi "Horizontal Tabs"
+                              #(let [vertical (pref-bool "sidebar.verticalTabs" true)]
+                                 (set-pref-bool! "sidebar.verticalTabs" (not vertical))))
+
+                customize-item (mi "Customize Sidebar"
+                                 (fn []
+                                   (try
+                                     (let [native (by-id "toolbar-context-customize-sidebar")]
+                                       (if (and native (.-doCommand native))
+                                         (.doCommand native)
+                                         (when (and native (.-click native))
+                                           (.click native))))
+                                     (catch Any e
+                                       (.error console "gjoa: customize sidebar failed" e)))))]
+
+            (set! (.-id compact-item) "gjoa-toggle-compact")
+            (set! (.-id collapse-item) "gjoa-collapse-layout")
+            (set! (.-id sidebar-item) "gjoa-toggle-sidebar")
+            (set! (.-id layout-item) "gjoa-toggle-tab-layout")
+            (set! (.-id customize-item) "gjoa-customize-sidebar")
+
+            (.append menu compact-item collapse-item sidebar-item layout-item (sep) customize-item)
+
+            (let [popup-set (by-id "mainPopupSet")]
+              (when popup-set
+                (.append popup-set menu)))
+
+            (attr! button "context" "gjoa-sidebar-button-menu")
+
+            (let [on-popup-showing (fn []
+                                    (let [vertical (pref-bool "sidebar.verticalTabs" true)
+                                          is-compact (if vertical
+                                                       (.isCompactVertical compact)
+                                                       (.isCompactHorizontal compact))]
+                                      (attr! compact-item "label" (if is-compact "Disable Compact" "Enable Compact"))
+                                      (set! (.-hidden collapse-item) (not vertical))
+                                      (when vertical
+                                        (let [expanded (has? sidebar-main "sidebar-launcher-expanded")]
+                                          (attr! collapse-item "label" (if expanded "Collapse Layout" "Expand Layout"))))
+                                      (let [sidebar-open (if (and (.-SidebarController window)
+                                                                  (not= (.-isOpen (.-SidebarController window)) js/undefined))
+                                                           (.-isOpen (.-SidebarController window))
+                                                           (and (not (.-hidden sidebar-main))
+                                                                (> (.-width (.getBoundingClientRect sidebar-main)) 0)))]
+                                        (attr! sidebar-item "label" (if sidebar-open "Disable Sidebar" "Enable Sidebar")))
+                                      (attr! layout-item "label" (if vertical "Horizontal Tabs" "Vertical Tabs"))
+                                      (when (.isCompactVertical compact) (.pinSidebar compact))
+                                      (when (.isCompactHorizontal compact) (.pinToolbox compact))))
+
+                  on-popup-hidden (fn []
+                                   (.reconcile compact "menu:popuphidden")
+                                   (.reconcileHorizontal compact "menu:popuphidden"))]
+
+              (on! menu "popupshowing" on-popup-showing)
+              (on! menu "popuphidden" on-popup-hidden)
+
+              {:destroy (fn []
+                (off! button "click" on-click)
+                (off! menu "popupshowing" on-popup-showing)
+                (off! menu "popuphidden" on-popup-hidden)
+                (.remove menu)
+                (.remove button)
+                (set! (.-display (.-style sidebar-button)) ""))})))))))
+
+(js/export (defn make-sidebar-button [deps :- Any] :- Any
+  (let [{:keys [sidebarMain compact]} deps
+        log (create-logger "drawer/sidebar-button")
+        sidebar-main sidebarMain
+        native (by-id "sidebar-button")]
+    (if native
+      (install native sidebar-main compact)
+      (do (log "init:no native #sidebar-button (vertical-tabs+revamp mode) — skipping custom-button swap")
+          {:destroy #(do nil)})))))

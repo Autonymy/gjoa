@@ -1,0 +1,411 @@
+#lang beagle/js
+(ns gjoa.tabs.history
+  (:require [gjoa.macros :refer [pref-str set-pref-str! bool]]))
+(define-mode strict)
+
+;; Temporal workspace history — gjoa's append-only event log over SQLite.
+;;
+;; Storage shape: one SQLite file at <profile>/gjoa-history.sqlite.
+;;   - events            row per meaningful workspace mutation, hash-deduped
+;;   - events_search_content   per-tab url/label rows, kept in sync via app code
+;;   - event_search      FTS5 virtual table over the search-content
+;;
+;; Crash safety: WAL journalling means a crash mid-INSERT rolls back; the
+;; last successful commit is durable. Hash dedupe runs in-memory before
+;; touching the DB so we don't pay a write cost for no-op saves.
+
+(declare-extern [Services Ci PathUtils IOUtils ChromeUtils console JSON Date crypto TextEncoder Uint8Array String Object Array Error RegExp create-logger] Any)
+(def SCHEMA-VERSION :- Int 3)
+
+(def INSTANCE-ID-PREF :- String "gjoa.instance.id")
+
+;; Schema migrations as ordered SQL strings. Each entry migrates from
+;; index N to N+1. The v1->v2 migration backfills instance_id separately
+;; (post-migration, in JS) because it needs the live instanceId value.
+;;
+;; Note: Sqlite.sys.mjs rejects SQL strings matching /\bLIKE\b\s(?![@:?])/i
+;; — including in COMMENTS. Schema SQL is kept comment-free.
+;;
+;; v2->v3 creates an FTS5 virtual table (requires SQLITE_ENABLE_FTS5, enabled
+;; by patch 0007). Migration is attempted in JS — if FTS5 is unavailable the
+;; migration still completes, and search falls back to substring queries.
+(def fts-available :- Any {:v false})
+(def MIGRATIONS :- Any
+  [;; v0 -> v1: initial schema
+   "CREATE TABLE events (
+    id        INTEGER PRIMARY KEY,
+    timestamp INTEGER NOT NULL,
+    hash      TEXT    NOT NULL UNIQUE,
+    snapshot  TEXT    NOT NULL,
+    tag       TEXT
+  );
+  CREATE INDEX events_timestamp ON events(timestamp DESC);
+  CREATE INDEX events_tag       ON events(tag) WHERE tag IS NOT NULL;
+
+  CREATE TABLE events_search_content (
+    rowid    INTEGER PRIMARY KEY AUTOINCREMENT,
+    event_id INTEGER NOT NULL REFERENCES events(id) ON DELETE CASCADE,
+    url      TEXT NOT NULL,
+    label    TEXT NOT NULL
+  );
+  CREATE INDEX esc_event ON events_search_content(event_id);
+  CREATE INDEX esc_url   ON events_search_content(url);
+  CREATE INDEX esc_label ON events_search_content(label)"
+   ;; v1 -> v2: per-record instanceId
+   "ALTER TABLE events ADD COLUMN instance_id TEXT;
+  CREATE INDEX events_instance ON events(instance_id)"
+   ;; v2 -> v3: FTS5 (handled in JS, not SQL — see apply-migration-step)
+   "SELECT 1"])
+
+(def log :- Any (create-logger "history"))
+(def state :- Any {:conn nil :lastHash nil :instanceId nil})
+(defn load-instance-id [] :- String
+  (or (.-instanceId state)
+      (let [id-from-pref (pref-str INSTANCE-ID-PREF "")]
+        (if (not= id-from-pref "")
+          (do (set! (.-instanceId state) id-from-pref)
+              id-from-pref)
+          (let [fresh (.randomUUID crypto)]
+            (set-pref-str! INSTANCE-ID-PREF fresh)
+            (log "instanceId:generated" {:id fresh})
+            (set! (.-instanceId state) fresh)
+            fresh)))))
+;; Stable stringify — JSON.stringify with sorted keys at every level.
+;; {a:1,b:2} and {b:2,a:1} dedupe identically.
+(defn canonicalize [value :- Any] :- String
+  (cond
+    (= value nil)                       (.stringify JSON value)
+    (not= (js/typeof value) "object")   (.stringify JSON value)
+    (.isArray Array value)
+      (str "[" (.join (.map value canonicalize) ",") "]")
+    :else
+      (let [keys (.sort (.keys Object value))]
+        (str "{"
+             (.join (.map keys
+                      #(str (.stringify JSON %) ":" (canonicalize (aget value %))))
+                    ",")
+             "}"))))
+
+;; Hash a string to a hex sha256 digest using SubtleCrypto. We hash the
+;; canonical JSON form (keys sorted) so structurally-equal snapshots dedupe
+;; even if key order in the source object differs.
+;; Returns a promise that resolves to the hex string.
+(defn sha256-hex [text :- String] :- Any
+  (let [data (.encode (TextEncoder.) text)]
+    (-> (.digest (.-subtle crypto) "SHA-256" data)
+        (.then #(let [bytes (Uint8Array. %)
+                      hex-parts []]
+                  (.forEach bytes
+                    (fn [b] (.push hex-parts (.padStart (.toString b 16) 2 "0"))))
+                  (.join hex-parts ""))))))
+;; Migrate legacy palefox-history.sqlite files.
+;; Processes suffixes ["", "-wal", "-shm"] sequentially via recursion.
+(defn migrate-legacy-suffix [prof-dir :- String path :- String suffixes :- Any idx :- Int] :- Any
+  (when (< idx (.-length suffixes))
+    (let [suffix (aget suffixes idx)
+          old-path (.join PathUtils prof-dir (str "palefox-history.sqlite" suffix))
+          new-path (str path suffix)]
+      (-> (.exists IOUtils old-path)
+          (.then #(when %
+                    (-> (.exists IOUtils new-path)
+                        (.then (fn [new-exists]
+                          (when (not new-exists)
+                            (-> (.move IOUtils old-path new-path)
+                                (.then (fn [] (log "migrateLegacyDB" {:from old-path :to new-path}))))))))))
+          (.catch #(log "migrateLegacyDB:fail" {:suffix suffix :error (String %)}))
+          (.then #(migrate-legacy-suffix prof-dir path suffixes (+ idx 1)))))))
+
+;; Apply schema migrations, processing from current version to SCHEMA-VERSION
+;; via recursive helper.
+(defn execute-stmts [conn :- Any stmts :- Any idx :- Int] :- Any
+  (when (< idx (.-length stmts))
+    (let [trimmed (.trim (aget stmts idx))]
+      (if (= trimmed "")
+        (execute-stmts conn stmts (+ idx 1))
+        (-> (.execute conn trimmed)
+            (.then #(execute-stmts conn stmts (+ idx 1))))))))
+
+(defn try-create-fts [conn :- Any] :- Any
+  (-> (.execute conn
+        "CREATE VIRTUAL TABLE IF NOT EXISTS events_fts USING fts5(url, label, content=events_search_content, content_rowid=rowid)")
+      (.then #(do (set! (.-v fts-available) true)
+                  (.execute conn "INSERT INTO events_fts(events_fts) VALUES('rebuild')")))
+      (.then #(log "migrate:fts5" {:status "created"}))
+      (.catch #(log "migrate:fts5" {:status "unavailable" :error (String %)}))))
+
+(defn probe-fts [conn :- Any] :- Any
+  (-> (.execute conn "SELECT * FROM events_fts LIMIT 0")
+      (.then #(set! (.-v fts-available) true))
+      (.catch #(set! (.-v fts-available) false))))
+
+(defn apply-migration-step [conn :- Any v :- Int] :- Any
+  (when (< v SCHEMA-VERSION)
+    (let [sql (aget MIGRATIONS v)]
+      (if (not sql)
+        (throw (Error. (str "gjoa-history: no migration for v" v " -> v" (+ v 1))))
+        (-> (.executeTransaction conn
+              #(let [stmts (.split sql (RegExp. ";\\s*\\n"))]
+                 (-> (execute-stmts conn stmts 0)
+                     (.then (fn []
+                       (when (= v 1)
+                         (let [id (load-instance-id)]
+                           (-> (.execute conn
+                                 "UPDATE events SET instance_id = ? WHERE instance_id IS NULL"
+                                 [id])
+                               (.then (fn [] (log "migrate:backfill-instance" {:id id}))))))))
+                     (.then (fn [] (.execute conn (str "PRAGMA user_version = " (+ v 1))))))))
+            (.then #(when (= v 2) (try-create-fts conn)))
+            (.then #(apply-migration-step conn (+ v 1))))))))
+
+(defn apply-migrations [conn :- Any] :- Any
+  (-> (.execute conn "PRAGMA user_version")
+      (.then #(let [current (if (and % (.-length %) (aget % 0))
+                              (or (.getResultByName (aget % 0) "user_version") 0)
+                              0)]
+                (if (>= current SCHEMA-VERSION)
+                  (do (log "migrate:current" {:version current}) nil)
+                  (do (log "migrate:apply" {:from current :to SCHEMA-VERSION})
+                      (apply-migration-step conn current)))))))
+
+(defn prime-last-hash [conn :- Any] :- Any
+  (-> (.execute conn "SELECT hash FROM events ORDER BY id DESC LIMIT 1")
+      (.then #(when (and % (.-length %))
+                (set! (.-lastHash state) (.getResultByName (aget % 0) "hash"))))))
+
+(defn open-connection [] :- Any
+  (if (.-conn state)
+    (.resolve js/Promise (.-conn state))
+    (let [sqlite-mod (.importESModule ChromeUtils
+                       "resource://gre/modules/Sqlite.sys.mjs")
+          sqlite (.-Sqlite sqlite-mod)
+          prof-dir (.-path (.get (.-dirsvc Services) "ProfD" (.-nsIFile Ci)))
+          path (.join PathUtils prof-dir "gjoa-history.sqlite")]
+      (-> (migrate-legacy-suffix prof-dir path ["" "-wal" "-shm"] 0)
+          (.then #(do (log "openConnection" {:path path})
+                      (.openConnection sqlite {:path path})))
+          (.then #(-> (.execute % "PRAGMA journal_mode = WAL")
+                      (.then (fn [] (.execute % "PRAGMA foreign_keys = ON")))
+                      (.then (fn [] (apply-migrations %)))
+                      (.then (fn [] (probe-fts %)))
+                      (.then (fn []
+                        (set! (.-conn state) %)
+                        (prime-last-hash %)))
+                      (.then (fn [] %))))))))
+(defn date-label [d :- Any] :- String
+  (let [dt (or d (Date.))
+        day-short (.toLocaleDateString dt "en-US" {:weekday "short"})
+        yyyy (.getFullYear dt)
+        mm (.padStart (String (+ (.getMonth dt) 1)) 2 "0")
+        dd (.padStart (String (.getDate dt)) 2 "0")
+        hh (.padStart (String (.getHours dt)) 2 "0")
+        min (.padStart (String (.getMinutes dt)) 2 "0")]
+    (str "Session - " day-short " " yyyy "/" mm "/" dd " " hh ":" min)))
+
+(defn decode-row [row :- Any] :- Any
+  (let [snap (.getResultByName row "snapshot")]
+    {:id (.getResultByName row "id")
+     :timestamp (.getResultByName row "timestamp")
+     :hash (.getResultByName row "hash")
+     :snapshot (.parse JSON snap)
+     :tag (.getResultByName row "tag")
+     :instanceId (or (.getResultByName row "instance_id") "")}))
+
+;; Extract (url, label) pairs from a snapshot for search indexing.
+(defn extract-searchable-rows [snapshot :- Any] :- Any
+  (let [out []]
+    (.forEach (.-nodes snapshot)
+      #(let [url (or (.-url %) "")
+             label (or (.-name %) "")]
+         (when (or url label)
+           (.push out {:url url :label label}))))
+    out))
+
+;; Insert search content rows sequentially via recursion.
+(defn insert-search-rows [conn :- Any event-id :- Any rows :- Any idx :- Int] :- Any
+  (when (< idx (.-length rows))
+    (let [row (aget rows idx)]
+      (-> (.execute conn
+            "INSERT INTO events_search_content(event_id, url, label) VALUES (?, ?, ?)"
+            [event-id (.-url row) (.-label row)])
+          (.then #(when (.-v fts-available)
+                    (.execute conn
+                      "INSERT INTO events_fts(rowid, url, label) VALUES (last_insert_rowid(), ?, ?)"
+                      [(.-url row) (.-label row)])))
+          (.catch #(log "insert-search-rows:fts-sync" {:error (String %)}))
+          (.then #(insert-search-rows conn event-id rows (+ idx 1)))))))
+
+;; Build search conditions from tokens; returns {conditions, params}.
+(defn build-search-query [tokens :- Any] :- Any
+  (let [escape-like (fn [s]
+                      (.replace s (RegExp. "([%_\\\\])" "g") "\\$1"))
+        conditions []
+        params []]
+    (.forEach tokens
+      #(let [pat (str "%" (escape-like %) "%")]
+         (.push conditions "(esc.url LIKE ? ESCAPE '\\' OR esc.label LIKE ? ESCAPE '\\')")
+         (.push params pat)
+         (.push params pat)))
+    {:conditions conditions :params params}))
+(defn with-conn [f :- Any] :- Any (-> (open-connection) (.then f)))
+(def EVENTS-COLS :- String "SELECT id, timestamp, hash, snapshot, tag, instance_id FROM events")
+(defn query-rows [sql :- String params :- Any] :- Any
+  (-> (with-conn #(.execute % sql params)) (.then #(.map % decode-row))))
+(defn query-one [sql :- String params :- Any] :- Any
+  (-> (with-conn #(.execute % sql params))
+      (.then #(when (.-length %) (decode-row (aget % 0))))))
+(defn read-changes [rows :- Any] :- Int
+  (if (and rows (.-length rows) (aget rows 0))
+    (or (.getResultByName (aget rows 0) "c") 0)
+    0))
+(js/export (defn make-history [] :- Any
+  {:appendEvent
+   (fn [snapshot]
+     (with-conn #(let [canon (canonicalize snapshot)]
+           (-> (sha256-hex canon)
+               (.then (fn [hash]
+                 (when (not= hash (.-lastHash state))
+                   (let [ts (.now Date)
+                         inst-id (load-instance-id)
+                         result {:insertedId nil}]
+                     (.then
+                      (.executeTransaction %
+                        (fn []
+                          (-> (.execute %
+                                "INSERT OR IGNORE INTO events(timestamp, hash, snapshot, tag, instance_id) VALUES (?, ?, ?, NULL, ?)"
+                                [ts hash canon inst-id])
+                              (.then (fn []
+                                (.execute %
+                                  "SELECT id FROM events WHERE hash = ?"
+                                  [hash])))
+                              (.then (fn [id-rows]
+                                (when (.-length id-rows)
+                                  (set! (.-insertedId result)
+                                        (.getResultByName (aget id-rows 0) "id"))
+                                  (insert-search-rows %
+                                    (.-insertedId result)
+                                    (extract-searchable-rows snapshot)
+                                    0)))))))
+                      (fn []
+                        (when (not= (.-insertedId result) nil)
+                          (set! (.-lastHash state) hash)
+                          (log "appendEvent"
+                               {:id (.-insertedId result)
+                                :ts ts
+                                :hashHead (.slice hash 0 12)}))
+                        (.-insertedId result)))))))))))
+
+   :tagLatest
+   (fn [kind label]
+     (with-conn #(let [final-label (or label
+                                       (if (= kind "session")
+                                         (date-label nil)
+                                         "Untitled"))
+                       tag-value (str kind ":" final-label)]
+           (-> (.execute %
+                 "UPDATE events SET tag = ? WHERE id = (SELECT MAX(id) FROM events)"
+                 [tag-value])
+               (.then (fn []
+                 (.execute %
+                   "SELECT id FROM events ORDER BY id DESC LIMIT 1")))
+               (.then (fn [id-rows]
+                 (let [id (and id-rows (.-length id-rows) (aget id-rows 0)
+                               (.getResultByName (aget id-rows 0) "id"))]
+                   (log "tagLatest" {:id id :tagValue tag-value})
+                   id)))))))
+
+   :getTagged
+   (fn [limit]
+     (query-rows (str EVENTS-COLS " WHERE tag IS NOT NULL ORDER BY timestamp DESC LIMIT ?")
+                 [(or limit 50)]))
+
+   :getById
+   (fn [id] (query-one (str EVENTS-COLS " WHERE id = ?") [id]))
+
+   :getRecent
+   (fn [limit]
+     (query-rows (str EVENTS-COLS " ORDER BY timestamp DESC LIMIT ?")
+                 [(or limit 50)]))
+
+   :search
+   (fn [query opts]
+     (let [tagged-only (bool (and opts (.-taggedOnly opts)))
+           lim (or (and opts (.-limit opts)) 50)
+           trimmed (.trim query)]
+       (if (= trimmed "")
+         (.resolve js/Promise [])
+         (if (.-v fts-available)
+           (let [match-expr (.join
+                              (.map (.filter (.split trimmed (RegExp. "\\s+")) Boolean)
+                                #(str "\"" (.replace % (RegExp. "\"" "g") "\"\"") "\"" " *"))
+                              " ")
+                 tagged-clause (if tagged-only " AND e.tag IS NOT NULL" "")
+                 sql (str "SELECT e.id, e.timestamp, e.hash, e.snapshot, e.tag, e.instance_id"
+                          " FROM events e"
+                          " WHERE e.id IN ("
+                          "   SELECT DISTINCT esc.event_id FROM events_search_content esc"
+                          "   WHERE esc.rowid IN (SELECT rowid FROM events_fts WHERE events_fts MATCH ?)"
+                          " )"
+                          tagged-clause
+                          " ORDER BY e.timestamp DESC"
+                          " LIMIT ?")]
+             (query-rows sql [match-expr lim]))
+           (let [tokens (.filter (.split trimmed (RegExp. "\\s+")) Boolean)
+                 qr (build-search-query tokens)
+                 where-clause (.join (.-conditions qr) " AND ")
+                 tagged-clause (if tagged-only " AND events.tag IS NOT NULL" "")
+                 sql (str "SELECT events.id, events.timestamp, events.hash, events.snapshot, events.tag, events.instance_id"
+                          " FROM events"
+                          " JOIN events_search_content esc ON esc.event_id = events.id"
+                          " WHERE " where-clause
+                          tagged-clause
+                          " GROUP BY events.id"
+                          " ORDER BY events.timestamp DESC"
+                          " LIMIT ?")
+                 params (.-params qr)]
+             (.push params lim)
+             (query-rows sql params))))))
+
+   :runRetention
+   (fn [opts]
+     (with-conn #(let [days (or (and opts (.-retainDays opts))
+                                (.getIntPref (.-prefs Services) "gjoa.history.retainDays" 30))
+                       max-rows (or (and opts (.-maxRows opts))
+                                    (.getIntPref (.-prefs Services) "gjoa.history.maxRows" 10000))
+                       cutoff (- (.now Date) (* days 24 60 60 1000))
+                       result {:deleted 0}]
+           (-> (.executeTransaction %
+                 (fn []
+                   (-> (.execute %
+                         "DELETE FROM events WHERE tag IS NULL AND timestamp < ?"
+                         [cutoff])
+                       (.then (fn [] (.execute % "SELECT changes() AS c")))
+                       (.then (fn [r] (set! (.-deleted result) (+ (.-deleted result) (read-changes r)))))
+                       (.then (fn []
+                         (.execute %
+                           "DELETE FROM events WHERE tag IS NULL AND id IN (SELECT id FROM events WHERE tag IS NULL ORDER BY timestamp ASC LIMIT MAX(0, (SELECT COUNT(*) FROM events WHERE tag IS NULL) - ?))"
+                           [max-rows])))
+                       (.then (fn [] (.execute % "SELECT changes() AS c")))
+                       (.then (fn [r] (set! (.-deleted result) (+ (.-deleted result) (read-changes r))))))))
+               (.then (fn []
+                 (when (.-deleted result)
+                   (log "runRetention"
+                        {:deleted (.-deleted result)
+                         :retainDays days
+                         :maxRows max-rows}))
+                 (.-deleted result)))))))
+
+   :lastHash
+   (fn [] (.-lastHash state))
+
+   :instanceId
+   (fn [] (load-instance-id))
+
+   :close
+   (fn []
+     (if (.-conn state)
+       (-> (.close (.-conn state))
+           (.catch (fn [_e] nil))
+           (.then (fn []
+             (set! (.-conn state) nil)
+             (set! (.-lastHash state) nil))))
+       (.resolve js/Promise nil)))}))

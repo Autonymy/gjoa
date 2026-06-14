@@ -1,0 +1,182 @@
+#lang beagle/js
+(ns gjoa.tabs.helpers
+  (:require [gjoa.macros :refer [qa attr! has? tabs! bool]]))
+(define-mode strict)
+
+(declare-extern [create-logger PIN-ATTR tree-of state gBrowser console ChromeUtils String Number Set Array JSON Math SessionStore] Any)
+
+(def log :- Any (create-logger "tabs"))
+
+;; SessionStore resolution — may not exist at import time
+(js/export (def SS :- Any
+  (let [try-global (try
+                     (if (not= (js/typeof SessionStore) "undefined")
+                       SessionStore
+                       nil)
+                     (catch Any _e nil))]
+    (or try-global
+        (try
+          (.-SessionStore
+            (.importESModule ChromeUtils
+              "resource:///modules/sessionstore/SessionStore.sys.mjs"))
+          (catch Any e
+            (.error console "gjoa-tabs: SessionStore unavailable" e)
+            nil))))))
+
+;; mutable flag for pin-attr registration
+(def pin-reg :- Any {:done false})
+
+(js/export (defn try-register-pin-attr [] :- Any
+  (when (and (not (.-done pin-reg)) SS (.-persistTabAttribute SS))
+    (try
+      (.persistTabAttribute SS PIN-ATTR)
+      (set! (.-done pin-reg) true)
+      (catch Any e
+        (.error console "gjoa-tabs: persistTabAttribute failed" e))))))
+
+(js/export (defn pin-tab-id [tab :- Any id :- Any] :- Any
+  (try
+    (attr! tab PIN-ATTR (String id))
+    (catch Any _e nil))))
+
+(js/export (defn read-pinned-id [tab :- Any] :- Int
+  (try
+    (let [get-attr (fn [a] (and (.-getAttribute tab) (.getAttribute tab a)))
+          try-legacy (fn []
+            (let [raw (get-attr "pfx-id")]
+              (when raw
+                (let [n (Number raw)]
+                  (when n
+                    (try (attr! tab PIN-ATTR (String n)) (catch Any _e nil))
+                    n)))))
+          raw (get-attr PIN-ATTR)]
+      (or (and raw (Number raw)) (try-legacy) 0))
+    (catch Any _e 0))))
+
+(js/export (defn tree-data [tab :- Any] :- Any
+  (if (.has tree-of tab)
+    (.get tree-of tab)
+    (let [pinned-id (read-pinned-id tab)
+          id (if pinned-id
+               (do
+                 (when (>= pinned-id (.-nextTabId state))
+                   (set! (.-nextTabId state) (+ pinned-id 1)))
+                 (log "treeData:pfxId"
+                      {:pfxId pinned-id
+                       :label (.-label tab)
+                       :nextTabId (.-nextTabId state)})
+                 pinned-id)
+               (let [fresh (.-nextTabId state)]
+                 (set! (.-nextTabId state) (+ (.-nextTabId state) 1))
+                 (pin-tab-id tab fresh)
+                 (log "treeData:fresh"
+                      {:id fresh
+                       :label (.-label tab)
+                       :nextTabId (.-nextTabId state)})
+                 fresh))]
+      (.set tree-of tab
+            {:id id :parentId nil :name nil :state nil :collapsed false})
+      (.get tree-of tab)))))
+
+(js/export (defn tab-by-id [id :- Any] :- Any
+  (if (or (= id nil) (= id js/undefined)
+          (not= (js/typeof id) "number") (not id))
+    nil
+    (.find (tabs!)
+           #(let [td (.get tree-of %)]
+              (and td (= (.-id td) id)))))))
+
+(js/export (defn group-by-id [id :- Any] :- Any
+  (when id
+    (.find (all-rows)
+           #(let [g (.-_group %)]
+              (and g (= (.-id g) id)))))))
+
+(js/export (defn parent-of-tab [tab :- Any] :- Any
+  (tab-by-id (.-parentId (tree-data tab)))))
+
+(js/export (defn level-of [tab :- Any] :- Int
+  (let [seen (Set.)]
+    (loop [t tab lv 0]
+      (if (or (not t) (.has seen t))
+        lv
+        (do
+          (.add seen t)
+          (let [pid (.-parentId (tree-data t))]
+            (cond
+              (or (= pid nil) (= pid js/undefined)) lv
+              (= (js/typeof pid) "string")
+                (let [group (group-by-id pid)]
+                  (if (not (some-> group .-_group))
+                    lv
+                    (+ lv 1 (or (.-level (.-_group group)) 0))))
+              :else
+                (let [p (tab-by-id pid)]
+                  (if (not p) lv (recur p (+ lv 1))))))))))))
+
+(js/export (defn level-of-row [row :- Any] :- Int
+  (cond
+    (not row) 0
+    (.-_group row) (or (.-level (.-_group row)) 0)
+    (.-_tab row) (level-of (.-_tab row))
+    :else 0)))
+
+(js/export (defn data-of [row :- Any] :- Any
+  (cond
+    (.-_group row) (.-_group row)
+    (.-_tab row) (tree-data (.-_tab row))
+    :else nil)))
+
+(js/export (defn all-tabs [] :- (Vec Any)
+  (tabs!)))
+
+(js/export (defn all-rows [] :- (Vec Any)
+  (let [pinned (if (.-pinnedContainer state)
+                 (Array/from (qa (.-pinnedContainer state) ".gjoa-tab-row"))
+                 [])
+        tree-rows (if (.-panel state)
+                    (Array/from (qa (.-panel state)
+                                  ".gjoa-tab-row, .gjoa-group-row"))
+                    [])]
+    (.concat pinned tree-rows))))
+
+(js/export (defn has-children [row :- Any] :- Bool
+  (let [next (.-nextElementSibling row)]
+    (if (or (not next) (= next (.-spacer state)))
+      false
+      (> (level-of-row next) (level-of-row row))))))
+
+(js/export (defn subtree-rows [row :- Any] :- (Vec Any)
+  (if (not row)
+    []
+    (let [lv (level-of-row row)
+          out [row]]
+      (loop [cur (aget out 0)]
+        (let [nxt (.-nextElementSibling cur)]
+          (when (and nxt (not= nxt (.-spacer state))
+                     (> (level-of-row nxt) lv))
+            (.push out nxt)
+            (recur nxt))))
+      out))))
+
+(js/export (defn is-horizontal [] :- Bool
+  (bool (and (.-panel state) (has? (.-panel state) "gjoa-horizontal")))))
+
+(js/export (defn tab-url [tab :- Any] :- String
+  (if (not tab) ""
+    (let [spec (some-> tab .-linkedBrowser .-currentURI .-spec)]
+      (if (and spec (not= spec "about:blank")) spec
+        (or (when SS
+              (try
+                (let [raw (.getTabState SS tab)]
+                  (when raw
+                    (let [ts (JSON/parse raw)
+                          entries (.-entries ts)]
+                      (when (and (Array/isArray entries) (.-length entries))
+                        (let [idx (Math/max 0 (Math/min (- (.-length entries) 1)
+                                                        (- (or (.-index ts) 1) 1)))]
+                          (some-> entries (aget idx) .-url))))))
+                (catch Any e
+                  (.error console "gjoa-tabs: getTabState failed" e)
+                  nil)))
+            spec ""))))))

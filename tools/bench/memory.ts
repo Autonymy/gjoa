@@ -23,10 +23,10 @@ const { values } = parseArgs({
   },
 });
 
-const NUM_TABS = parseInt(values.tabs!, 10);
-const SETTLE_MS = parseInt(values["settle-time"]!, 10);
-const GJOA_BIN = values["gjoa-bin"] ?? findBinary("gjoa");
-const FIREFOX_BIN = values["firefox-bin"] ?? findBinary("firefox");
+const NUM_TABS = parseInt(values.tabs as string, 10);
+const SETTLE_MS = parseInt(values["settle-time"] as string, 10);
+const GJOA_BIN = (values["gjoa-bin"] as string | undefined) ?? findBinary("gjoa");
+const FIREFOX_BIN = (values["firefox-bin"] as string | undefined) ?? findBinary("firefox");
 
 function findBinary(name: string): string {
   if (name === "gjoa") {

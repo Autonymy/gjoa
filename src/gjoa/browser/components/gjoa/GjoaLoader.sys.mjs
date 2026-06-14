@@ -61,7 +61,6 @@ const PROD_SCRIPTS = [
   "gjoa-security.uc.js",
   "gjoa-drawer.uc.js",
   "gjoa-tabs.uc.js",
-  "gjoa-dark-mode.uc.js",
 ];
 const PROD_STYLES = [
   "gjoa.uc.css",
@@ -175,10 +174,23 @@ const observer = {
   },
 };
 
+function setDefaults() {
+  try {
+    const d = Services.prefs.getDefaultBranch("");
+    d.setCharPref("browser.toolbars.bookmarks.visibility", "never");
+    d.setBoolPref("sidebar.verticalTabs", true);
+    d.setBoolPref("gjoa.sidebar.menuBar", false);
+    d.setBoolPref("gjoa.toolbar.newTabButton", false);
+  } catch (e) {
+    console.error("gjoa-loader: setDefaults failed", e);
+  }
+}
+
 export const GjoaLoader = {
   start() {
     if (observerRegistered) return;
     observerRegistered = true;
+    setDefaults();
     Services.obs.addObserver(observer, "chrome-document-loaded");
     const dev = devModeDir();
     if (dev) {

@@ -1,0 +1,38 @@
+#lang beagle/js
+(ns gjoa.platform.history)
+(define-mode strict)
+
+(defn- is-of-kind [kind :- String] :- Any
+  (let [prefix (str kind ":")]
+    #(and (.-tag %)
+          (.startsWith (.-tag %) prefix))))
+
+(js/export (defn make-persisted [history :- Any] :- Any
+  {:history
+   {:recent #(.getRecent history (or (and % (.-limit %)) 50))
+    :search (fn [query opts]
+      (.search history query
+        {:taggedOnly (or (and opts (.-taggedOnly opts)) false)
+         :limit (or (and opts (.-limit opts)) 50)}))
+    :byId #(.getById history %)
+    :instanceId #(.instanceId history)}
+
+   :checkpoints
+   {:list (fn [opts]
+      (.then (.getTagged history (or (and opts (.-limit opts)) 100))
+        #(.filter % (is-of-kind "checkpoint"))))
+    :search (fn [query opts]
+      (.then (.search history query {:taggedOnly true
+                                     :limit (or (and opts (.-limit opts)) 50)})
+        #(.filter % (is-of-kind "checkpoint"))))
+    :tag #(.tagLatest history "checkpoint" %)}
+
+   :sessions
+   {:list (fn [opts]
+      (.then (.getTagged history (or (and opts (.-limit opts)) 100))
+        #(.filter % (is-of-kind "session"))))
+    :search (fn [query opts]
+      (.then (.search history query {:taggedOnly true
+                                     :limit (or (and opts (.-limit opts)) 50)})
+        #(.filter % (is-of-kind "session"))))
+    :tag #(.tagLatest history "session" %)}}))

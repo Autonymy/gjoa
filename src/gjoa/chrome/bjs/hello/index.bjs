@@ -1,0 +1,5 @@
+#lang beagle/js
+(ns gjoa.hello)
+(define-mode strict)
+
+(println "[GJOA] chrome loader active")

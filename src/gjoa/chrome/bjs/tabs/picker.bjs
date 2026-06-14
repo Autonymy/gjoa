@@ -1,0 +1,295 @@
+#lang beagle/js
+(ns gjoa.tabs.picker
+  (:require [gjoa.macros :refer [q xul-new html-new attr! key= on! onc! offc! xul htm bool]]))
+(define-mode strict)
+
+(declare-extern document Any)
+
+;; --- helpers ---
+
+(defn compute-filtered [all-items :- Any query :- String
+                         preserve :- Bool filter-fn :- Any] :- Any
+  (if (= query "")
+    (.slice all-items)
+    (let [matched-set (Set.)]
+      (.forEach all-items
+        #(when (if filter-fn
+                 (filter-fn % query)
+                 (let [hay (.toLowerCase (str (or (.-display %) "") " " (or (.-secondary %) "")))]
+                   (.includes hay query)))
+           (.add matched-set %)))
+      (if (not preserve)
+        (.filter all-items #(.has matched-set %))
+        (let [by-id (Map.)]
+          (.forEach all-items
+            #(when (and (not= (.-id %) nil) (not= (.-id %) js/undefined))
+               (.set by-id (.-id %) %)))
+          (let [visible (Set. matched-set)]
+            (.forEach matched-set
+              #(loop [cur %]
+                 (when (and cur (not= (.-parentId cur) nil) (not= (.-parentId cur) js/undefined))
+                   (let [p (.get by-id (.-parentId cur))]
+                     (when (and p (not (.has visible p)))
+                       (.add visible p)
+                       (recur p))))))
+            (.filter all-items #(.has visible %))))))))
+
+(defn is-direct-match [item :- Any query :- String] :- Bool
+  (if (= query "")
+    true
+    (let [hay (.toLowerCase (str (or (.-display item) "") " " (or (.-secondary item) "")))]
+      (.includes hay query))))
+
+(defn clear-children [el :- Any] :- Any
+  (when (.-firstChild el)
+    (.remove (.-firstChild el))
+    (clear-children el)))
+
+;; --- factory ---
+
+(js/export (defn make-picker [deps :- Any] :- Any
+  (let [st :- Any {:pickerEl nil
+                    :pickerInput nil
+                    :pickerList nil
+                    :active false
+                    :items []
+                    :filtered []
+                    :selectedIdx 0
+                    :onSelect nil
+                    :actions []
+                    :preserveTree false
+                    :filterItem nil}
+
+        ;; single forward ref for the show/open-action-menu cycle
+        show-ref :- Any {:fn nil}
+
+        reset-st! (fn []
+          (set! (.-active st) false)
+          (set! (.-onSelect st) nil)
+          (set! (.-actions st) [])
+          (set! (.-preserveTree st) false)
+          (when (.-pickerEl st)
+            (set! (.-hidden (.-pickerEl st)) true)))
+
+        dismiss (fn []
+          (when (.-active st)
+            (reset-st!)
+            (.restoreFocus deps)))
+
+        commit (fn []
+          (when (.-active st)
+            (let [item (aget (.-filtered st) (.-selectedIdx st))
+                  cb (.-onSelect st)
+                  query (or (some-> (.-pickerInput st) .-value) "")]
+              (reset-st!)
+              (when (and item cb)
+                (cb item query)))))
+
+        ;; --- render-list ---
+        render-list (fn []
+          (when (.-pickerList st)
+            (clear-children (.-pickerList st))
+            (if (= (.-length (.-filtered st)) 0)
+              (let [empty (xul "label" "gjoa-picker-empty")]
+                (attr! empty "value" "(no matches)")
+                (.appendChild (.-pickerList st) empty))
+              (do
+                (let [query (or (some-> (.-pickerInput st) .-value .trim .toLowerCase) "")]
+                  (.forEach (.-filtered st)
+                    (fn [item idx]
+                      (let [row (xul "hbox" "gjoa-picker-row")]
+                        (when (= idx (.-selectedIdx st))
+                          (attr! row "gjoa-picker-selected" "true"))
+                        (when (and (.-preserveTree st) query (not (is-direct-match item query)))
+                          (attr! row "gjoa-picker-context" "true"))
+                        (when (.-depth item)
+                          (.setProperty (.-style row) "padding-left"
+                            (str (+ 14 (* (.-depth item) 14)) "px")
+                            "important"))
+
+                        ;; icon column
+                        (when (.-icon item)
+                          (if (.test (RegExp. "^https?:|^data:|^chrome:|^moz-") (.-icon item))
+                            (let [img (htm "img" "gjoa-picker-icon")]
+                              (set! (.-src img) (.-icon item))
+                              (set! (.-alt img) "")
+                              (.appendChild row img))
+                            (let [ic (xul "label" "gjoa-picker-icon-text")]
+                              (attr! ic "value" (.-icon item))
+                              (.appendChild row ic))))
+
+                        ;; text column
+                        (let [text (xul "hbox" "gjoa-picker-text")]
+                          (attr! text "flex" "1")
+                          (let [primary (xul "label" "gjoa-picker-label")]
+                            (attr! primary "value" (.-display item))
+                            (attr! primary "crop" "end")
+                            (.appendChild text primary))
+                          (when (.-secondary item)
+                            (let [sec (xul "label" "gjoa-picker-secondary")]
+                              (attr! sec "value" (.-secondary item))
+                              (attr! sec "crop" "end")
+                              (.appendChild text sec)))
+                          (.appendChild row text))
+
+                        ;; click handler
+                        (on! row "click"
+                          (fn []
+                            (set! (.-selectedIdx st) idx)
+                            (commit)))
+                        (.appendChild (.-pickerList st) row)))))
+                (some-> (q (.-pickerList st) "[gjoa-picker-selected='true']")
+                  (.scrollIntoView {:block "nearest"}))))))
+
+        ;; --- move-selection ---
+        move-selection (fn [delta]
+          (when (> (.-length (.-filtered st)) 0)
+            (set! (.-selectedIdx st)
+              (rem (+ (.-selectedIdx st) delta (.-length (.-filtered st)))
+                   (.-length (.-filtered st))))
+            (render-list)))
+
+        ;; --- open-action-menu ---
+        open-action-menu (fn []
+          (let [target (aget (.-filtered st) (.-selectedIdx st))
+                local-actions (.-actions st)]
+            (when (and target (.-length local-actions))
+              (dismiss)
+              (let [show-fn (.-fn show-ref)]
+                (show-fn
+                  {:prompt "actions >"
+                   :items (.map local-actions
+                     #(let [label (str (.-label %)
+                                    (if (.-key %)
+                                      (str "   (" (.-key %) ")")
+                                      ""))]
+                        {:display label :data %}))
+                   :onSelect #(let [action (.-data %)]
+                                (try
+                                  (.run action target)
+                                  (catch Any e
+                                    (.modelineMsg deps
+                                      (str "action failed: " (.-message e))
+                                      4000))))})))))
+
+        ;; --- ensure-built ---
+        ensure-built (fn []
+          (when (not (.-pickerEl st))
+            (let [root (xul-new "vbox")
+                  input-box (xul "hbox" "gjoa-picker-input-box")
+                  prompt (xul "label" "gjoa-picker-prompt")
+                  input (htm "input" "gjoa-picker-input")
+                  list (xul "vbox" "gjoa-picker-list")]
+              (set! (.-id root) "gjoa-picker")
+              (set! (.-hidden root) true)
+              (attr! root "aria-modal" "true")
+
+              (attr! prompt "value" ">")
+              (set! (.-placeholder input) "Filter...")
+              (.append input-box prompt input)
+              (.append root input-box list)
+              (.appendChild (.-documentElement document) root)
+
+              (set! (.-pickerEl st) root)
+              (set! (.-pickerInput st) input)
+              (set! (.-pickerList st) list)
+
+              ;; input filter handler
+              (on! input "input"
+                #(let [query (.toLowerCase (.trim (.-value input)))]
+                   (set! (.-filtered st)
+                     (compute-filtered (.-items st) query
+                       (.-preserveTree st) (.-filterItem st)))
+                   (set! (.-selectedIdx st) 0)
+                   (render-list)))
+
+              ;; keydown handler (capture phase)
+              (onc! input "keydown"
+                #(when (.-active st)
+                   (let [key (.-key %)]
+                     (cond
+                       (= key "Escape")
+                       (do (.preventDefault %) (.stopImmediatePropagation %)
+                           (dismiss))
+
+                       (= key "Enter")
+                       (do (.preventDefault %) (.stopImmediatePropagation %)
+                           (commit))
+
+                       (and (= key "Tab") (> (.-length (.-actions st)) 0))
+                       (do (.preventDefault %) (.stopImmediatePropagation %)
+                           (open-action-menu))
+
+                       (or (= key "ArrowDown") (and (.-ctrlKey %) (or (= key "j") (= key "n"))))
+                       (do (.preventDefault %) (.stopImmediatePropagation %)
+                           (move-selection 1))
+
+                       (or (= key "ArrowUp") (and (.-ctrlKey %) (or (= key "k") (= key "p"))))
+                       (do (.preventDefault %) (.stopImmediatePropagation %)
+                           (move-selection -1))
+
+                       :else nil)))
+              ))))
+
+        ;; --- show ---
+        show (fn [opts]
+          (ensure-built)
+          (when (and (.-pickerEl st) (.-pickerInput st) (.-pickerList st))
+            (set! (.-items st) (.-items opts))
+            (set! (.-selectedIdx st) 0)
+            (set! (.-onSelect st) (.-onSelect opts))
+            (set! (.-actions st) (or (.-actions opts) []))
+            (set! (.-preserveTree st) (bool (.-preserveTree opts)))
+            (set! (.-filterItem st) (.-filterItem opts))
+            (set! (.-filtered st) (.slice (.-items opts)))
+            (set! (.-active st) true)
+
+            (let [prompt-el (q (.-pickerEl st) ".gjoa-picker-prompt")]
+              (cond
+                (and prompt-el (.-prompt opts))
+                (attr! prompt-el "value" (.-prompt opts))
+
+                prompt-el
+                (attr! prompt-el "value" ">")
+
+                :else nil))
+
+            (set! (.-value (.-pickerInput st)) "")
+            (render-list)
+            (set! (.-hidden (.-pickerEl st)) false)
+            (.focus (.-pickerInput st))))
+
+        ;; --- destroy ---
+        destroy (fn []
+          (offc! document "keydown" on-doc-keydown)
+          (offc! document "mousedown" on-doc-mousedown)
+          (dismiss)
+          (some-> (.-pickerEl st) .remove)
+          (set! (.-pickerEl st) nil)
+          (set! (.-pickerInput st) nil)
+          (set! (.-pickerList st) nil))
+
+        ;; --- document-level listeners (capture phase) ---
+        on-doc-keydown #(when (.-active st)
+                          (when (key= % "Escape")
+                            (.preventDefault %)
+                            (.stopImmediatePropagation %)
+                            (dismiss)))
+
+        on-doc-mousedown #(when (and (.-active st) (.-pickerEl st))
+                            (let [t (.-target %)]
+                              (when (or (not t) (not (.contains (.-pickerEl st) t)))
+                                (dismiss))))]
+
+    ;; wire the single forward ref
+    (set! (.-fn show-ref) show)
+
+    ;; attach document-level listeners
+    (onc! document "keydown" on-doc-keydown)
+    (onc! document "mousedown" on-doc-mousedown)
+
+    ;; return public API
+    {:show show
+     :isActive #(.-active st)
+     :dismiss dismiss
+     :destroy destroy})))

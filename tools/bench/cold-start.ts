@@ -20,13 +20,13 @@ const { values } = parseArgs({
   },
 });
 
-const NUM_RUNS = parseInt(values.runs!, 10);
+const NUM_RUNS = parseInt(values.runs as string, 10);
 if (!Number.isFinite(NUM_RUNS) || NUM_RUNS < 2) {
   console.error("ERROR: --runs must be >= 2 (first run is dropped as warm-up).");
   process.exit(1);
 }
-const GJOA_BIN = values["gjoa-bin"] ?? findBinary("gjoa");
-const FIREFOX_BIN = values["firefox-bin"] ?? findBinary("firefox");
+const GJOA_BIN = (values["gjoa-bin"] as string | undefined) ?? findBinary("gjoa");
+const FIREFOX_BIN = (values["firefox-bin"] as string | undefined) ?? findBinary("firefox");
 const SKIP_CACHE_DROP = values["skip-cache-drop"]!;
 
 function findBinary(name: string): string {

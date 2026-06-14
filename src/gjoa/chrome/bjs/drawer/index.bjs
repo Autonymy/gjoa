@@ -1,0 +1,56 @@
+#lang beagle/js
+(ns gjoa.drawer.index
+  (:require [gjoa.macros :refer [by-id on! onc! on1!]]))
+(define-mode strict)
+
+(declare-extern [document console window make-layout make-drag-overlay make-compact make-urlbar make-sidebar-button make-banner] Any)
+
+(defn init [] :- Any
+  (let [sidebar-main (by-id "sidebar-main")
+        navigator-toolbox (by-id "navigator-toolbox")
+        urlbar-container (by-id "urlbar-container")
+        nav-bar (by-id "nav-bar")
+        urlbar (by-id "urlbar")]
+
+    (if (or (not sidebar-main) (not navigator-toolbox) (not urlbar-container) (not nav-bar))
+      (.error console "gjoa-drawer: missing required elements")
+
+      (let [layout (make-layout {:sidebarMain sidebar-main
+                                  :navigatorToolbox navigator-toolbox
+                                  :urlbarContainer urlbar-container
+                                  :navBar nav-bar
+                                  :urlbar urlbar})
+
+            drag-overlay (make-drag-overlay {:sidebarMain sidebar-main})
+
+            compact (make-compact {:sidebarMain sidebar-main
+                                    :navigatorToolbox navigator-toolbox
+                                    :urlbar urlbar})
+
+            state :- Any {:urlbar-api nil}]
+
+        (when urlbar
+          (set! (.-urlbar-api state) (make-urlbar {:urlbar urlbar}))
+          (onc! document "keydown"
+            (fn [e]
+              (let [accel (or (.-ctrlKey e) (.-metaKey e))]
+                (when (and accel (not (.-shiftKey e)) (not (.-altKey e)))
+                  (when (or (= (.-key e) "l") (= (.-key e) "L"))
+                    (.activateFloating (.-urlbar-api state) "current")))))))
+
+        (let [sidebar-button (make-sidebar-button {:sidebarMain sidebar-main
+                                                    :compact compact})
+              banner (make-banner)]
+
+          (on1! window "unload"
+            (fn []
+              (.destroy layout)
+              (.destroy drag-overlay)
+              (.destroy compact)
+              (when (.-urlbar-api state) (.destroy (.-urlbar-api state)))
+              (.destroy sidebar-button)
+              (.destroy banner)))
+
+          (.log console "gjoa-drawer: initialized"))))))
+
+(init)

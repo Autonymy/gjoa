@@ -1,0 +1,34 @@
+#lang beagle/js
+(ns gjoa.firefox.window
+  (:require [gjoa.macros :refer [by-id]]))
+(define-mode strict)
+
+(declare-extern [gBrowserInit Services ChromeUtils] Any)
+
+(js/export (def ids :- Any
+  {:sidebar-main        (fn [] (by-id "sidebar-main"))
+   :navigator-toolbox   (fn [] (by-id "navigator-toolbox"))
+   :urlbar              (fn [] (by-id "urlbar"))
+   :urlbar-container    (fn [] (by-id "urlbar-container"))
+   :nav-bar             (fn [] (by-id "nav-bar"))
+   :tabs-toolbar        (fn [] (by-id "TabsToolbar"))
+   :tabs-toolbar-target (fn [] (by-id "TabsToolbar-customization-target"))
+   :tabbrowser-tabs     (fn [] (by-id "tabbrowser-tabs"))
+   :main-popup-set      (fn [] (by-id "mainPopupSet"))
+   :unified-extensions-button (fn [] (by-id "unified-extensions-button"))
+   :sidebar-button      (fn [] (by-id "sidebar-button"))}))
+
+(js/export (defn delayed-startup-finished [] :- Boolean
+  (.-delayedStartupFinished gBrowserInit)))
+
+(def state :- Any {:cached-principal js/undefined})
+
+(js/export (defn system-principal [] :- Any
+  (if (= (.-cached-principal state) js/undefined)
+    (let [p (.getSystemPrincipal (.-scriptSecurityManager Services))]
+      (set! (.-cached-principal state) p)
+      p)
+    (.-cached-principal state))))
+
+(js/export (defn import-esm [url :- String] :- Any
+  (.importESModule ChromeUtils url)))

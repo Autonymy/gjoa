@@ -4,6 +4,7 @@ engine/
 firefox-*/
 __pycache__/
 dist/
+.beagle-out/
 target/
 mozconfig
 

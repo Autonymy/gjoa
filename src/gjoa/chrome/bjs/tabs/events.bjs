@@ -253,6 +253,8 @@
                          " parentId=" (.-parentId prior)
                          " origIdx=" (.-_origIdx prior)))
                   (apply-saved-to-tab tab prior)
+                  (when (and spaces (.-spaceId prior) (.get spaces (.-spaceId prior)))
+                    (.assignTab spaces tab (.-spaceId prior)))
                   (let [row (.createTabRow rows tab)]
                     (if (.-pinned tab)
                       (do (.appendChild (.-pinnedContainer state) row)

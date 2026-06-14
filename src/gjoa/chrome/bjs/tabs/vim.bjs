@@ -514,8 +514,8 @@
           (if (or (.-ctrlKey e) (.-altKey e) (.-metaKey e))
             false
             (cond
-              (key= e "t") (dispatch-key e "t" (open-tabs-picker "current"))
-              (key= e "T") (dispatch-key e "T" (open-tabs-picker "all"))
+              (key= e "t") (dispatch-key e "t" (open-tabs-picker "space"))
+              (key= e "T") (dispatch-key e "T" (open-tabs-picker "current"))
               (key= e ":") (dispatch-key e "colon" (open-ex-command-picker))
               (key= e "x") (dispatch-key e "x"
                 (try (.removeTab gBrowser (.-selectedTab gBrowser)) (catch Any _e nil)))
@@ -642,6 +642,27 @@
                   (.observe obs (.-panel state) {:childList true}))))))
 
 
+        build-window-items (fn [filter-fn]
+          (let [items []]
+            (.forEach (tabs!) (fn [tab]
+              (when (filter-fn tab)
+                (let [td (.get tree-of tab)]
+                  (when td
+                    (let [url (tab-spec tab)
+                          host (try (.-hostname (URL. url)) (catch Any _e ""))
+                          icon (try (or (.getIcon gBrowser tab) js/undefined)
+                                    (catch Any _e js/undefined))]
+                      (.push items
+                        {:display (or (.-name td) (.-label tab) "(untitled)")
+                         :secondary (or host url "")
+                         :icon icon
+                         :id (.-id td)
+                         :parentId (if (= (js/typeof (.-parentId td)) "number")
+                                     (.-parentId td) nil)
+                         :depth (level-of tab)
+                         :data tab})))))))
+            items))
+
         open-tabs-picker (fn [scope]
           (let [gjoa-api (.-Gjoa window)]
             (if (and (= scope "all") gjoa-api)
@@ -668,28 +689,18 @@
                                      (let [d (.-data item)]
                                        (try (.activate (.-tabs gjoa-api) (.-id d) (.-windowId d))
                                             (catch Any _e nil))))})))))
-              ;; Current window
-              (let [items []]
-                (.forEach (tabs!) (fn [tab]
-                  (let [td (.get tree-of tab)]
-                    (when td
-                      (let [url (tab-spec tab)
-                            host (try (.-hostname (URL. url)) (catch Any _e ""))
-                            icon (try (or (.getIcon gBrowser tab) js/undefined)
-                                      (catch Any _e js/undefined))]
-                        (.push items
-                          {:display (or (.-name td) (.-label tab) "(untitled)")
-                           :secondary (or host url "")
-                           :icon icon
-                           :id (.-id td)
-                           :parentId (if (= (js/typeof (.-parentId td)) "number")
-                                       (.-parentId td) nil)
-                           :depth (level-of tab)
-                           :data tab}))))))
+              ;; Current window / space
+              (let [filter-fn (if (and (= scope "space") spaces)
+                                #(.isVisible spaces %)
+                                #(do % true))
+                    prompt-label (if (= scope "space")
+                                   (str "tabs (" (.-name (.active spaces)) ") >")
+                                   "tabs (window) >")
+                    items (build-window-items filter-fn)]
                 (if (not (.-length items))
                   (modeline-msg "No tabs" 3000)
                   (.show picker
-                    {:prompt "tabs >"
+                    {:prompt prompt-label
                      :items items
                      :preserveTree true
                      :onSelect #(try (set! (.-selectedTab gBrowser) (.-data %))
@@ -793,7 +804,11 @@
 
         restore-event (fn [event]
           (let [env (.-snapshot event)
-                tab-nodes (.filter (.-nodes env) #(not= (.-type %) "group"))]
+                tab-nodes (.filter (.-nodes env) #(not= (.-type %) "group"))
+                tab-space-map (Map.)]
+            (when (and (.-spaces env) (.-tabSpaces (.-spaces env)))
+              (.forEach (.-tabSpaces (.-spaces env))
+                #(.set tab-space-map (aget % 0) (aget % 1))))
             (if (not (.-length tab-nodes))
               (do (modeline-msg "Restore: no tabs in event" 3000) nil)
               (let [max-saved-id (.apply (.-max Math) nil
@@ -810,11 +825,13 @@
                     (let [new-id (+ (or (.-id n) 0) offset)
                           new-parent-id (if (= (js/typeof (.-parentId n)) "number")
                                           (+ (.-parentId n) offset)
-                                          (.-id (.-_group group-row)))]
+                                          (.-id (.-_group group-row)))
+                          orig-space (.get tab-space-map (or (.-id n) 0))]
                       (.push saved-tab-queue
                         {:type (.-type n) :url (.-url n) :name (.-name n)
                          :id new-id :parentId new-parent-id
                          :state (.-state n) :collapsed (.-collapsed n)
+                         :spaceId orig-space
                          :_origIdx (.-length saved-tab-queue)}))))
                   (.forEach tab-nodes (fn [n]
                     (let [url (or (.-url n) "about:blank")]
@@ -1142,7 +1159,10 @@
 
                 (= name "tabs")
                 (let [sub (.toLowerCase (or (aget args 1) ""))
-                      scope (if (or (= sub "all") (= sub "*")) "all" "current")]
+                      scope (cond
+                              (or (= sub "all") (= sub "*")) "all"
+                              (or (= sub "window") (= sub "win")) "current"
+                              :else "space")]
                   (open-tabs-picker scope))
 
                 (or (= name "blacklist") (= name "bl"))

@@ -15,7 +15,7 @@
 ;; touching the DB so we don't pay a write cost for no-op saves.
 
 (declare-extern [Services Ci PathUtils IOUtils ChromeUtils console JSON Date crypto TextEncoder Uint8Array String Object Array Error RegExp create-logger] Any)
-(def SCHEMA-VERSION :- Int 2)
+(def SCHEMA-VERSION :- Int 3)
 
 (def INSTANCE-ID-PREF :- String "gjoa.instance.id")
 
@@ -23,11 +23,13 @@
 ;; index N to N+1. The v1->v2 migration backfills instance_id separately
 ;; (post-migration, in JS) because it needs the live instanceId value.
 ;;
-;; Note: Firefox's bundled SQLite does NOT expose FTS3/4/5 to chrome
-;; scripts. We use a plain search-content table with substring queries.
-;;
 ;; Note: Sqlite.sys.mjs rejects SQL strings matching /\bLIKE\b\s(?![@:?])/i
 ;; — including in COMMENTS. Schema SQL is kept comment-free.
+;;
+;; v2->v3 creates an FTS5 virtual table (requires SQLITE_ENABLE_FTS5, enabled
+;; by patch 0007). Migration is attempted in JS — if FTS5 is unavailable the
+;; migration still completes, and search falls back to substring queries.
+(def fts-available :- Any {:v false})
 (def MIGRATIONS :- Any
   [;; v0 -> v1: initial schema
    "CREATE TABLE events (
@@ -51,7 +53,9 @@
   CREATE INDEX esc_label ON events_search_content(label)"
    ;; v1 -> v2: per-record instanceId
    "ALTER TABLE events ADD COLUMN instance_id TEXT;
-  CREATE INDEX events_instance ON events(instance_id)"])
+  CREATE INDEX events_instance ON events(instance_id)"
+   ;; v2 -> v3: FTS5 (handled in JS, not SQL — see apply-migration-step)
+   "SELECT 1"])
 
 (def log :- Any (create-logger "history"))
 (def state :- Any {:conn nil :lastHash nil :instanceId nil})
@@ -121,6 +125,19 @@
         (-> (.execute conn trimmed)
             (.then #(execute-stmts conn stmts (+ idx 1))))))))
 
+(defn try-create-fts [conn :- Any] :- Any
+  (-> (.execute conn
+        "CREATE VIRTUAL TABLE IF NOT EXISTS events_fts USING fts5(url, label, content=events_search_content, content_rowid=rowid)")
+      (.then #(do (set! (.-v fts-available) true)
+                  (.execute conn "INSERT INTO events_fts(events_fts) VALUES('rebuild')")))
+      (.then #(log "migrate:fts5" {:status "created"}))
+      (.catch #(log "migrate:fts5" {:status "unavailable" :error (String %)}))))
+
+(defn probe-fts [conn :- Any] :- Any
+  (-> (.execute conn "SELECT * FROM events_fts LIMIT 0")
+      (.then #(set! (.-v fts-available) true))
+      (.catch #(set! (.-v fts-available) false))))
+
 (defn apply-migration-step [conn :- Any v :- Int] :- Any
   (when (< v SCHEMA-VERSION)
     (let [sql (aget MIGRATIONS v)]
@@ -137,6 +154,7 @@
                                  [id])
                                (.then (fn [] (log "migrate:backfill-instance" {:id id}))))))))
                      (.then (fn [] (.execute conn (str "PRAGMA user_version = " (+ v 1))))))))
+            (.then #(when (= v 2) (try-create-fts conn)))
             (.then #(apply-migration-step conn (+ v 1))))))))
 
 (defn apply-migrations [conn :- Any] :- Any
@@ -168,6 +186,7 @@
           (.then #(-> (.execute % "PRAGMA journal_mode = WAL")
                       (.then (fn [] (.execute % "PRAGMA foreign_keys = ON")))
                       (.then (fn [] (apply-migrations %)))
+                      (.then (fn [] (probe-fts %)))
                       (.then (fn []
                         (set! (.-conn state) %)
                         (prime-last-hash %)))
@@ -208,6 +227,11 @@
       (-> (.execute conn
             "INSERT INTO events_search_content(event_id, url, label) VALUES (?, ?, ?)"
             [event-id (.-url row) (.-label row)])
+          (.then #(when (.-v fts-available)
+                    (.execute conn
+                      "INSERT INTO events_fts(rowid, url, label) VALUES (last_insert_rowid(), ?, ?)"
+                      [(.-url row) (.-label row)])))
+          (.catch #(log "insert-search-rows:fts-sync" {:error (String %)}))
           (.then #(insert-search-rows conn event-id rows (+ idx 1)))))))
 
 ;; Build search conditions from tokens; returns {conditions, params}.
@@ -309,21 +333,37 @@
            trimmed (.trim query)]
        (if (= trimmed "")
          (.resolve js/Promise [])
-         (let [tokens (.filter (.split trimmed (RegExp. "\\s+")) Boolean)
-               qr (build-search-query tokens)
-               where-clause (.join (.-conditions qr) " AND ")
-               tagged-clause (if tagged-only " AND events.tag IS NOT NULL" "")
-               sql (str "SELECT events.id, events.timestamp, events.hash, events.snapshot, events.tag, events.instance_id"
-                        " FROM events"
-                        " JOIN events_search_content esc ON esc.event_id = events.id"
-                        " WHERE " where-clause
-                        tagged-clause
-                        " GROUP BY events.id"
-                        " ORDER BY events.timestamp DESC"
-                        " LIMIT ?")
-               params (.-params qr)]
-           (.push params lim)
-           (query-rows sql params)))))
+         (if (.-v fts-available)
+           (let [match-expr (.join
+                              (.map (.filter (.split trimmed (RegExp. "\\s+")) Boolean)
+                                #(str "\"" (.replace % (RegExp. "\"" "g") "\"\"") "\"" " *"))
+                              " ")
+                 tagged-clause (if tagged-only " AND e.tag IS NOT NULL" "")
+                 sql (str "SELECT e.id, e.timestamp, e.hash, e.snapshot, e.tag, e.instance_id"
+                          " FROM events e"
+                          " WHERE e.id IN ("
+                          "   SELECT DISTINCT esc.event_id FROM events_search_content esc"
+                          "   WHERE esc.rowid IN (SELECT rowid FROM events_fts WHERE events_fts MATCH ?)"
+                          " )"
+                          tagged-clause
+                          " ORDER BY e.timestamp DESC"
+                          " LIMIT ?")]
+             (query-rows sql [match-expr lim]))
+           (let [tokens (.filter (.split trimmed (RegExp. "\\s+")) Boolean)
+                 qr (build-search-query tokens)
+                 where-clause (.join (.-conditions qr) " AND ")
+                 tagged-clause (if tagged-only " AND events.tag IS NOT NULL" "")
+                 sql (str "SELECT events.id, events.timestamp, events.hash, events.snapshot, events.tag, events.instance_id"
+                          " FROM events"
+                          " JOIN events_search_content esc ON esc.event_id = events.id"
+                          " WHERE " where-clause
+                          tagged-clause
+                          " GROUP BY events.id"
+                          " ORDER BY events.timestamp DESC"
+                          " LIMIT ?")
+                 params (.-params qr)]
+             (.push params lim)
+             (query-rows sql params))))))
 
    :runRetention
    (fn [opts]

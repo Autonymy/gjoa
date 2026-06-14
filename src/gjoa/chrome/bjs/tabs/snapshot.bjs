@@ -3,16 +3,22 @@
   (:require [gjoa.macros :refer [bool]]))
 (define-mode strict)
 
-(declare-extern [CLOSED-MEMORY console] Any)
+(declare-extern [CLOSED-MEMORY console Map] Any)
 (js/export (defn buildEnvelope [snapshot :- Any] :- Any
-  (let [tabEntries (.map (.-tabs snapshot)
-                     #(let [d (.treeData snapshot %)]
+  (let [tab-space-map (Map.)]
+    (when (and (.-spaces snapshot) (.-tabSpaces (.-spaces snapshot)))
+      (.forEach (.-tabSpaces (.-spaces snapshot))
+        #(.set tab-space-map (aget % 0) (aget % 1))))
+    (let [tabEntries (.map (.-tabs snapshot)
+                     #(let [d (.treeData snapshot %)
+                            sp (.get tab-space-map (.-id d))]
                         {:id (.-id d)
                          :parentId (.-parentId d)
                          :url (.tabUrl snapshot %)
                          :name (.-name d)
                          :state (.-state d)
-                         :collapsed (.-collapsed d)}))
+                         :collapsed (.-collapsed d)
+                         :spaceId sp}))
 
         groupEntries []
         lastSeen :- Any {:id nil}]
@@ -47,7 +53,7 @@
       {:nodes out
        :closedTabs (.slice (.-closedTabs snapshot) (- 0 CLOSED-MEMORY))
        :nextTabId (.-nextTabId snapshot)
-       :spaces (.-spaces snapshot)}))))
+       :spaces (.-spaces snapshot)})))))
 (defn do-save [flags :- Any getSnapshot :- Any history :- Any onErr :- Any] :- Any
   (if (.-inFlight flags)
     (set! (.-pending flags) true)

@@ -45,7 +45,7 @@
    {:name "tabs"       :description "Fuzzy-find open tabs (`:tabs all` = every window)"  :takesArgs true}
    {:name "checkpoint" :description "Snapshot tab tree with a name (like a git tag)"     :takesArgs true}
    {:name "restore"    :description "Restore a saved session or checkpoint"              :takesArgs true}
-   {:name "history"    :description "Browse the full auto-save timeline"                 :takesArgs true}
+   {:name "history"    :description "Browse auto-save timeline (`:history space` = current workspace)" :takesArgs true}
    {:name "blacklist"  :description "Disable gjoa keys on a site (`list` / `remove`)"   :takesArgs true}
    {:name "spc"        :description "Workspaces: new / rename / delete / switch (`:space`)" :takesArgs true}
    {:name "tabpos"     :description "Where new tabs open: sibling | root | child"       :takesArgs true}
@@ -773,6 +773,13 @@
         tab-count (fn [nodes] :- Int
           (.-length (.filter nodes #(not= (.-type %) "group"))))
 
+        event-has-space (fn [ev space-id]
+          (let [snap (.-snapshot ev)
+                ts (and snap (.-spaces snap) (.-tabSpaces (.-spaces snap)))]
+            (if (not ts)
+              true
+              (.some ts #(= (aget % 1) space-id)))))
+
         history-picker-item (fn [ev]
           (let [nodes (or (.-nodes (.-snapshot ev)) [])
                 count (tab-count nodes)
@@ -1252,29 +1259,40 @@
                              (str ":space -> \"" (.-name (.-data item)) "\"") 2000))}))))
 
                 (= name "history")
-                (let [q (.trim (.join (.slice args 1) " "))]
+                (let [raw-args (.slice args 1)
+                      space-scoped (and (> (.-length raw-args) 0)
+                                       (= (.toLowerCase (aget raw-args 0)) "space"))
+                      q-args (if space-scoped (.slice raw-args 1) raw-args)
+                      q (.trim (.join q-args " "))
+                      active-space (and spaces (.activeId spaces))]
                   (-> (if q
-                        (.search history q {:taggedOnly false :limit 100})
-                        (.getRecent history 100))
+                        (.search history q {:taggedOnly false :limit 200})
+                        (.getRecent history 200))
                       (.then (fn [evs]
-                        (if (not (.-length evs))
-                          (modeline-msg
-                            (if q (str "No events match \"" q "\"") "No history yet") 3000)
-                          (.show picker
-                            {:prompt "history >"
-                             :items (.map evs #(history-picker-item %))
-                             :onSelect (fn [item]
-                               (let [ev (.-data item)]
-                                 (-> (restore-event ev)
-                                     (.then #(let [lbl (label-of (.-tag ev))]
-                                         (modeline-msg
-                                           (str "Restored: "
-                                             (or lbl (.toLocaleString
-                                                       (Date. (.-timestamp ev)))))
-                                           4000)))
-                                     (.catch #(modeline-msg
-                                         (str ":history restore failed: " (.-message %))
-                                         4000)))))}))))
+                        (let [filtered (if (and space-scoped active-space)
+                                         (.filter evs #(event-has-space % active-space))
+                                         evs)
+                              display-evs (.slice filtered 0 100)]
+                          (if (not (.-length display-evs))
+                            (modeline-msg
+                              (if q (str "No events match \"" q "\"") "No history yet") 3000)
+                            (.show picker
+                              {:prompt (if space-scoped
+                                         (str "history (" (.-name (.active spaces)) ") >")
+                                         "history >")
+                               :items (.map display-evs #(history-picker-item %))
+                               :onSelect (fn [item]
+                                 (let [ev (.-data item)]
+                                   (-> (restore-event ev)
+                                       (.then #(let [lbl (label-of (.-tag ev))]
+                                           (modeline-msg
+                                             (str "Restored: "
+                                               (or lbl (.toLocaleString
+                                                         (Date. (.-timestamp ev)))))
+                                             4000)))
+                                       (.catch #(modeline-msg
+                                           (str ":history restore failed: " (.-message %))
+                                           4000)))))})))))
                       (.catch #(modeline-msg (str ":history failed: " (.-message %)) 4000))))
 
                 :else (modeline-msg (str "Unknown command: " name) 3000)))))

@@ -4,7 +4,7 @@
                                  set-pref-bool! set-pref-int! set-pref-str!]]))
 (define-mode strict)
 
-(declare-extern [Services console] Any)
+(declare-extern [Services ChromeUtils console] Any)
 
 (js/export (defn get-bool [name :- String default-value :- Any] :- Any
   (pref-bool name (or default-value false))))
@@ -48,6 +48,36 @@
       (when (not (.prefHasUserValue prefs "sidebar.verticalTabs"))
         (.setBoolPref prefs "sidebar.verticalTabs" true))
       (catch Any _e nil)))))
+
+(js/export (defn migrate-toolbar-defaults [] :- Any
+  (let [version (pref-int "gjoa.migration.toolbar" 0)]
+    (when (< version 1)
+      (try
+        (let [cui-mod (.importESModule ChromeUtils
+                        "resource:///modules/CustomizableUI.sys.mjs")
+              cui (.-CustomizableUI cui-mod)
+              stripped ["fxa-toolbar-menu-button" "firefox-view-button" "alltabs-button"]]
+          (.forEach stripped (fn [id]
+            (try (.removeWidgetFromArea cui id)
+                 (catch Any _e nil))))
+          (.removeValue (.-xulStore Services)
+            "chrome://browser/content/browser.xhtml"
+            "toolbar-menubar"
+            "autohide")
+          (.setValue (.-xulStore Services)
+            "chrome://browser/content/browser.xhtml"
+            "toolbar-menubar"
+            "autohide"
+            "false")
+          (set-pref-int! "gjoa.migration.toolbar" 1))
+        (catch Any e
+          (.error console "gjoa: toolbar migration failed" e)))))))
+
+(js/export (defn apply-menubar-default [doc :- Any] :- Any
+  (try
+    (let [mb (.getElementById doc "toolbar-menubar")]
+      (when mb (.setAttribute mb "autohide" "false")))
+    (catch Any _e nil))))
 
 (js/export (defn observe [name :- String handler :- Any] :- Any
   (let [observer {:observe (fn [_subject _topic data]

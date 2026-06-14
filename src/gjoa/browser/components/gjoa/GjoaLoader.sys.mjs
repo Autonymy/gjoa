@@ -61,6 +61,7 @@ const PROD_SCRIPTS = [
   "gjoa-security.uc.js",
   "gjoa-drawer.uc.js",
   "gjoa-tabs.uc.js",
+  "gjoa-dark-mode.uc.js",
 ];
 const PROD_STYLES = [
   "gjoa.uc.css",

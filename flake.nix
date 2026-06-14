@@ -90,7 +90,7 @@
         #   2. callPackage args (pgoSupport, ltoSupport, crashreporterSupport, ...)
         #      → set as defaults inside, override via .override
         # The dance: build with user args, then .override the feature flags.
-        mkGjoa = { pgoSupport, ltoSupport, crashreporterSupport, suffix ? "" }:
+        mkGjoa = { pgoSupport, ltoSupport, crashreporterSupport, suffix ? "", perfFlags ? false }:
           ((pkgs.buildMozillaMach {
             pname = "gjoa${suffix}";
             version = firefoxVersion;
@@ -140,6 +140,22 @@
               "--with-distribution-id=org.gjoa"
               "--with-app-name=gjoa"
               "--with-app-basename=Gjoa"
+            ] ++ pkgs.lib.optionals perfFlags [
+              # Headline optimization: -O3 (release default is -O2). LTO + PGO
+              # ride on the .override below; debug + crashreporter are already
+              # off in the release variant; debug symbols are dropped via
+              # enableDebugSymbols in the override (keeps the nix wrapper's
+              # strip/separateDebugInfo consistent — a bare --disable-debug-symbols
+              # configure flag would not).
+              #
+              # We deliberately do NOT --disable-webrtc / --disable-eme: those
+              # remove user-facing features (calls, DRM video) for no meaningful
+              # build-size or speed win. Subsystem stripping is handled at the
+              # pref level (defaults/pref/perf-prefs.js) plus the two genuinely
+              # background subsystems below.
+              "--enable-optimize=-O3"
+              "--disable-parental-controls"
+              "--disable-necko-wifi"
             ];
 
             # Prep tool creates engine/.git/ for change tracking. mach
@@ -154,9 +170,14 @@
               platforms = platforms.linux;
               mainProgram = "gjoa";
             };
-          }).override {
+          }).override ({
             inherit pgoSupport ltoSupport crashreporterSupport;
-          }).overrideAttrs (old: {
+          } // pkgs.lib.optionalAttrs perfFlags {
+            # Drop debug symbols the consistent way: this flips the nixpkgs
+            # wrapper's strip + separateDebugInfo together, unlike a bare
+            # --disable-debug-symbols configure flag which leaves them on.
+            enableDebugSymbols = false;
+          })).overrideAttrs (old: {
             # nixpkgs's buildMozillaMach applies a set of patches calibrated
             # to whatever Firefox version nixpkgs currently ships (149 at
             # time of writing). Two of those patches are macOS-SDK-version
@@ -172,6 +193,36 @@
               in n == "136-no-buildconfig.patch"
               || n == "133-env-var-for-system-dir.patch"
             ) (old.patches or []);
+          } // pkgs.lib.optionalAttrs perfFlags {
+            # Architecture tuning for this machine's CPU. The -O level is set by
+            # --enable-optimize=-O3 above (Mozilla's build owns the opt level and
+            # would override an env -O anyway), so we only add -march/-mtune here.
+            # -march=native makes the binary non-portable to other CPUs (fine for a
+            # personal build; does NOT change the .drv hash). codegen-units=1 is
+            # intentionally omitted — LTO already maximizes cross-unit optimization,
+            # and codegen-units=1 would multiply Rust build time for no measured win.
+            CFLAGS = "-march=native -mtune=native -pipe";
+            CXXFLAGS = "-march=native -mtune=native -pipe";
+            RUSTFLAGS = "-C target-cpu=native -C opt-level=3";
+
+            # CRITICAL — without this the CFLAGS above are a SILENT NO-OP.
+            # nixpkgs' stdenv/setup defaults `NIX_ENFORCE_NO_NATIVE=1`
+            # (`${NIX_ENFORCE_NO_NATIVE-1}`, no colon → applies only when UNSET),
+            # and the cc-wrapper strips -march=native/-mtune=native when that
+            # per-target var resolves to 1 ("warning: Skipping impure flag
+            # -march=native because NIX_ENFORCE_NO_NATIVE is set"). Setting it
+            # `false` renders an empty-but-SET env var, so stdenv's `-1` default
+            # does NOT fire, mangleVarBool ORs 0, and the native flags pass
+            # through. Verified against clang-wrapper-21.1.8 utils.bash. This
+            # makes the binary CPU-specific (non-portable) — intended for a
+            # personal build; does not change the .drv hash.
+            NIX_ENFORCE_NO_NATIVE = false;
+
+            # BOLT deferred (2026-06-14): emit-relocs + dontStrip do NOT survive
+            # Mozilla's own packaging strip of libxul, so they produced no
+            # BOLT-able binary, only cost. Re-adding BOLT needs verified mozconfig
+            # --disable-strip/--disable-install-strip in its own cycle. See
+            # BUILD-LEDGER 2026-06-14 postmortem. Lean stripped libxul for now.
 
             # =================================================================
             # sccache wiring is DISABLED here for now.
@@ -202,12 +253,21 @@
           crashreporterSupport = false;
         };
 
-        # Release variant — full PGO + LTO. What we ship.
+        # Release variant — LTO + aggressive perf flags. What we ship.
+        # PGO TEMPORARILY DROPPED (2026-06-15): nixpkgs PGO runs the instrumented
+        # browser for profiling, and gjoa's history-sqlite feature deadlocks the
+        # profile-before-change AsyncShutdown barrier on that fast start→quit
+        # (Sqlite stops processing statements once the barrier engages, so the
+        # in-flight migration can't finish — builds #2 and #3 both died here). The
+        # history fix needs verification on the dev binary's fast loop, not via
+        # 2–3h nix builds. Re-enable pgoSupport once history shutdown is clean.
+        # PGO's gjoa-vs-stock-Firefox delta is marginal anyway (stock FF is PGO'd).
         gjoa-release-unwrapped = mkGjoa {
-          pgoSupport = true;
+          pgoSupport = false;
           ltoSupport = true;
           crashreporterSupport = false;  # would need dump_syms; not yet wired
           suffix = "-release";
+          perfFlags = true;
         };
 
         # Wrap the unwrapped derivations with `wrapFirefox` — adds the .desktop

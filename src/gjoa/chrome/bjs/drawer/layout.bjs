@@ -1,0 +1,242 @@
+#lang beagle/js
+(ns gjoa.drawer.layout
+  (:require [gjoa.macros :refer [by-id q xul-new xul-id pref-int set-pref-int! on! off! has?]]))
+(define-mode strict)
+
+(declare-extern [window Math setTimeout parseFloat getComputedStyle Array create-logger] Any)
+
+(js/import create-logger "../tabs/log.js" create_logger)
+
+(def WIDTH-PREF :- String "gjoa.sidebar.width")
+
+(js/export (defn make-layout [deps] :- Any
+  (let [{:keys [sidebarMain navigatorToolbox urlbarContainer navBar urlbar]} deps
+        log (create-logger "drawer/layout")
+        sidebar-main sidebarMain
+        navigator-toolbox navigatorToolbox
+        urlbar-container urlbarContainer
+        nav-bar navBar
+        sidebar-main-element (q sidebar-main "sidebar-main")
+
+        toolbox-parent (.-parentNode navigator-toolbox)
+        toolbox-next (.-nextSibling navigator-toolbox)
+        urlbar-parent (.-parentNode urlbar-container)
+        urlbar-next (.-nextSibling urlbar-container)
+
+        state :- Any {:urlbar-toolbar nil
+                      :resize-obs nil
+                      :mutation-obs nil
+                      :updating false}
+
+        ;; --- inject-sidebar-shadow-overrides ---
+        inject-sidebar-shadow-overrides (fn []
+          (let [sr (some-> sidebar-main-element .-shadowRoot)]
+            (if (not sr)
+              (setTimeout inject-sidebar-shadow-overrides 100)
+              (let [s (CSSStyleSheet.)]
+                (.replaceSync s
+                  (str "#sidebar-tools-and-extensions-splitter { display: none !important; }"
+                       " .tools-and-extensions > moz-button:not(.tools-overflow):first-of-type {"
+                       "   --button-outer-padding-block-start: calc(var(--space-xxsmall) * 2) !important;"
+                       " }"
+                       " .tools-and-extensions > moz-button:not(.tools-overflow):last-of-type {"
+                       "   --button-outer-padding-block-end: calc(var(--space-xxsmall) * 2) !important;"
+                       " }"
+                       " .bottom-actions > moz-button:last-of-type {"
+                       "   --button-outer-padding-block-end: calc(var(--space-xxsmall) * 2) !important;"
+                       " }"
+                       " :host([expanded]) .buttons-wrapper {"
+                       "   justify-content: flex-start !important;"
+                       "   align-items: center !important;"
+                       "   gap: calc(var(--space-xxsmall) * 2) !important;"
+                       " }"
+                       " :host([expanded]) .bottom-actions {"
+                       "   align-self: center !important;"
+                       " }"))
+                (.push (.-adoptedStyleSheets sr) s)))))
+
+        ;; --- sync-urlbar-width ---
+        sync-urlbar-width (fn []
+          (when (and urlbar (not (.-updating state))
+                     (not (has? urlbar "breakout-extend")))
+              (set! (.-updating state) true)
+              (let [inset (or (parseFloat
+                                (.getPropertyValue
+                                  (getComputedStyle (.-documentElement document))
+                                  "--gjoa-sidebar-inset"))
+                              10)
+                    w (.max Math 0 (- (.-width (.getBoundingClientRect sidebar-main))
+                                      (* inset 2)))]
+                (.setProperty (.-style urlbar) "--urlbar-width" (str w "px")))
+              (set! (.-updating state) false)))
+
+        ;; --- collect-icons ---
+        collect-icons (fn [scope hits]
+          (let [sr (.-shadowRoot scope)]
+            (when sr (collect-icons sr hits)))
+          (let [kids (.-children scope)]
+            (when kids
+              (.forEach (.from Array kids)
+                (fn [child]
+                  (let [tag (.toLowerCase (.-tagName child))
+                        cls (.-classList child)
+                        is-icon (or (= tag "img")
+                                    (= tag "svg")
+                                    (= tag "moz-icon")
+                                    (.contains cls "toolbarbutton-icon")
+                                    (.contains cls "button-icon"))]
+                    (when is-icon
+                      (let [r (.getBoundingClientRect child)]
+                        (when (and (> (.-width r) 0)
+                                   (> (.-height r) 0)
+                                   (>= (.-top r) 0))
+                          (.push hits r))))
+                    (collect-icons child hits)))))))
+
+        ;; --- sync-symmetric-footer-once ---
+        sync-symmetric-footer-once (fn []
+          (let [sidebar-main-el (by-id "sidebar-main")]
+            (if (not sidebar-main-el)
+              true
+              (let [nav-bar-el (q sidebar-main-el "#nav-bar")
+                    footer (q sidebar-main-el ":scope > sidebar-main")]
+                (if (or (not nav-bar-el) (not footer))
+                  true
+                  (let [top-hits []
+                        bottom-hits []]
+                    (collect-icons nav-bar-el top-hits)
+                    (collect-icons footer bottom-hits)
+                    (if (or (not (.-length top-hits)) (not (.-length bottom-hits)))
+                      true
+                      (do
+                        (.sort top-hits #(- (.-top %1) (.-top %2)))
+                        (.sort bottom-hits #(- (.-bottom %1) (.-bottom %2)))
+                        (let [top-icon (aget top-hits 0)
+                              bottom-icon (aget bottom-hits (- (.-length bottom-hits) 1))
+                              sidebar-rect (.getBoundingClientRect sidebar-main-el)
+                              top-gap (- (.-top top-icon) (.-top sidebar-rect))
+                              bottom-gap (- (.-bottom sidebar-rect) (.-bottom bottom-icon))
+                              BOTTOM-OFFSET 4
+                              delta (- (+ top-gap BOTTOM-OFFSET) bottom-gap)]
+                          (if (< (.abs Math delta) 0.5)
+                            (do
+                              (log (str "symfooter:converged topGap="
+                                        (.toFixed top-gap 1)
+                                        " bottomGap=" (.toFixed bottom-gap 1)
+                                        " target=" (.toFixed (+ top-gap BOTTOM-OFFSET) 1)))
+                              true)
+                            (let [current-var (or (parseFloat
+                                                    (.getPropertyValue
+                                                      (getComputedStyle (.-documentElement document))
+                                                      "--gjoa-symmetric-footer"))
+                                                  0)
+                                  next (.max Math 0 (.round Math (- current-var (* delta 0.6))))]
+                              (.setProperty (.-style (.-documentElement document))
+                                            "--gjoa-symmetric-footer" (str next "px"))
+                              (log (str "symfooter:pass topGap=" (.toFixed top-gap 1)
+                                        " bottomGap=" (.toFixed bottom-gap 1)
+                                        " var=" current-var "→" next))
+                              false)))))))))))
+
+        ;; --- sync-symmetric-footer ---
+        sync-symmetric-footer (fn []
+          (.forEach (.from Array {:length 30})
+            (fn [_ i]
+              (setTimeout sync-symmetric-footer-once (* i 50)))))
+
+        ;; --- expand ---
+        expand (fn []
+          (when (not (.-urlbar-toolbar state))
+            (log "expand")
+            (when sidebar-main-element
+              (.insertBefore sidebar-main navigator-toolbox sidebar-main-element))
+            (let [tb (xul-id "toolbar" "gjoa-urlbar-toolbar")]
+              (.add (.-classList tb) "browser-toolbar")
+              (.appendChild tb urlbar-container)
+              (.after nav-bar tb)
+              (set! (.-urlbar-toolbar state) tb))
+            (when urlbar
+              (let [ro (ResizeObserver. sync-urlbar-width)]
+                (.observe ro sidebar-main)
+                (set! (.-resize-obs state) ro))
+              (let [mo (MutationObserver. sync-urlbar-width)]
+                (.observe mo urlbar {:attributes true :attributeFilter ["style"]})
+                (set! (.-mutation-obs state) mo)))))
+
+        ;; --- collapse ---
+        collapse (fn []
+          (when (.-urlbar-toolbar state)
+            (log "collapse")
+            (some-> state .-resize-obs .disconnect)
+            (some-> state .-mutation-obs .disconnect)
+            (set! (.-resize-obs state) nil)
+            (set! (.-mutation-obs state) nil)
+
+            (if (and urlbar-next (= (.-parentNode urlbar-next) urlbar-parent))
+              (.insertBefore urlbar-parent urlbar-container urlbar-next)
+              (.appendChild urlbar-parent urlbar-container))
+
+            (.remove (.-urlbar-toolbar state))
+            (set! (.-urlbar-toolbar state) nil)
+
+            (let [spring2 (by-id "customizableui-special-spring2")
+                  ext-btn (by-id "unified-extensions-button")]
+              (when spring2 (.after urlbar-container spring2))
+              (when (and spring2 ext-btn) (.after spring2 ext-btn)))
+
+            (if (and toolbox-next (= (.-parentNode toolbox-next) toolbox-parent))
+              (.insertBefore toolbox-parent navigator-toolbox toolbox-next)
+              (.appendChild toolbox-parent navigator-toolbox))))
+
+        ;; --- context-menu fix ---
+        on-context-menu (fn [e]
+          (when (= (.-parentNode navigator-toolbox) sidebar-main)
+            (.stopPropagation e)))]
+
+    ;; --- wire up ---
+    (on! navigator-toolbox "contextmenu" on-context-menu)
+
+    (inject-sidebar-shadow-overrides)
+    (when (has? sidebar-main "sidebar-launcher-expanded") (expand))
+
+    ;; --- symmetric footer ---
+    (sync-symmetric-footer)
+    (on! window "resize" sync-symmetric-footer)
+
+    (let [sidebar-main-el (by-id "sidebar-main")
+          sym-resize-obs (ResizeObserver. sync-symmetric-footer)]
+      (when sidebar-main-el (.observe sym-resize-obs sidebar-main-el))
+
+      ;; --- expand/collapse observer ---
+      (let [expand-observer (MutationObserver.
+                              (fn []
+                                (let [expanded (has? sidebar-main "sidebar-launcher-expanded")]
+                                  (if (and expanded (not (.-urlbar-toolbar state)))
+                                    (expand)
+                                    (when (and (not expanded) (.-urlbar-toolbar state))
+                                      (collapse)))
+                                  (sync-symmetric-footer))))]
+        (.observe expand-observer sidebar-main
+          {:attributes true :attributeFilter ["sidebar-launcher-expanded"]})
+
+        ;; --- width pref ---
+        (let [default-width (pref-int WIDTH-PREF 300)]
+          (when (has? sidebar-main "sidebar-launcher-expanded")
+            (set! (.-width (.-style sidebar-main)) (str default-width "px"))))
+
+        (let [width-obs (ResizeObserver.
+                          (fn []
+                            (when (has? sidebar-main "sidebar-launcher-expanded")
+                              (let [w (.round Math (.-width (.getBoundingClientRect sidebar-main)))]
+                                (when (> w 0) (set-pref-int! WIDTH-PREF w))))))]
+          (.observe width-obs sidebar-main)
+
+          {:isExpanded #(not= (.-urlbar-toolbar state) nil)
+           :destroy (fn []
+             (.disconnect expand-observer)
+             (.disconnect width-obs)
+             (.disconnect sym-resize-obs)
+             (some-> state .-resize-obs .disconnect)
+             (some-> state .-mutation-obs .disconnect)
+             (off! navigator-toolbox "contextmenu" on-context-menu)
+             (off! window "resize" sync-symmetric-footer))}))))))

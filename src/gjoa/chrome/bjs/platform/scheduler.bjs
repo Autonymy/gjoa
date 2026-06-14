@@ -1,0 +1,103 @@
+#lang beagle/js
+(ns gjoa.platform.scheduler)
+(define-mode strict)
+
+(declare-extern [create-logger performance String] Any)
+
+(js/export (def DOMAIN-ORDER :- Any ["prefs" "windows" "tabs" "snapshots" "sidebar" "command"]))
+
+(js/export (defn make-scheduler [] :- Any
+  (let [log (create-logger "scheduler")
+        reconcilers (Map.)
+        pending (Map.)
+        state :- Any {:pendingFlush nil
+                      :pendingResolve nil
+                      :lastReconcileMs nil
+                      :destroyed false}]
+
+    (let [get-dirty (fn [domain]
+                      (or (.get pending domain)
+                          (let [fresh []]
+                            (.set pending domain fresh)
+                            fresh)))
+
+          run-once (fn []
+                     (when (not (.-destroyed state))
+                       (let [started-at (.now performance)
+                             snapshot (Map. pending)]
+                         (.clear pending)
+                         (.forEach DOMAIN-ORDER (fn [domain]
+                           (let [reasons (.get snapshot domain)]
+                             (when (and reasons (not= (.-length reasons) 0))
+                               (let [handlers (or (.get reconcilers domain) [])]
+                                 (.forEach handlers
+                                   #(try (.run % reasons)
+                                      (catch Any e
+                                        (log "reconciler:error"
+                                             {:domain domain
+                                              :reasons reasons
+                                              :msg (String e)})))))))))
+                         (set! (.-lastReconcileMs state) (- (.now performance) started-at))
+                         (log "reconcile:done" {:ms (.-lastReconcileMs state)}))))
+
+          schedule (fn []
+                     (when (not (or (.-pendingFlush state) (.-destroyed state)))
+                       (set! (.-pendingFlush state)
+                             (Promise. (fn [resolve]
+                               (set! (.-pendingResolve state) resolve)
+                               (queueMicrotask (fn []
+                                 (try (run-once)
+                                   (finally
+                                     (let [co :- Any {:v false}]
+                                       (.forEach pending
+                                         #(when (> (.-length %) 0)
+                                            (set! (.-v co) true)))
+                                       (set! (.-pendingFlush state) nil)
+                                       (let [local-resolve (.-pendingResolve state)]
+                                         (set! (.-pendingResolve state) nil)
+                                         (when (.-v co) (schedule))
+                                         (when local-resolve (local-resolve)))))))))))))
+
+          register (fn [reconciler]
+                     (let [list (or (.get reconcilers (.-domain reconciler))
+                                   (let [fresh []]
+                                     (.set reconcilers (.-domain reconciler) fresh)
+                                     fresh))]
+                       (.push list reconciler))
+                     (log "register" {:domain (.-domain reconciler)})
+                     (fn []
+                       (let [arr (.get reconcilers (.-domain reconciler))]
+                         (when arr
+                           (let [i (.indexOf arr reconciler)]
+                             (when (>= i 0) (.splice arr i 1)))))))
+
+          mark-dirty (fn [domain reason]
+                       (when (not (.-destroyed state))
+                         (.push (get-dirty domain) reason)
+                         (schedule)))
+
+          flush (fn []
+                  (if (not (.-pendingFlush state))
+                    (Promise/resolve)
+                    (.then (.-pendingFlush state)
+                      #(when (.-pendingFlush state)
+                         (flush)))))
+
+          diag (fn []
+                 (let [out :- Any {}]
+                   (.forEach DOMAIN-ORDER
+                     #(set! (aget out %) (or (.get pending %) [])))
+                   {:pending out
+                    :nextFlushPending (not= (.-pendingFlush state) nil)
+                    :lastReconcileMs (.-lastReconcileMs state)}))
+
+          destroy (fn []
+                    (set! (.-destroyed state) true)
+                    (.clear pending)
+                    (.clear reconcilers))]
+
+      {:register register
+       :markDirty mark-dirty
+       :flush flush
+       :diag diag
+       :destroy destroy}))))

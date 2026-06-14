@@ -1,0 +1,140 @@
+#lang beagle/js
+(ns gjoa.test.harness)
+(define-mode strict)
+
+;; Tier 2 test harness — happy-dom + chrome global mocks.
+;;
+;; Provides for tests:
+;;   - Fresh window / document (happy-dom) with #sidebar-main and
+;;     #navigator-toolbox already in the body
+;;   - Services.prefs backed by a Map, with addObserver/removeObserver
+;;   - ChromeUtils.importESModule returning { SessionStore: null }
+;;   - Ci, Cu, Cc as empty-object stubs
+;;   - document.createXULElement mapped to document.createElement
+;;   - requestAnimationFrame from happy-dom, plus flushRAF() helper
+;;
+;; Per-test usage:
+;;   const harness = setup_harness();
+;;   afterEach(() => harness.cleanup());
+
+(declare-extern [globalThis console Boolean Number String Error Window] Any)
+
+;; NOTE: Window is from happy-dom npm package.
+;; The generated JS needs this import prepended manually:
+;;   import { Window } from "happy-dom";
+
+(def GLOBALS-TO-OVERRIDE :- Any
+  ["window" "document" "Services" "Ci" "Cu" "Cc"
+   "ChromeUtils" "PathUtils" "IOUtils"
+   "requestAnimationFrame" "cancelAnimationFrame"
+   "getComputedStyle" "MutationObserver"])
+
+(js/export (defn setup-harness [] :- Any
+  (let [happy-window (Window.)
+        happy-doc (.-document happy-window)
+
+        prefs (Map.)
+        pref-observers (Map.)]
+
+    ;; Default prefs gjoa actually reads. Tests override via setPref.
+    (.set prefs "sidebar.verticalTabs" true)
+    (.set prefs "sidebar.position_start" true)
+    (.set prefs "gjoa.compact.hoverHackDelay" 0)
+    (.set prefs "gjoa.debug" false)
+
+    (let [notify (fn [key]
+            (.forEach (or (.get pref-observers key) [])
+              #(try
+                 (.observe % nil key "")
+                 (catch Any e
+                   (.error console "[harness] pref observer threw" e)))))
+
+          services {:prefs
+                     {:getBoolPref #(if (.has prefs %1)
+                        (Boolean (.get prefs %1))
+                        (or %2 false))
+                      :setBoolPref (fn [key value]
+                        (.set prefs key value)
+                        (notify key))
+                      :getIntPref #(if (.has prefs %1)
+                        (Number (.get prefs %1))
+                        (or %2 0))
+                      :setIntPref (fn [key value]
+                        (.set prefs key value)
+                        (notify key))
+                      :getCharPref #(if (.has prefs %1)
+                        (String (.get prefs %1))
+                        (or %2 ""))
+                      :setCharPref (fn [key value]
+                        (.set prefs key value)
+                        (notify key))
+                      :addObserver (fn [key observer]
+                        (when (not (.has pref-observers key))
+                          (.set pref-observers key (Set.)))
+                        (.add (.get pref-observers key) observer))
+                      :removeObserver #(let [s (.get pref-observers %1)]
+                          (when s (.delete s %2)))}
+                    :dirsvc {:get #(let [r {:path "/tmp"}] r)}}
+
+          ;; Save current globals before overriding
+          saved (Map.)]
+
+      (.forEach GLOBALS-TO-OVERRIDE
+        #(.set saved % (aget globalThis %)))
+
+      ;; Wire happy-dom into globals
+      (aset globalThis "window" happy-window)
+      (aset globalThis "document" happy-doc)
+      (aset globalThis "Services" services)
+      (aset globalThis "Ci" {})
+      (aset globalThis "Cu" {})
+      (aset globalThis "Cc" {})
+      (aset globalThis "ChromeUtils"
+        {:importESModule #(let [r {:SessionStore nil}] r)})
+      (aset globalThis "PathUtils"
+        {:join (fn [& parts] (.join parts "/"))})
+      (aset globalThis "IOUtils"
+        {:writeUTF8 (fn [] nil)
+         :readUTF8 #(throw (Error. "no file"))
+         :write (fn [] nil)
+         :stat #(let [r {:size 0}] r)})
+      (aset globalThis "requestAnimationFrame"
+        (.bind (.-requestAnimationFrame happy-window) happy-window))
+      (aset globalThis "cancelAnimationFrame"
+        (.bind (.-cancelAnimationFrame happy-window) happy-window))
+      (aset globalThis "getComputedStyle"
+        (.bind (.-getComputedStyle happy-window) happy-window))
+      (aset globalThis "MutationObserver"
+        (.-MutationObserver happy-window))
+
+      ;; Map createXULElement to createElement
+      (set! (.-createXULElement happy-doc)
+        #(.createElement happy-doc %))
+
+      ;; Pre-populate elements compact mode binds to
+      (let [sidebar-main (.createElement happy-doc "div")]
+        (set! (.-id sidebar-main) "sidebar-main")
+        (.appendChild (.-body happy-doc) sidebar-main))
+
+      (let [navigator-toolbox (.createElement happy-doc "div")]
+        (set! (.-id navigator-toolbox) "navigator-toolbox")
+        (.appendChild (.-body happy-doc) navigator-toolbox))
+
+      {:window happy-window
+       :document happy-doc
+       :prefs prefs
+       :prefObservers pref-observers
+       :setPref (fn [key value]
+         (.set prefs key value)
+         (notify key))
+       :flushRAF (fn []
+         (let [abort (.-abort (.-happyDOM happy-window))]
+           (when abort (abort))))
+       :cleanup (fn []
+         (.forEach GLOBALS-TO-OVERRIDE
+           #(if (= (.get saved %) js/undefined)
+              (js/delete (aget globalThis %))
+              (aset globalThis % (.get saved %))))
+         (try
+           (.close happy-window)
+           (catch Any _e nil)))}))))

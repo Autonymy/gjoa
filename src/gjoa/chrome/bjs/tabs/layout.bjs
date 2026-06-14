@@ -1,0 +1,173 @@
+#lang beagle/js
+(ns gjoa.tabs.layout
+  (:require [gjoa.macros :refer [by-id xul-new attr! pref-bool has? rmattr! toggle! on!]]))
+(define-mode strict)
+
+(declare-extern [gBrowser ResizeObserver create-logger all-rows data-of level-of-row row-of state] Any)
+
+(js/export (defn make-layout [deps :- Any] :- Any
+  (let [sidebar-main (.-sidebarMain deps)
+        rows (.-rows deps)
+        log (create-logger "tabs/layout")
+
+        ;; Module-private mutable state
+        priv :- Any {:toolboxResizeObs nil
+                     :alignSpacer nil
+                     :lastVertical nil}
+
+        is-vertical (fn [] :- Bool
+          (pref-bool "sidebar.verticalTabs" true))
+
+        collapse-inactive-trees-keeping-active (fn []
+          (let [active-tab (and gBrowser (.-selectedTab gBrowser))
+                active-row (and active-tab (.get row-of active-tab))
+                all (all-rows)
+                found :- Any {:root nil}]
+            (when active-row
+              (loop [i (.indexOf all active-row)]
+                (when (>= i 0)
+                  (if (= (level-of-row (aget all i)) 0)
+                    (set! (.-root found) (aget all i))
+                    (recur (- i 1))))))
+            (let [mutated :- Any {:v false}]
+              (.forEach all (fn [row]
+                (when (= (level-of-row row) 0)
+                  (let [d (data-of row)
+                        is-active-tree (= row (.-root found))]
+                    (if is-active-tree
+                      (when (and d (.-collapsed d))
+                        (set! (.-collapsed d) false)
+                        (.syncAnyRow rows row)
+                        (set! (.-v mutated) true))
+                      (when (and d (not (.-collapsed d)))
+                        (set! (.-collapsed d) true)
+                        (.syncAnyRow rows row)
+                        (set! (.-v mutated) true)))))))
+              (when (.-v mutated)
+                (.updateVisibility rows)))))
+
+        setup-horizontal-align-spacer (fn []
+          (let [target (by-id "TabsToolbar-customization-target")]
+            (when target
+              (when (not (.-alignSpacer priv))
+                (let [el (xul-new "box")]
+                  (set! (.-id el) "gjoa-content-alignment-spacer")
+                  (set! (.-flex (.-style el)) "0 0 auto")
+                  (set! (.-width (.-style el)) "10px")
+                  (set! (.-alignSpacer priv) el)))
+              (when (not= (.-firstChild target) (.-alignSpacer priv))
+                (.prepend target (.-alignSpacer priv))))))
+
+        teardown-horizontal-align-spacer (fn []
+          (when (.-alignSpacer priv)
+            (.remove (.-alignSpacer priv))))
+
+        set-urlbar-top-layer (fn [in-top-layer :- Bool]
+          (let [urlbar (by-id "urlbar")]
+            (when urlbar
+              (when (not (has? sidebar-main "data-gjoa-compact"))
+                (if (and in-top-layer (not (has? urlbar "popover")))
+                  (do
+                    (attr! urlbar "popover" "manual")
+                    (try (.showPopover urlbar) (catch Any _e nil)))
+                  (when (and (not in-top-layer) (has? urlbar "popover"))
+                    (rmattr! urlbar "popover")))))))
+
+        position-panel (fn []
+          (when (.-panel state)
+            (let [vertical (is-vertical)]
+              (toggle! (.-panel state) "gjoa-horizontal" (not vertical))
+              (when (.-pinnedContainer state)
+                (toggle! (.-pinnedContainer state) "gjoa-horizontal" (not vertical)))
+              (toggle! (.-documentElement document) "gjoa-horizontal-tabs" (not vertical))
+
+              (when (.-toolboxResizeObs priv)
+                (.disconnect (.-toolboxResizeObs priv))
+                (set! (.-toolboxResizeObs priv) nil))
+
+              (let [toolbox (by-id "navigator-toolbox")
+                    toolbox-in-sidebar (and toolbox (= (.-parentNode toolbox) sidebar-main))]
+
+                (if vertical
+                  (let [sidebar-collapsed (or (not toolbox-in-sidebar)
+                                              (has? sidebar-main "data-gjoa-compact"))
+                        compact-revealed (and (has? sidebar-main "data-gjoa-compact")
+                                              (has? sidebar-main "gjoa-has-hover"))
+                        icons-only (and (not toolbox-in-sidebar) (not compact-revealed))]
+                    (toggle! (.-panel state) "gjoa-icons-only" icons-only)
+                    (when (.-pinnedContainer state)
+                      (toggle! (.-pinnedContainer state) "gjoa-icons-only" icons-only))
+                    (when (.-spaceHeader state)
+                      (toggle! (.-spaceHeader state) "gjoa-icons-only" icons-only))
+                    (toggle! (.-documentElement document) "gjoa-sidebar-collapsed" sidebar-collapsed)
+                    (if (and toolbox-in-sidebar toolbox (.-pinnedContainer state))
+                      (do
+                        (when (and (.-spaceHeader state)
+                                   (not= (.-nextElementSibling toolbox) (.-spaceHeader state)))
+                          (.after toolbox (.-spaceHeader state)))
+                        (let [header-anchor (or (.-spaceHeader state) toolbox)]
+                          (when (not= (.-nextElementSibling header-anchor) (.-pinnedContainer state))
+                            (.after header-anchor (.-pinnedContainer state))))
+                        (when (not= (.-nextElementSibling (.-pinnedContainer state)) (.-panel state))
+                          (.after (.-pinnedContainer state) (.-panel state))))
+                      (when (and (.-pinnedContainer state)
+                                 (or (not= (.-parentNode (.-panel state)) sidebar-main)
+                                     (not= (.-firstElementChild sidebar-main)
+                                           (or (.-spaceHeader state) (.-pinnedContainer state)))))
+                        (.prepend sidebar-main (.-panel state))
+                        (.prepend sidebar-main (.-pinnedContainer state))
+                        (when (.-spaceHeader state)
+                          (.prepend sidebar-main (.-spaceHeader state)))))
+                    (teardown-horizontal-align-spacer)
+                    (set-urlbar-top-layer true))
+                  ;; horizontal branch
+                  (do
+                    (rmattr! (.-panel state) "gjoa-icons-only")
+                    (when (.-pinnedContainer state)
+                      (rmattr! (.-pinnedContainer state) "gjoa-icons-only"))
+                    (rmattr! (.-documentElement document) "gjoa-sidebar-collapsed")
+                    (when (and (.-spaceHeader state) (.-parentNode (.-spaceHeader state)))
+                      (.remove (.-spaceHeader state)))
+                    (let [tabbrowser-tabs (by-id "tabbrowser-tabs")]
+                      (when tabbrowser-tabs
+                        (when (and (.-pinnedContainer state)
+                                   (not= (.-nextElementSibling tabbrowser-tabs) (.-pinnedContainer state)))
+                          (.after tabbrowser-tabs (.-pinnedContainer state)))
+                        (let [anchor (or (.-pinnedContainer state) tabbrowser-tabs)]
+                          (when (not= (.-nextElementSibling anchor) (.-panel state))
+                            (.after anchor (.-panel state))))))
+                    (setup-horizontal-align-spacer)))
+
+                ;; Track toolbox height for compact mode offset
+                (if (and (not toolbox-in-sidebar) toolbox)
+                  (let [update-height (fn []
+                          (let [h (.-height (.getBoundingClientRect toolbox))]
+                            (.setProperty (.-style (.-documentElement document))
+                                          "--gjoa-toolbox-height" (str h "px"))))]
+                    (update-height)
+                    (set! (.-toolboxResizeObs priv) (ResizeObserver. update-height))
+                    (.observe (.-toolboxResizeObs priv) toolbox))
+                  (.removeProperty (.-style (.-documentElement document)) "--gjoa-toolbox-height"))
+
+                ;; Re-sync all rows when switching modes
+                (when vertical (.clearHorizontalGrid rows))
+                (.forEach (all-rows) #(.syncAnyRow rows %))
+                (.updateVisibility rows)
+
+                ;; Apply "keep only active tree expanded" on mode changes
+                (let [mode-changed (and (not= (.-lastVertical priv) nil)
+                                        (not= (.-lastVertical priv) vertical))
+                      initial-horizontal (and (= (.-lastVertical priv) nil) (not vertical))]
+                  (log "positionPanel:transitionCheck"
+                       {:lastVertical (.-lastVertical priv)
+                        :vertical vertical
+                        :modeChanged mode-changed
+                        :initialHorizontal initial-horizontal
+                        :willTrigger (or mode-changed initial-horizontal)})
+                  (when (or mode-changed initial-horizontal)
+                    (collapse-inactive-trees-keeping-active)))
+                (set! (.-lastVertical priv) vertical)))))]
+
+    {:positionPanel position-panel
+     :isVertical is-vertical
+     :setUrlbarTopLayer set-urlbar-top-layer})))

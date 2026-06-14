@@ -113,7 +113,7 @@ async function spawnGjoa(opts: {
   const child = spawn(opts.gjoaBin, args, {
     stdio: opts.verbose ? "inherit" : "pipe",
     // Pass GJOA_ALLOW_INSECURE=1 unconditionally so the in-process
-    // security gate (src/gjoa/chrome/src/security/index.ts) doesn't
+    // security gate (src/gjoa/chrome/bjs/security/index.bjs) doesn't
     // quit the test browser. The test environment runs against
     // whatever Firefox version the local build is at — that's
     // unrelated to "is this build safe to ship to users."

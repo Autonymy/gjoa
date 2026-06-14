@@ -1,0 +1,139 @@
+#lang beagle/js
+(ns gjoa.drawer.urlbar
+  (:require [gjoa.macros :refer [q html-new attr! on! onc! offc! off! bool has? rmattr!]]))
+(define-mode strict)
+
+(declare-extern [document window setTimeout String KeyboardEvent create-logger] Any)
+
+(js/export (defn make-urlbar [deps] :- Any
+  (let [urlbar (.-urlbar deps)
+        root (.-documentElement document)
+        log (create-logger "urlbar")
+        state :- Any {:activated false :intent "current" :backdrop nil}
+
+        intent-attr #(if (= % "newTab") "new-tab" "current")
+
+        deactivate-floating (fn []
+          (when (.-activated state)
+            (set! (.-activated state) false)
+            (log "deactivateFloating")
+            (rmattr! root "gjoa-urlbar-floating")
+            (rmattr! root "gjoa-urlbar-intent")
+            (when (.-backdrop state)
+              (.remove (.-backdrop state))
+              (set! (.-backdrop state) nil))
+
+            (let [compact-vertical (bool (q document "#sidebar-main[data-gjoa-compact]"))
+                  compact-horizontal (has? root "data-gjoa-compact-horizontal")
+                  compact-on (or compact-vertical compact-horizontal)
+                  breakout (has? urlbar "breakout-extend")]
+              (when (and compact-on (not breakout))
+                (try
+                  (when (and (.matches urlbar ":popover-open") (.-hidePopover urlbar))
+                    (.hidePopover urlbar))
+                  (rmattr! urlbar "popover")
+                  (catch Any e
+                    (log "deactivateFloating:popover-sync-error" {:msg (String e)})))))))
+
+        activate-floating (fn [new-intent]
+          (set! (.-intent state) new-intent)
+          (let [attr-val (intent-attr (.-intent state))]
+            (if (.-activated state)
+              (do (log "activateFloating:re-arm" {:intent (.-intent state)})
+                  (attr! root "gjoa-urlbar-intent" attr-val))
+              (do (set! (.-activated state) true)
+                  (log "activateFloating" {:intent (.-intent state)})
+                  (attr! root "gjoa-urlbar-floating" "")
+                  (attr! root "gjoa-urlbar-intent" attr-val)
+
+                  (when (not (.-backdrop state))
+                    (let [bd (html-new "div")]
+                      (set! (.-id bd) "gjoa-urlbar-backdrop")
+                      (on! bd "mousedown" #(deactivate-floating))
+                      (.appendChild root bd)
+                      (set! (.-backdrop state) bd)))
+
+                  (try
+                    (when (not= (.getAttribute urlbar "popover") "manual")
+                      (attr! urlbar "popover" "manual"))
+                    (when (and (not (.matches urlbar ":popover-open")) (.-showPopover urlbar))
+                      (.showPopover urlbar))
+                    (some-> window .-gURLBar .focus)
+                    (some-> window .-gURLBar .select)
+                    (catch Any e
+                      (log "activateFloating:error" {:msg (String e)})))))))
+
+        is-floating #(.-activated state)
+
+        on-focus-out (fn [e]
+          (when (.-activated state)
+            (setTimeout (fn []
+              (when (.-activated state)
+                (let [a (.-activeElement document)]
+                  (when (not (and a (or (= a urlbar) (.contains urlbar a))))
+                    (deactivate-floating)))))
+              0)))
+
+        handle-accel (fn [e]
+          (let [accel (or (.-ctrlKey e) (.-metaKey e))]
+            (when (and accel (not (.-shiftKey e)) (not (.-altKey e)))
+              (let [k (.-key e)]
+                (when (or (= k "j") (= k "k"))
+                  (let [view (some-> window .-gURLBar .-view)]
+                    (when (and view (.-selectBy view))
+                      (.preventDefault e)
+                      (.stopImmediatePropagation e)
+                      (try (.selectBy view (if (= k "j") 1 -1))
+                        (catch Any err
+                          (log "selectBy:error" {:msg (String err)})))
+                      true)))))))
+
+        on-keydown (fn [e]
+          (when (and (not (handle-accel e)) (.-activated state))
+              (cond
+                (= (.-key e) "Escape")
+                  (setTimeout (fn []
+                    (deactivate-floating)
+                    (try
+                      (let [a (.-activeElement document)]
+                        (when (or (= a urlbar) (and a (.contains urlbar a)))
+                          (some-> window .-gBrowser .-selectedBrowser .focus)))
+                      (catch Any err
+                        (log "escape:focus-content-error" {:msg (String err)}))))
+                    0)
+
+                (= (.-key e) "Enter")
+                  (do
+                    (when (and (= (.-intent state) "newTab") (not (.-altKey e)))
+                      (.preventDefault e)
+                      (.stopImmediatePropagation e)
+                      (log "intercept:newTab-enter")
+                      (let [target (.-target e)]
+                        (.dispatchEvent target (KeyboardEvent. "keydown"
+                          {:key "Enter" :code "Enter" :keyCode 13 :which 13
+                           :altKey true :bubbles true :cancelable true :view window}))))
+                    (setTimeout deactivate-floating 0))
+
+                :else nil)))
+
+        on-activate-request (fn [e]
+          (let [detail (.-detail e)]
+            (activate-floating
+              (if (and detail (= (.-intent detail) "newTab")) "newTab" "current"))))
+
+        on-deactivate-request #(deactivate-floating)]
+
+    (onc! urlbar "focusout" on-focus-out)
+    (onc! urlbar "keydown" on-keydown)
+    (on! document "gjoa-urlbar-activate" on-activate-request)
+    (on! document "gjoa-urlbar-deactivate" on-deactivate-request)
+
+    {:activateFloating activate-floating
+     :deactivateFloating deactivate-floating
+     :isFloating is-floating
+     :destroy (fn []
+       (offc! urlbar "focusout" on-focus-out)
+       (offc! urlbar "keydown" on-keydown)
+       (off! document "gjoa-urlbar-activate" on-activate-request)
+       (off! document "gjoa-urlbar-deactivate" on-deactivate-request)
+       (deactivate-floating))})))

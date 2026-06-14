@@ -1,0 +1,68 @@
+#lang beagle/js
+(ns gjoa.tabs.log)
+(define-mode strict)
+
+(declare-extern [Services Ci PathUtils IOUtils console Date Promise JSON] Any)
+
+(def LOG-FILENAME :- String "gjoa-debug.log")
+(def LOG-MAX-BYTES :- Int (* 5 1024 1024))
+
+(def state :- Any {:log-path nil :rotate-checked false :flush-pending false})
+(def lines :- Any [])
+
+(defn log-path [] :- String
+  (or (.-log-path state)
+      (let [p (.join PathUtils
+                (.-path (.get (.-dirsvc Services) "ProfD" (.-nsIFile Ci)))
+                LOG-FILENAME)]
+        (set! (.-log-path state) p)
+        p)))
+
+(defn migrate-legacy-log [] :- Any
+  (let [new-path (log-path)
+        old-path (.join PathUtils
+                   (.-path (.get (.-dirsvc Services) "ProfD" (.-nsIFile Ci)))
+                   "palefox-debug.log")]
+    (-> (.exists IOUtils old-path)
+        (.then (fn [old-exists]
+          (when old-exists
+            (-> (.exists IOUtils new-path)
+                (.then (fn [new-exists]
+                  (when (not new-exists)
+                    (.move IOUtils old-path new-path)))))))))))
+
+(defn flush-lines [] :- Any
+  (let [batch (.splice lines 0)]
+    (if (= 0 (.-length batch))
+      (do (set! (.-flush-pending state) false) nil)
+      (let [blob (.encode (TextEncoder.) (str (.join batch "\n") "\n"))
+            path (log-path)]
+        (-> (.write IOUtils path blob {:mode "appendOrCreate"})
+            (.then (fn []
+              (if (> (.-length lines) 0)
+                (flush-lines)
+                (set! (.-flush-pending state) false))))
+            (.catch (fn [e]
+              (.error console "[GJOA:log] write failed" e)
+              (set! (.-flush-pending state) false))))))))
+
+(defn maybe-rotate [] :- Any
+  (when (not (.-rotate-checked state))
+    (set! (.-rotate-checked state) true)
+    (-> (migrate-legacy-log)
+        (.then (fn [] (.stat IOUtils (log-path))))
+        (.then (fn [info]
+          (when (> (.-size info) LOG-MAX-BYTES)
+            (.write IOUtils (log-path) (Uint8Array. 0) {:mode "overwrite"}))))
+        (.catch (fn [] nil)))))
+
+(js/export (defn create-logger [tag :- String] :- Any
+  (let [prefix (str "[GJOA:" tag "]")]
+    (fn [event data]
+      (when (.getBoolPref (.-prefs Services) "gjoa.debug" false)
+        (maybe-rotate)
+        (.log console prefix event (or data {}))
+        (.push lines (str (.now Date) " [" tag "] " event " " (.stringify JSON (or data {}))))
+        (when (not (.-flush-pending state))
+          (set! (.-flush-pending state) true)
+          (.then (.resolve Promise) flush-lines)))))))

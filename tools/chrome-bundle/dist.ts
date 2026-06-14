@@ -1,9 +1,9 @@
 #!/usr/bin/env bun
 // Build the chrome distribution at dist/. Composes:
 //
-//   1. bundle JS:   src/gjoa/chrome/src/{hello,drawer,tabs}/index.ts
-//                     → dist/chrome/JS/*.uc.js
-//   2. stage CSS:   src/gjoa/chrome/css/*    → dist/chrome/CSS/
+//   1. compile beagle:  src/gjoa/chrome/bjs/**/*.bjs → .beagle-out/**/*.js
+//   2. bundle JS:       .beagle-out/ → dist/chrome/JS/*.uc.js (IIFE concat)
+//   3. stage CSS:       src/gjoa/chrome/css/* → dist/chrome/CSS/
 //
 // Output is consumed by `bun run chrome:install` which symlinks
 // dist/chrome/ into <install_root>/gjoa-dev/. Gjoa's native loader
@@ -38,7 +38,18 @@ async function main(): Promise<void> {
   if (existsSync(DIST)) await rm(DIST, { recursive: true });
   await mkdir(DIST_CHROME, { recursive: true });
 
-  await step("bundling chrome JS (hello, drawer, tabs)", async () => {
+  await step("compiling beagle sources", async () => {
+    const proc = Bun.spawn({
+      cmd: ["bun", join(import.meta.dir, "compile.ts")],
+      cwd: REPO_ROOT,
+      stdout: "inherit",
+      stderr: "inherit",
+    });
+    const code = await proc.exited;
+    if (code !== 0) throw new Error(`beagle compile failed (exit ${code})`);
+  });
+
+  await step("bundling chrome JS", async () => {
     const proc = Bun.spawn({
       cmd: ["bun", join(import.meta.dir, "build.ts")],
       cwd: REPO_ROOT,

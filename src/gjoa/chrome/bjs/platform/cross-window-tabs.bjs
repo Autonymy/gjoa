@@ -1,0 +1,52 @@
+#lang beagle/js
+(ns gjoa.platform.cross-window-tabs)
+(define-mode strict)
+
+(declare-extern [Services console] Any)
+
+(js/export (defn make-cross-window-tabs [] :- Any
+  {:all (fn []
+    (let [out []]
+      (try
+        (loop [e (.getEnumerator (.-wm Services) "navigator:browser")]
+          (if (.hasMoreElements e)
+            (do
+              (let [w (.getNext e)
+                    p (.-Gjoa w)]
+                (when p
+                  (let [win (.current (.-windows p))
+                        tabs (.list (.-tabs win))]
+                    (.forEach tabs
+                      (fn [t]
+                        (.push out {:id (.-id t)
+                                    :url (.-url t)
+                                    :label (.-label t)
+                                    :customName (.-customName t)
+                                    :pinned (.-pinned t)
+                                    :selected (.-selected t)
+                                    :hidden (.-hidden t)
+                                    :parentId (.-parentId t)
+                                    :depth (.-depth t)
+                                    :windowId (.-windowId win)}))))))
+              (recur e))
+            out))
+        (catch Any err
+          (.error console "[Gjoa.tabs.all] enumerate failed" err)))
+      out))
+
+   :activate (fn [gjoa-id window-id]
+    (try
+      (loop [e (.getEnumerator (.-wm Services) "navigator:browser")]
+        (if (.hasMoreElements e)
+          (let [w (.getNext e)
+                p (.-Gjoa w)]
+            (if p
+              (let [win (.current (.-windows p))]
+                (if (= (.-windowId win) window-id)
+                  (.activate (.-tabs win) gjoa-id)
+                  (recur e)))
+              (recur e)))
+          false))
+      (catch Any err
+        (.error console "[Gjoa.tabs.activate] failed" err)
+        false)))}))

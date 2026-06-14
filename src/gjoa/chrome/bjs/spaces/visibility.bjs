@@ -1,0 +1,10 @@
+#lang beagle/js
+(ns gjoa.spaces.visibility)
+(define-mode strict)
+
+(js/export (defn is-in-active-space [tab tab-space spaces default-id active-id] :- Any
+  (let [id (.get tab-space tab)]
+    (let [effective (if (and (not= id js/undefined) (.has spaces id))
+                     id
+                     default-id)]
+      (= effective active-id)))))

@@ -1,0 +1,40 @@
+#lang beagle/js
+(ns gjoa.firefox.files)
+(define-mode strict)
+
+(declare-extern [Services Ci PathUtils IOUtils] Any)
+
+(js/export (defn profile-dir [] :- String
+  (.-path (.get (.-dirsvc Services) "ProfD" (.-nsIFile Ci)))))
+
+(js/export (defn profile-path [subpath :- String] :- String
+  (.join PathUtils (profile-dir) subpath)))
+
+(js/export (defn join-path [a :- String b :- String] :- String
+  (.join PathUtils a b)))
+
+(js/export (defn parent-path [path :- String] :- Any
+  (.parent PathUtils path)))
+
+(js/export (defn read-text [path :- String] :- Any
+  (.readUTF8 IOUtils path)))
+
+(js/export (defn write-text [path :- String data :- String] :- Any
+  (.writeUTF8 IOUtils path data)))
+
+(js/export (defn exists? [path :- String] :- Any
+  (.catch (.exists IOUtils path) (fn [_e] false))))
+
+(js/export (defn stat-file [path :- String] :- Any
+  (.catch
+    (.then (.stat IOUtils path)
+      (fn [s]
+        (let [result {:size (.-size s) :lastModified (.-lastModified s)}]
+          result)))
+    (fn [_e] nil))))
+
+(js/export (defn ensure-dir [path :- String] :- Any
+  (.makeDirectory IOUtils path {:ignoreExisting true :createAncestors true})))
+
+(js/export (defn remove-file [path :- String] :- Any
+  (.catch (.remove IOUtils path) (fn [_e] nil))))

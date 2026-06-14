@@ -1,0 +1,29 @@
+#lang beagle/js
+(ns gjoa.platform.tabs-reconciler
+  (:require [gjoa.macros :refer [on! off!]]))
+(define-mode strict)
+
+(declare-extern [gBrowser create-logger] Any)
+
+(js/export (defn make-tabs-reconciler [deps :- Any] :- Any
+  (let [log (create-logger "reconciler/tabs")
+        scheduler (.-scheduler deps)
+
+        unregister (.register scheduler
+                     {:domain "tabs"
+                      :run #(log "reconcile" {:reasons %})})
+
+        on-tab-event #(.markDirty scheduler "tabs" (.-type %))
+
+        events ["TabOpen" "TabClose" "TabMove" "TabSelect"
+                "TabAttrModified" "TabPinned" "TabUnpinned"]
+
+        destroy (fn []
+                  (.forEach events
+                    #(off! (.-tabContainer gBrowser) % on-tab-event))
+                  (unregister))]
+
+    (.forEach events
+      #(on! (.-tabContainer gBrowser) % on-tab-event))
+
+    {:destroy destroy})))

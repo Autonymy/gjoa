@@ -6,32 +6,17 @@
     "moduleDetection": "force",
     "allowJs": true,
     "types": ["bun"],
-
-    // Bundler mode — bun build does the actual emit.
     "moduleResolution": "bundler",
     "allowImportingTsExtensions": true,
     "verbatimModuleSyntax": true,
     "noEmit": true,
-
-    // Strict but pragmatic. noImplicitAny is OFF for now so the legacy
-    // src/tabs/index.ts doesn't drown us in ~50 implicit-any errors before
-    // those code paths get extracted into typed modules. The check that
-    // really matters here is TS2304 (Cannot find name) — that's what catches
-    // "toggleCollapse-is-not-defined" style bugs at build time.
     "strict": true,
-    "noImplicitAny": false,
     "skipLibCheck": true,
     "noFallthroughCasesInSwitch": true,
     "noImplicitOverride": true,
-    // noUncheckedIndexedAccess is intentionally off — pulls its weight in
-    // greenfield code but produces ~50 noise errors across the legacy file
-    // for arr[i] reads we know are bounded. Re-enable once legacy is tighter.
-
-    // The chrome scripting environment exposes a lot of XUL/Mozilla globals.
-    // Keep these off until we have ambient .d.ts coverage to match.
     "noUnusedLocals": false,
     "noUnusedParameters": false,
     "noPropertyAccessFromIndexSignature": false
   },
-  "include": ["src/**/*", "build.ts", "build.config.ts"]
+  "include": ["tools/**/*"]
 }

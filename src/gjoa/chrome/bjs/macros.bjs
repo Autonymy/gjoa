@@ -1,0 +1,101 @@
+#lang beagle/js
+(ns gjoa.macros)
+(define-mode strict)
+(defmacro pref-bool [name default]
+  `(try (.getBoolPref (.-prefs Services) ,name ,default)
+        (catch Any _e ,default)))
+
+(defmacro pref-int [name default]
+  `(try (.getIntPref (.-prefs Services) ,name ,default)
+        (catch Any _e ,default)))
+
+(defmacro pref-str [name default]
+  `(try (.getStringPref (.-prefs Services) ,name ,default)
+        (catch Any _e
+          (try (.getCharPref (.-prefs Services) ,name ,default)
+               (catch Any _e2 ,default)))))
+
+(defmacro set-pref-bool! [name value]
+  `(try (.setBoolPref (.-prefs Services) ,name ,value)
+        (catch Any _e nil)))
+
+(defmacro set-pref-int! [name value]
+  `(try (.setIntPref (.-prefs Services) ,name ,value)
+        (catch Any _e nil)))
+
+(defmacro set-pref-str! [name value]
+  `(try (.setStringPref (.-prefs Services) ,name ,value)
+        (catch Any _e nil)))
+(defmacro key= [e k]
+  `(= (.-key ,e) ,k))
+(defmacro xul-new [tag]
+  `(.createXULElement document ,tag))
+
+(defmacro html-new [tag]
+  `(.createElement document ,tag))
+(defmacro attr! [el name value]
+  `(.setAttribute ,el ,name ,value))
+(defmacro mi [label handler]
+  `(let [_item (xul-new "menuitem")]
+     (attr! _item "label" ,label)
+     (.addEventListener _item "command" ,handler)
+     _item))
+
+(defmacro sep []
+  `(xul-new "menuseparator"))
+(defmacro dispatch-key [e guard-name action]
+  `(if (not (key-enabled ,guard-name)) false
+     (do (.preventDefault ,e) (.stopImmediatePropagation ,e)
+         ,action true)))
+(defmacro with-ctx [row-binding body]
+  `(when (.-contextTab state)
+     (let [,row-binding (.get row-of (.-contextTab state))]
+       (when ,row-binding ,body))))
+(defmacro with-tab [action]
+  `(when (.-contextTab state) (,action (.-contextTab state))))
+(defmacro walk-sibs [start callback]
+  `(let [_cb ,callback
+         _walk (fn [_n]
+                 (when _n
+                   (_cb _n)
+                   (_walk (.-nextElementSibling _n))))]
+     (_walk ,start)))
+(defmacro on! [el event handler]
+  `(.addEventListener ,el ,event ,handler))
+(defmacro on1! [el event handler]
+  `(.addEventListener ,el ,event ,handler {:once true}))
+(defmacro xul [tag cls]
+  `(let [_e (.createXULElement document ,tag)]
+     (set! (.-className _e) ,cls) _e))
+(defmacro htm [tag cls]
+  `(let [_e (.createElement document ,tag)]
+     (set! (.-className _e) ,cls) _e))
+(defmacro xul-id [tag id]
+  `(let [_e (.createXULElement document ,tag)]
+     (set! (.-id _e) ,id) _e))
+(defmacro bool [x]
+  `(not (not ,x)))
+(defmacro has? [el name]
+  `(.hasAttribute ,el ,name))
+(defmacro rmattr! [el name]
+  `(.removeAttribute ,el ,name))
+(defmacro toggle! [el name value]
+  `(.toggleAttribute ,el ,name ,value))
+(defmacro undef-or [val fallback]
+  `(if (not= ,val js/undefined) ,val ,fallback))
+(defmacro css! [el text]
+  `(set! (.-cssText (.-style ,el)) ,text))
+(defmacro onc! [el event handler]
+  `(.addEventListener ,el ,event ,handler true))
+(defmacro off! [el event handler]
+  `(.removeEventListener ,el ,event ,handler))
+(defmacro offc! [el event handler]
+  `(.removeEventListener ,el ,event ,handler true))
+(defmacro tabs! []
+  `(.from Array (.-tabs gBrowser)))
+(defmacro by-id [id]
+  `(.getElementById document ,id))
+(defmacro q [el sel]
+  `(.querySelector ,el ,sel))
+(defmacro qa [el sel]
+  `(.querySelectorAll ,el ,sel))

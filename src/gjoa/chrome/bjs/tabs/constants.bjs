@@ -1,0 +1,8 @@
+#lang beagle/js
+(ns gjoa.tabs.constants)
+(define-mode strict)
+
+(js/export (def INDENT :- Int 14))
+(js/export (def CHORD-TIMEOUT :- Int 500))
+(js/export (def CLOSED-MEMORY :- Int 32))
+(js/export (def PIN-ATTR :- String "gjoa-id"))

@@ -1,0 +1,74 @@
+#lang beagle/js
+(ns gjoa.drawer.banner
+  (:require [gjoa.macros :refer [by-id xul-new xul-id attr! on! off! has?]]))
+(define-mode strict)
+
+(declare-extern [document gBrowser js/clearTimeout create-logger] Any)
+
+(def SHOW-DELAY-MS :- Int 2000)
+
+(js/export (defn make-banner [] :- Any
+  (let [log (create-logger "drawer/banner")
+        identity-box (by-id "identity-box")]
+    (if (not identity-box)
+      (do (log "init:no-identity-box")
+          {:destroy (fn [] nil)})
+      (let [state :- Any {:timer nil :banner nil}
+
+            show (fn []
+              (when (not (.-banner state))
+                (let [el (xul-id "hbox" "gjoa-insecure-banner")]
+                  (attr! el "align" "center")
+                  (attr! el "pack" "center")
+                  (set! (.-textContent el) "Gjoa - HTTP Alert: Not Secure")
+                  (let [browser-el (by-id "browser")]
+                    (if (and browser-el (.-parentNode browser-el))
+                      (do
+                        (.insertBefore (.-parentNode browser-el) el browser-el)
+                        (set! (.-banner state) el)
+                        (log "show"))
+                      (log "show:no-browser-parent"))))))
+
+            hide (fn []
+              (when (.-timer state)
+                (js/clearTimeout (.-timer state))
+                (set! (.-timer state) nil))
+              (when (.-banner state)
+                (.remove (.-banner state))
+                (set! (.-banner state) nil)
+                (log "hide")))
+
+            check (fn []
+              (let [browser (.-selectedBrowser gBrowser)
+                    uri (if (and browser
+                                 (.-currentURI browser)
+                                 (.-spec (.-currentURI browser)))
+                          (.-spec (.-currentURI browser))
+                          "")
+                    is-internal (or (.startsWith uri "about:")
+                                    (.startsWith uri "chrome:"))
+                    is-customizing (has? (.-documentElement document)
+                                                  "customizing")
+                    is-insecure (and (.contains (.-classList identity-box)
+                                               "notSecure")
+                                     (not is-internal)
+                                     (not is-customizing))]
+                (if (and is-insecure
+                         (not (.-timer state))
+                         (not (.-banner state)))
+                  (set! (.-timer state)
+                        (js/setTimeout show SHOW-DELAY-MS))
+                  (when (not is-insecure)
+                    (hide)))))
+
+            class-observer (MutationObserver. check)
+            opts :- Any {:attributes true}]
+
+        (set! (.-attributeFilter opts) ["class"])
+        (.observe class-observer identity-box opts)
+        (on! (.-tabContainer gBrowser) "TabSelect" check)
+
+        {:destroy (fn []
+          (.disconnect class-observer)
+          (off! (.-tabContainer gBrowser) "TabSelect" check)
+          (hide))})))))

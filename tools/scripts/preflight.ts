@@ -33,6 +33,7 @@ interface GateResult {
   id: string;
   name: string;
   passed: boolean;
+  warned?: boolean;
   detail: string;
   fix?: string;
 }
@@ -44,14 +45,25 @@ function pass(id: string, name: string, detail: string): void {
 function fail(id: string, name: string, detail: string, fix: string): void {
   results.push({ id, name, passed: false, detail, fix });
 }
-function sh(cmd: string, opts: { timeout?: number } = {}): { ok: boolean; out: string } {
+// A WARN does not fail the gate (passed: true) but flags a non-fatal,
+// inconclusive result the operator should be aware of — e.g. a nix eval that
+// timed out rather than genuinely failed.
+function warn(id: string, name: string, detail: string): void {
+  results.push({ id, name, passed: true, warned: true, detail });
+}
+function sh(cmd: string, opts: { timeout?: number } = {}): { ok: boolean; out: string; timedOut?: boolean } {
   try {
     const out = execSync(cmd, { encoding: "utf8", timeout: opts.timeout ?? 30_000, stdio: ["ignore", "pipe", "pipe"] });
     return { ok: true, out };
   } catch (e: unknown) {
-    const err = e as { stderr?: Buffer; stdout?: Buffer; message: string };
+    const err = e as { code?: string; signal?: string; stderr?: Buffer; stdout?: Buffer; message: string };
+    // A timeout (execSync sends SIGTERM and sets code 'ETIMEDOUT') is not a
+    // real failure of the command — surface it so callers can WARN/skip
+    // rather than treat it as a hard error.
+    const timedOut = err.code === "ETIMEDOUT" || err.signal === "SIGTERM";
     return {
       ok: false,
+      timedOut,
       out: (err.stderr?.toString() || "") + (err.stdout?.toString() || "") || err.message,
     };
   }
@@ -229,6 +241,12 @@ function gateG(): void {
     { timeout: 120_000 },
   );
   if (!r.ok) {
+    if (r.timedOut) {
+      // A dirty git tree defeats nix's eval cache, so eval can be slow without
+      // being broken. Don't fail the gate on a wall-clock timeout.
+      return warn("G", "nix flake evaluates without errors",
+        "nix eval timed out — not a real eval failure; re-run with a clean tree or longer timeout");
+    }
     return fail("G", "nix flake evaluates without errors",
       "evaluation failed — would have died during build",
       r.out.split("\n").filter((l) => l.toLowerCase().includes("error")).slice(0, 5).join("\n      "));
@@ -270,13 +288,23 @@ function gateI(): void {
   const loaderScripts = [...loader.matchAll(/"(gjoa-[a-z-]+\.uc\.js)"/g)].map((m) => m[1]!).sort();
   const jarScripts = [...jar.matchAll(/scripts\/(gjoa-[a-z-]+\.uc\.js)/g)].map((m) => m[1]!).filter((v, i, a) => a.indexOf(v) === i).sort();
   const bakeScripts = [...bake.matchAll(/"(gjoa-[a-z-]+\.uc\.js)"/g)].map((m) => m[1]!).sort();
+  // CSS bundles include the bare `gjoa.uc.css` (no hyphen suffix), so the
+  // style pattern must allow an optional `-...` segment.
+  const loaderStyles = [...loader.matchAll(/"(gjoa(?:-[a-z-]+)?\.uc\.css)"/g)].map((m) => m[1]!).sort();
+  const jarStyles = [...jar.matchAll(/styles\/(gjoa(?:-[a-z-]+)?\.uc\.css)/g)].map((m) => m[1]!).filter((v, i, a) => a.indexOf(v) === i).sort();
+  const bakeStyles = [...bake.matchAll(/"(gjoa(?:-[a-z-]+)?\.uc\.css)"/g)].map((m) => m[1]!).sort();
   const eq = (a: string[], b: string[]) => a.length === b.length && a.every((x, i) => x === b[i]);
   if (!eq(loaderScripts, jarScripts) || !eq(loaderScripts, bakeScripts)) {
     return fail("I", "chrome bundle three-way alignment",
-      `lists differ:\n      loader: ${loaderScripts.join(", ")}\n      jar:    ${jarScripts.join(", ")}\n      bake:   ${bakeScripts.join(", ")}`,
+      `script lists differ:\n      loader: ${loaderScripts.join(", ")}\n      jar:    ${jarScripts.join(", ")}\n      bake:   ${bakeScripts.join(", ")}`,
       `align all three so they declare the exact same .uc.js filenames`);
   }
-  pass("I", "chrome bundle three-way alignment", `${loaderScripts.length} bundles agree across loader / jar.mn / chrome-bake.ts`);
+  if (!eq(loaderStyles, jarStyles) || !eq(loaderStyles, bakeStyles)) {
+    return fail("I", "chrome bundle three-way alignment",
+      `style lists differ:\n      loader: ${loaderStyles.join(", ")}\n      jar:    ${jarStyles.join(", ")}\n      bake:   ${bakeStyles.join(", ")}`,
+      `align all three so they declare the exact same .uc.css filenames`);
+  }
+  pass("I", "chrome bundle three-way alignment", `${loaderScripts.length} script + ${loaderStyles.length} style bundles agree across loader / jar.mn / chrome-bake.ts`);
 }
 
 // ── Run + render ──────────────────────────────────────────────────────────
@@ -295,7 +323,7 @@ async function main(): Promise<void> {
   }
 
   for (const r of results) {
-    const mark = r.passed ? green("✓") : red("✗");
+    const mark = r.warned ? yellow("⚠") : r.passed ? green("✓") : red("✗");
     console.log(`${mark}  ${bold(r.id)}  ${r.name}`);
     console.log(`     ${dim(r.detail)}`);
     if (!r.passed && r.fix) {

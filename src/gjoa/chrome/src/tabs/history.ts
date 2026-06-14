@@ -156,6 +156,15 @@ interface Connection {
 let _conn: Connection | null = null;
 let _lastHash: string | null = null;
 let _instanceId: string | null = null;
+// Shutdown-safety. The DB opens + migrates asynchronously at startup. If the
+// browser is killed mid-migration — exactly what the PGO profiling run does with
+// its fast start→quit — the open transaction blocks the `profile-before-change`
+// AsyncShutdown barrier and Firefox FATAL-aborts (BUILD-LEDGER 2026-06-15). We
+// track the in-flight open so a shutdown blocker (and close()) can await it,
+// letting the migration COMMIT, before the connection is closed.
+let _initPromise: Promise<Connection> | null = null;
+let _shuttingDown = false;
+let _shutdownRegistered = false;
 
 /** Load (or generate-and-persist) this Firefox profile's stable
  *  gjoa instance id. Stored in a Firefox pref so it survives
@@ -200,8 +209,56 @@ function canonicalize(value: unknown): string {
   return "{" + keys.map((k) => JSON.stringify(k) + ":" + canonicalize(obj[k])).join(",") + "}";
 }
 
+// Register one process-global blocker on the profile-before-change AsyncShutdown
+// barrier. It awaits any in-flight open/migration so the transaction COMMITs,
+// then closes the connection — so Sqlite's own close barrier never sees a
+// connection with a dangling transaction (which is what aborted the PGO build).
+function registerShutdownBlocker(): void {
+  if (_shutdownRegistered) return;
+  _shutdownRegistered = true;
+  const { AsyncShutdown } = ChromeUtils.importESModule<{
+    AsyncShutdown: {
+      profileBeforeChange: { addBlocker(name: string, fn: () => Promise<void>): void };
+    };
+  }>("resource://gre/modules/AsyncShutdown.sys.mjs");
+  AsyncShutdown.profileBeforeChange.addBlocker(
+    "gjoa-history: finalize migration and close DB",
+    async () => {
+      _shuttingDown = true;
+      try {
+        if (_initPromise) await _initPromise;
+      } catch (e) {
+        log("shutdown:init-await-fail", { error: String(e) });
+      }
+      if (_conn) {
+        try {
+          await _conn.close();
+        } catch (e) {
+          log("shutdown:close-fail", { error: String(e) });
+        }
+        _conn = null;
+        _lastHash = null;
+      }
+    },
+  );
+}
+
 async function openConnection(): Promise<Connection> {
   if (_conn) return _conn;
+  if (_initPromise) return _initPromise;
+  if (_shuttingDown) {
+    throw new Error("gjoa-history: refusing to open DB during shutdown");
+  }
+  registerShutdownBlocker();
+  _initPromise = doOpenConnection();
+  try {
+    return await _initPromise;
+  } finally {
+    _initPromise = null;
+  }
+}
+
+async function doOpenConnection(): Promise<Connection> {
   const { Sqlite } = ChromeUtils.importESModule<{ Sqlite: { openConnection(opts: { path: string }): Promise<Connection> } }>(
     "resource://gre/modules/Sqlite.sys.mjs",
   );
@@ -492,6 +549,7 @@ export function makeHistory(): HistoryAPI {
     },
 
     async close() {
+      try { if (_initPromise) await _initPromise; } catch {}
       if (_conn) {
         try { await _conn.close(); } catch {}
         _conn = null;

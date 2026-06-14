@@ -22,7 +22,12 @@
     "test:integration": "bun run chrome:dist && bun run chrome:install && bun tools/test-driver/runner.ts",
     "test:integration:headed": "bun run chrome:dist && bun run chrome:install && bun tools/test-driver/runner.ts --headed --verbose",
     "test:integration:nix": "GJOA_BIN=$PWD/result/bin/gjoa bun tools/test-driver/runner.ts",
-    "test:integration:nix:headed": "GJOA_BIN=$PWD/result/bin/gjoa bun tools/test-driver/runner.ts --headed --verbose"
+    "test:integration:nix:headed": "GJOA_BIN=$PWD/result/bin/gjoa bun tools/test-driver/runner.ts --headed --verbose",
+    "bench": "bun tools/bench/cli.ts",
+    "bench:cold-start": "bun tools/bench/cold-start.ts",
+    "bench:memory": "bun tools/bench/memory.ts",
+    "bench:env": "sudo bash tools/bench/env.sh",
+    "bench:env:restore": "sudo bash tools/bench/env.sh --restore"
   },
   "devDependencies": {
     "@types/bun": "^1.3.14",

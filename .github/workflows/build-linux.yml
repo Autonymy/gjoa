@@ -33,6 +33,15 @@ jobs:
             python3 python3-pip \
             mercurial pkg-config nodejs
 
+      - name: Maximize build space
+        run: |
+          sudo swapoff -a
+          sudo fallocate -l 10G /swapfile
+          sudo chmod 600 /swapfile
+          sudo mkswap /swapfile
+          sudo swapon /swapfile
+          sudo swapon --show
+
       - name: Download Firefox source
         run: |
           mkdir -p ~/.cache/gjoa/sources
@@ -72,7 +81,7 @@ jobs:
 
       - name: Build
         working-directory: engine
-        run: ./mach build
+        run: ./mach build -j2
 
       - name: Package
         working-directory: engine

@@ -18,20 +18,25 @@ stop and use mach.
 
 ---
 
-## RULE #0: one nix build per week, Sunday. Strict through 2026-06-26.
+## Build cadence: Sunday rule REMOVED 2026-06-15 (user rescinded)
 
-Highest precedence. Overrides every other guidance below when in
-conflict. Any unexpected rebuild = failure event; the user has stated
-they'll abandon the fork if I trigger one outside the Sunday window.
+The "one nix build per week, Sunday-only" gate is **gone** — the user
+explicitly removed it ("remove the whole sunday rule, i don't care
+anymore"). Build whenever it's needed. No calendar window, no per-build
+approval ceremony, no abandon-the-fork threat.
 
-### Before proposing ANY nix or full-mach build
+What REMAINS — not as permission gates, but because they prevent *wasted*
+builds (which is the actual goal):
 
-1. **Read `BUILD-LEDGER.md`** — when was last build? If we already built
-   this week and it isn't Sunday, REFUSE.
-2. **Run `bun run preflight`** — mechanical ABCDEFGHI gates. Show output
-   in the proposal. Do not proceed if anything fails.
-3. **Wait for explicit "kick it off" from the user.** Each build needs
-   its own go; prior approval doesn't carry over.
+1. **Run `bun run import` FIRST.** The flake compiles from `engine/`,
+   which only reflects `src/gjoa/` after an import. Skipping it compiles
+   stale source — cost a whole build on 2026-06-14.
+2. **Run `bun run preflight`** (gates A–I) — catches patch/jar/eval/
+   alignment breakage before a 2–3 h compile.
+3. **Append every build's outcome to `BUILD-LEDGER.md`** — the postmortems
+   are how we stop repeating failures (stale engine, `march` no-op,
+   history-sqlite shutdown). Still required.
+4. **Prefer Lane 1/2 when the change allows it** — still the cheapest path.
 
 ### Preflight gates (automated by `tools/scripts/preflight.ts`)
 
@@ -56,7 +61,7 @@ preflight missed it / new gate to add / could it have been Lane 1.
 
 - **Lane 1** — chrome JS/CSS, `gjoa sync` + restart, **~1 sec, no rebuild**
 - **Lane 2** — `.sys.mjs` overlay / patch / branding, `mach build faster`, **~30 sec**
-- **Lane 3** — C++/Rust / version bump / configure flags, full mach or nix, **30–60 min, Sunday only**
+- **Lane 3** — C++/Rust / version bump / configure flags, full mach or nix, **30–60 min (build whenever needed)**
 
 ## Hard rules
 

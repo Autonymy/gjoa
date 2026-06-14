@@ -7,6 +7,7 @@ import {
   BRANDING_SRC,
   ENGINE_BRANDING_DIR,
   ENGINE_UNOFFICIAL_BRANDING,
+  SRC_DIR,
 } from "./paths";
 import { log } from "./log";
 
@@ -181,6 +182,37 @@ export async function branding(): Promise<void> {
     }
   }
   log.info(`copied ${textCount} text + ${binaryCount} binary files from unofficial template`);
+
+  // 1b. Append gjoa's default prefs onto the branding pref file. firefox-branding.js
+  //     is the ONE default-pref file this repo can ship without patching Mozilla
+  //     source: it's already declared in branding-common.mozbuild via
+  //     JS_PREFERENCE_FILES and enumerated in package-manifest.in, so it lands in
+  //     omni.ja under defaults/pref/ and is read onto the default branch at startup.
+  //     (The same source files also overlay to engine/defaults/pref/ via the generic
+  //     overlay, but THAT path has no moz.build and is never packaged — this append
+  //     is what actually makes the prefs take effect. See BUILD-LEDGER: unreferenced
+  //     files in the objdir are silently dropped by mozpack.)
+  //     Appended AFTER substitutions so pref values pass through verbatim.
+  const brandingPrefFile = join(target, "pref", "firefox-branding.js");
+  if (!existsSync(brandingPrefFile)) {
+    throw new Error(
+      `branding pref file missing at ${brandingPrefFile} — Mozilla's unofficial ` +
+      `template no longer ships pref/firefox-branding.js, so gjoa default prefs ` +
+      `would not be packaged. Register a pref file explicitly before relying on this.`,
+    );
+  }
+  const gjoaPrefFiles = ["perf-prefs.js", "dark-mode-prefs.js"];
+  let prefBlocks =
+    "\n\n// ===== gjoa default prefs (appended by tools/prep/branding.ts) =====\n";
+  for (const name of gjoaPrefFiles) {
+    const src = join(SRC_DIR, "defaults", "pref", name);
+    if (!existsSync(src)) throw new Error(`gjoa pref source missing: ${src}`);
+    prefBlocks += `\n// ---- ${name} ----\n` + (await readFile(src, "utf8")).trimEnd() + "\n";
+  }
+  await writeFile(brandingPrefFile, (await readFile(brandingPrefFile, "utf8")) + prefBlocks);
+  log.info(
+    `appended ${gjoaPrefFiles.length} gjoa pref files to branding/${cfg.binaryName}/pref/firefox-branding.js`,
+  );
 
   // 2. Overlay our own logo PNGs from configs/branding/gjoa/. Mozilla's
   //    convention: defaultNN.png at the branding root for sizes the desktop

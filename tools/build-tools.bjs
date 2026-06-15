@@ -1,0 +1,97 @@
+#lang beagle/js
+;; Compile all tooling + test .bjs → .beagle-tools/gjoa/<path>.js so they run
+;; directly under Bun: the mirrored tree means beagle's relative import
+;; specifiers (./log.js, ../security/check.js) resolve on disk, no bundler.
+;;
+;; Bootstrap: package.json's `tools:compile` first compiles THIS file with
+;; ../beagle/bin/beagle-build, then runs it to compile everything else.
+;; mtime-cached — re-runs are near-instant when nothing changed.
+(ns gjoa.tools.build-tools
+  (:require [fs/promises :refer [mkdir]]
+            [fs :refer [existsSync statSync readdirSync]]
+            [path :refer [join resolve relative]]))
+(define-mode strict)
+(declare-extern [process Bun Promise Response console RegExp] Any)
+
+(def REPO-ROOT :- String (.cwd process))
+(def OUT-ROOT :- String (join REPO-ROOT ".beagle-tools" "gjoa"))
+(def BEAGLE-BUILD :- String (resolve REPO-ROOT ".." "beagle" "bin" "beagle-build"))
+(def SRC-DIRS :- Any ["tools" "tests"])
+
+;; Recursively collect every *.bjs path under `dir` (synchronous — small tree).
+(defn find-bjs [dir :- String] :- Any
+  (let [out []
+        entries (readdirSync dir {:withFileTypes true})
+        n (.-length entries)]
+    (loop [i 0]
+      (when (< i n)
+        (let [entry (aget entries i)
+              full (join dir (.-name entry))]
+          (if (.isDirectory entry)
+            (let [sub (find-bjs full)
+                  m (.-length sub)]
+              (loop [j 0]
+                (when (< j m)
+                  (.push out (aget sub j))
+                  (recur (+ j 1)))))
+            (when (.endsWith (.-name entry) ".bjs")
+              (.push out full)))
+          (recur (+ i 1)))))
+    out))
+
+;; Recompile only when the source is newer than its output (or output missing).
+(defn stale? [src :- String out :- String] :- Bool
+  (if (existsSync out)
+    (> (.-mtimeMs (statSync src)) (.-mtimeMs (statSync out)))
+    true))
+
+(defn compile-one [src :- String] :- (Promise Any)
+  (let [rel (relative REPO-ROOT src)
+        out (join OUT-ROOT (.replace rel (RegExp. "\\.bjs$") ".js"))]
+    (if (not (stale? src out))
+      {:rel rel :code 0 :skipped true}
+      (let [_ (js/await (mkdir (join out "..") {:recursive true}))
+            proc (.spawn Bun {:cmd [BEAGLE-BUILD src out]
+                              :cwd REPO-ROOT
+                              :stdout "pipe"
+                              :stderr "pipe"})
+            results (js/await (.all Promise [(.text (Response. (.-stdout proc)))
+                                             (.text (Response. (.-stderr proc)))
+                                             (.-exited proc)]))]
+        {:rel rel :code (aget results 2)
+         :err (.trim (or (aget results 1) (aget results 0)))
+         :skipped false}))))
+
+(defn run [] :- (Promise Any)
+  (let [files []
+        nd (.-length SRC-DIRS)]
+    (loop [d 0]
+      (when (< d nd)
+        (let [root (join REPO-ROOT (aget SRC-DIRS d))]
+          (when (existsSync root)
+            (let [found (find-bjs root)
+                  m (.-length found)]
+              (loop [k 0] (when (< k m) (.push files (aget found k)) (recur (+ k 1)))))))
+        (recur (+ d 1))))
+    (let [sorted (.sort files)
+          n (.-length sorted)]
+      (loop [i 0 failed 0 built 0]
+        (if (< i n)
+          (let [r (js/await (compile-one (aget sorted i)))]
+            (cond
+              (not= (.-code r) 0)
+              (do (.error console (str "[31m✗[0m " (.-rel r) "\n" (.-err r)))
+                  (recur (+ i 1) (+ failed 1) built))
+              (.-skipped r)
+              (recur (+ i 1) failed built)
+              :else
+              (recur (+ i 1) failed (+ built 1))))
+          (do
+            (when (> failed 0)
+              (.error console (str "\n[31m✗ " failed " tool file(s) failed to compile[0m"))
+              (.exit process 1))
+            (.error console (str "[2m[tools][0m compiled " built ", "
+                                 (- n built) " cached → .beagle-tools/"))
+            0))))))
+
+(js/await (run))

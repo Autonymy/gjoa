@@ -1,0 +1,150 @@
+#lang beagle/js
+;; Verify the gjoa sidebar's top/bottom icon Y-deltas are symmetric.
+;;
+;; Goal (2026-05-27 user spec): the ICONS of the bottom sidebar buttons
+;; must sit the same visual distance from #sidebar-main's BOTTOM edge as
+;; the TOP nav-bar button icons sit from #sidebar-main's TOP edge.
+;;
+;; "Icons" means the actual rendered glyph (img/svg/.toolbarbutton-icon),
+;; NOT the toolbarbutton/moz-button container — containers have their
+;; own padding which used to silently throw the measurement off.
+;;
+;; The runtime adjuster lives in src/drawer/layout.ts::syncSymmetricFooter.
+;; It writes --gjoa-symmetric-footer; CSS consumes that as padding-bottom
+;; on `#sidebar-main > sidebar-main`.
+(ns gjoa.tests.integration.sidebar-symmetric-icons)
+(define-mode strict)
+
+;; `IntegrationTest` from ../../tools/test-driver/runner is a type-only
+;; import in the original — used purely for annotation, no runtime value.
+;; Beagle has no type-only import; we annotate with Any.
+(declare-extern [Date Math JSON] Any)
+
+;; Walk light + shadow DOM looking for visible icon-like elements.
+;; Returns the topmost (top=true) or bottommost (top=false) icon found.
+;;
+;; NOTE: this is a plain JS source string evaluated in the browser via
+;; mn.executeScript — the ${...} tokens inside are literal JS for the
+;; browser, NOT beagle interpolation, so it stays one string literal.
+(def probe :- String "
+  function walk(node, hits) {
+    if (!node) return;
+    // Recurse into shadow roots.
+    if (node.shadowRoot) walk(node.shadowRoot, hits);
+    const kids = node.children || node.childNodes || [];
+    for (const child of kids) {
+      const tag = (child.tagName || \"\").toLowerCase();
+      const cls = child.classList;
+      const isIcon =
+        tag === \"img\" || tag === \"svg\" || tag === \"moz-icon\" ||
+        (cls && (cls.contains(\"toolbarbutton-icon\") || cls.contains(\"button-icon\")));
+      if (isIcon) {
+        const r = child.getBoundingClientRect();
+        if (r.width > 0 && r.height > 0 && r.top >= 0) {
+          hits.push({
+            tag,
+            id: child.id || (child.parentElement && child.parentElement.id) || null,
+            top: r.top, bottom: r.bottom, left: r.left, width: r.width, height: r.height,
+          });
+        }
+      }
+      walk(child, hits);
+    }
+  }
+  const sidebarMain = document.getElementById(\"sidebar-main\");
+  if (!sidebarMain) return { error: \"no #sidebar-main\" };
+  const sidebarRect = sidebarMain.getBoundingClientRect();
+  const navBar = sidebarMain.querySelector(\"#nav-bar\");
+  const footerWebComponent = sidebarMain.querySelector(\":scope > sidebar-main\");
+  const topHits = [];
+  const bottomHits = [];
+  if (navBar) walk(navBar, topHits);
+  if (footerWebComponent) walk(footerWebComponent, bottomHits);
+  topHits.sort((a, b) => a.top - b.top);
+  bottomHits.sort((a, b) => a.bottom - b.bottom);
+  return {
+    sidebar: {
+      top: sidebarRect.top, bottom: sidebarRect.bottom,
+      height: sidebarRect.height, width: sidebarRect.width,
+    },
+    topIcon: topHits[0] || null,
+    bottomIcon: bottomHits.length ? bottomHits[bottomHits.length - 1] : null,
+    topCount: topHits.length,
+    bottomCount: bottomHits.length,
+    cssVar: getComputedStyle(document.documentElement).getPropertyValue(\"--gjoa-symmetric-footer\"),
+  };
+")
+
+;; IconRect / ProbeResult were TS interfaces (compile-time only, erased at
+;; runtime). Beagle's JS target has no nominal-interface declaration; the
+;; probe result is a plain object accessed by field below.
+
+(def TOLERANCE-PX :- Any 1)
+
+;; NOTE: the original `export default tests`. Beagle's JS emitter has no
+;; `export default` form (only named `export const`), so this is exported
+;; as the named binding `tests`. See 'issues'.
+(js/export (def tests :- Any
+  [{:name "sidebar — top/bottom icon Y-deltas symmetric within ±1px"
+    :run
+    (fn [mn ctx]
+      ;; layout.ts schedules 30 setTimeout passes over 1.5s for the
+      ;; feedback loop. Wait at least that long. Poll for convergence
+      ;; up to 3s in case shadow DOM hydration was slow.
+      ;;
+      ;; The original used a mutable `r` + `while` loop that broke on
+      ;; convergence. Beagle's JS target has no `while`/`break`; the
+      ;; equivalent is a loop/recur that returns the latest probe result
+      ;; on either convergence or deadline.
+      (let [deadline (+ (.now Date) 3000)
+            r (loop [acc {}]
+                (if (>= (.now Date) deadline)
+                  acc
+                  (let [_ (js/await (Promise. (fn [res] (setTimeout res 200))))
+                        nr (js/await (.executeScript mn probe))]
+                    (if (and (.-topIcon nr) (.-bottomIcon nr) (.-sidebar nr)
+                             (let [tg (- (.-top (.-topIcon nr)) (.-top (.-sidebar nr)))
+                                   bg (- (.-bottom (.-sidebar nr)) (.-bottom (.-bottomIcon nr)))]
+                               (<= (.abs Math (- tg bg)) TOLERANCE-PX)))
+                      nr
+                      (recur nr)))))]
+        (do
+            (when (.-error r)
+              (throw (Error. (str "probe error: " (.-error r)))))
+            (when (not (.-sidebar r))
+              (throw (Error. "probe returned no sidebar rect")))
+            (when (not (.-topIcon r))
+              (throw (Error.
+                (str "No top icon found in #sidebar-main #nav-bar (searched "
+                     (.-topCount r) " candidates). "
+                     "Result: " (.stringify JSON r nil 2)))))
+            (when (not (.-bottomIcon r))
+              (throw (Error.
+                (str "No bottom icon found in #sidebar-main > sidebar-main (searched "
+                     (.-bottomCount r) " candidates). "
+                     "Result: " (.stringify JSON r nil 2)))))
+            (let [topGap (- (.-top (.-topIcon r)) (.-top (.-sidebar r)))
+                  bottomGap (- (.-bottom (.-sidebar r)) (.-bottom (.-bottomIcon r)))
+                  ;; src/drawer/layout.ts targets `bottomGap = topGap + BOTTOM_OFFSET`
+                  ;; (default 4px). Bottom icons sit further from edge than top icons —
+                  ;; user 2026-05-28 preference: keep top tight to the top edge, give
+                  ;; the bottom row a little extra breathing room.
+                  BOTTOM-OFFSET 4
+                  delta (.abs Math (- bottomGap (+ topGap BOTTOM-OFFSET)))]
+              (when (> delta TOLERANCE-PX)
+                (throw (Error.
+                  (str "Asymmetric icon Y-deltas off target: topGap=" (.toFixed topGap 2) "px "
+                       "bottomGap=" (.toFixed bottomGap 2) "px (expected bottom = top+" BOTTOM-OFFSET
+                       ", diff=" (.toFixed delta 2) "px, tolerance ±" TOLERANCE-PX ").\n"
+                       "--gjoa-symmetric-footer=" (.-cssVar r) "\n"
+                       "topIcon: " (.stringify JSON (.-topIcon r)) "\n"
+                       "bottomIcon: " (.stringify JSON (.-bottomIcon r)) "\n"
+                       "sidebar: " (.stringify JSON (.-sidebar r))))))
+              ;; Guard against negative / zero-gap regression (icons jammed
+              ;; outside the sidebar). The actual target gap is small (~6-12px)
+              ;; per 2026-05-28 user spec: tight to the top edge, not "spacious".
+              (when (< topGap 2)
+                (throw (Error.
+                  (str "Icons too close to top edge: topGap=" (.toFixed topGap 1) "px (expected ≥2)."))))))))}]))
+
+(js/export-default tests)

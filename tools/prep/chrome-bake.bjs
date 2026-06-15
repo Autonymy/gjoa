@@ -1,0 +1,79 @@
+#lang beagle/js
+;; Bake the production chrome bundles into engine/ so they end up inside
+;; omni.ja and become reachable via chrome://gjoa/content/scripts/*.uc.js
+;; (and styles/) at runtime.
+;;
+;; Inputs:  dist/chrome/{JS,CSS}/*.uc.{js,css} from `bun run chrome:dist`
+;; Outputs: engine/browser/components/gjoa/content/{scripts,styles}/*
+;;
+;; Kept in sync with:
+;;   - src/gjoa/browser/components/gjoa/jar.mn         (which files get
+;;                                                      packaged into
+;;                                                      omni.ja)
+;;   - src/gjoa/browser/components/gjoa/GjoaLoader.sys.mjs
+;;                                                     (which files the
+;;                                                      loader will pull
+;;                                                      from chrome://)
+(ns gjoa.tools.prep.chrome-bake
+  (:require [fs :refer [existsSync]]
+            [fs/promises :refer [copyFile mkdir]]
+            [path :refer [join]]
+            [gjoa.tools.prep.paths :refer [ENGINE-DIR REPO-ROOT]]
+            [gjoa.tools.prep.log :refer [log]]))
+(define-mode strict)
+(declare-extern [Bun] Any)
+
+(def DIST-CHROME :- String (join REPO-ROOT "dist" "chrome"))
+(def BAKE-ROOT :- String
+  (join ENGINE-DIR "browser" "components" "gjoa" "content"))
+
+;; Hardcoded list — match jar.mn + GjoaLoader.sys.mjs PROD_SCRIPTS / PROD_STYLES.
+(def SCRIPTS :- Any
+  ["gjoa-security.uc.js"
+   "gjoa-drawer.uc.js"
+   "gjoa-tabs.uc.js"
+   "gjoa-dark-mode.uc.js"])
+(def STYLES :- Any
+  ["gjoa.uc.css"
+   "gjoa-tabs.uc.css"
+   "gjoa-which-key.uc.css"])
+
+(defn ensureChromeDist [] :- Any
+  (if (existsSync DIST-CHROME)
+    nil
+    (do
+      (.step log "dist/chrome/ missing — running chrome:dist")
+      (let [proc (.spawn Bun {:cmd ["bun" "run" "chrome:dist"]
+                              :cwd REPO-ROOT
+                              :stdout "inherit"
+                              :stderr "inherit"})
+            code (js/await (.-exited proc))]
+        (if (not= code 0)
+          (throw (Error. (str "chrome:dist failed (exit " code ")")))
+          nil)))))
+
+(defn bakeOne [srcSubdir :- String dstSubdir :- String names :- Any] :- Any
+  (let [dstDir (join BAKE-ROOT dstSubdir)
+        n (.-length names)]
+    (js/await (mkdir dstDir {:recursive true}))
+    ;; Sequential index loop so each copyFile is awaited in order (a `doseq`
+    ;; would emit .forEach, which does NOT await its async body).
+    (loop [i 0]
+      (if (< i n)
+        (let [fname (aget names i)
+              src (join DIST-CHROME srcSubdir fname)]
+          (do
+            (when (not (existsSync src))
+              (throw (Error. (str "chrome-bake: expected " src
+                                  " from chrome:dist (declared in jar.mn) — did the bundle list drift?"))))
+            (js/await (copyFile src (join dstDir fname)))
+            (recur (+ i 1))))
+        nil))))
+
+(js/export (defn chromeBake [] :- Any
+  (js/await (ensureChromeDist))
+  (.step log (str "baking " (.-length SCRIPTS) " scripts + "
+                  (.-length STYLES) " stylesheets into engine"))
+  (js/await (bakeOne "JS" "scripts" SCRIPTS))
+  (js/await (bakeOne "CSS" "styles" STYLES))
+  (.ok log (str "chrome bundles baked at " BAKE-ROOT))))

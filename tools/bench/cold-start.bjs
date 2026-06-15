@@ -1,0 +1,150 @@
+#lang beagle/js
+;; tools/bench/cold-start.bjs — Cold start (time-to-window-visible) benchmark.
+;;
+;; Uses xdotool to detect when the browser window becomes visible.
+;; Drops filesystem caches between runs for true cold-start measurement.
+(ns gjoa.tools.bench.cold-start
+  (:require [util :refer [parseArgs]]
+            [path :refer [join]]
+            [gjoa.tools.bench.stats :refer [confidenceInterval95 median formatResult]]))
+(define-mode strict)
+(declare-extern [Bun process console performance Date Number setTimeout clearTimeout parseInt] Any)
+
+(def parsed :- Any
+  (parseArgs {:args (.slice (.-argv Bun) 2)
+              :strict false
+              :options {:runs {:type "string" :default "20"}
+                        :gjoa-bin {:type "string"}
+                        :firefox-bin {:type "string"}
+                        :skip-cache-drop {:type "boolean" :default false}}}))
+
+(def values :- Any (.-values parsed))
+
+(def NUM-RUNS :- Any (parseInt (get values "runs") 10))
+(when (or (not (.isFinite Number NUM-RUNS)) (< NUM-RUNS 2))
+  (.error console "ERROR: --runs must be >= 2 (first run is dropped as warm-up).")
+  (.exit process 1))
+
+(defn localGjoa [name :- String] :- Any
+  ;; Check common locations: a freshly-built ./result/bin/gjoa under cwd.
+  (when (= name "gjoa")
+    (let [local (str (.cwd process) "/result/bin/gjoa")]
+      (try
+        (let [stat (.file Bun local)]
+          (when (> (.-size stat) 0)
+            local))
+        (catch Error e nil)))))
+
+(defn findBinary [name :- String] :- String
+  (let [local (localGjoa name)]
+    (if local
+      local
+      ;; Fall back to PATH
+      (let [result (.spawnSync Bun ["which" name])
+            path (.trim (.toString (.-stdout result)))]
+        (if (and (= (.-exitCode result) 0) path)
+          path
+          (do
+            (.error console (str "ERROR: cannot find " name " binary. Use --" name "-bin=<path>"))
+            (.exit process 1)))))))
+
+(def GJOA-BIN :- Any (or (get values "gjoa-bin") (findBinary "gjoa")))
+(def FIREFOX-BIN :- Any (or (get values "firefox-bin") (findBinary "firefox")))
+(def SKIP-CACHE-DROP :- Any (get values "skip-cache-drop"))
+
+(defn dropCaches [] :- Any
+  (when (not SKIP-CACHE-DROP)
+    (let [result (.spawnSync Bun ["sudo" "sh" "-c" "sync; echo 3 > /proc/sys/vm/drop_caches"])]
+      (when (not= (.-exitCode result) 0)
+        (.error console "WARN: failed to drop caches (not root?). Use --skip-cache-drop or run with sudo.")))))
+
+(defn measureColdStart [binary :- String windowPattern :- String] :- Any
+  ;; Create a temporary profile directory
+  (let [profileDir (str (join (.cwd process) "tools" "bench") "/.bench-profile-" (.now Date))]
+    (.spawnSync Bun ["mkdir" "-p" profileDir])
+    (try
+      (js/await (dropCaches))
+      ;; Small delay to let caches settle
+      (js/await (.sleep Bun 100))
+
+      (let [start (.now performance)
+            ;; Launch browser with fresh profile, pointing at about:blank
+            browser (.spawn Bun [binary
+                                 "--no-remote"
+                                 "--profile" profileDir
+                                 "about:blank"]
+                            {:stdout "ignore"
+                             :stderr "ignore"})
+            ;; Wait for window to become visible using xdotool
+            xdotool (.spawn Bun ["xdotool" "search" "--sync" "--onlyvisible" "--name" windowPattern]
+                            {:stdout "pipe"
+                             :stderr "ignore"})]
+        ;; Timeout after 30 seconds — kill xdotool so its wait resolves.
+        (let [state (atom false)
+              timeout (setTimeout (fn []
+                                    (reset! state true)
+                                    (.kill xdotool)
+                                    (.kill browser))
+                                  30000)
+              exitCode (js/await (.-exited xdotool))
+              elapsed (- (.now performance) start)]
+          (clearTimeout timeout)
+
+          ;; Kill the browser
+          (.kill browser)
+          (js/await (.-exited browser))
+
+          ;; Hard-fail rather than record a bogus measurement when xdotool never
+          ;; matched a window (timeout, missing window, or other failure).
+          (when @state
+            (throw (Error. (str "xdotool timed out after 30s waiting for a window matching /" windowPattern "/. "
+                                "Binary may have failed to launch, or the title pattern is wrong."))))
+          (when (not= exitCode 0)
+            (throw (Error. (str "xdotool exited with code " exitCode " (no window matched /" windowPattern "/). "
+                                "Refusing to record a bogus timing."))))
+
+          elapsed))
+      (finally
+        ;; Clean up profile
+        (.spawnSync Bun ["rm" "-rf" profileDir])))))
+
+(defn runBenchmark [binary :- String label :- String windowPattern :- String] :- Any
+  (let [times (atom [])]
+    (.log console (str "\n  Running " label " (" NUM-RUNS " runs)..."))
+    (.log console (str "  Binary: " binary))
+
+    (doseq [i (range NUM-RUNS)]
+      (let [t (js/await (measureColdStart binary windowPattern))]
+        (swap! times conj t)
+        (.write (.-stdout process) (str "    Run " (+ i 1) "/" NUM-RUNS ": " (.toFixed t 1) " ms\n"))
+        ;; Brief pause between runs
+        (js/await (.sleep Bun 500))))
+
+    ;; Drop first run as warm-up
+    (let [results (.slice @times 1)
+          ci (confidenceInterval95 results)
+          med (median results)]
+      (.log console (str "\n  " label " results (excluding warm-up run):"))
+      (.log console (str "    Median: " (.toFixed med 1) " ms"))
+      (.log console (str "    Mean:   " (.toFixed (.-mean ci) 1) " ms  ["
+                         (.toFixed (.-low ci) 1) " .. " (.toFixed (.-high ci) 1) "] (95% CI)"))
+      results)))
+
+;; --- Main ---
+
+;; Preflight: xdotool is required to detect window visibility.
+(when (= (.which Bun "xdotool") nil)
+  (.error console "ERROR: xdotool not found on PATH. Install it (e.g. `apt install xdotool`).")
+  (.exit process 1))
+
+(.log console "=== Cold Start Benchmark ===")
+(.log console (str "  Runs: " NUM-RUNS " (first dropped as warm-up)"))
+(.log console (str "  Gjoa:    " GJOA-BIN))
+(.log console (str "  Firefox: " FIREFOX-BIN))
+
+(def gjoaTimes :- Any (js/await (runBenchmark GJOA-BIN "Gjoa" "Gjoa|gjoa")))
+(def firefoxTimes :- Any (js/await (runBenchmark FIREFOX-BIN "Firefox" "Mozilla Firefox|Firefox")))
+
+(.log console "\n=== Comparison ===\n")
+(.log console (formatResult "Cold Start (time to window visible)" gjoaTimes firefoxTimes))
+(.log console "")

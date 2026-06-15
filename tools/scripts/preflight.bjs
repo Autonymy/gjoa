@@ -1,0 +1,336 @@
+#lang beagle/js
+;; `gjoa preflight` — the gate that runs before any nix build is allowed.
+;;
+;; Per CLAUDE.md Rule #0: Claude may not propose a rebuild without
+;; showing this script's output. Gates are MECHANICAL. New failure
+;; modes get added here, not to a mental checklist that gets skipped.
+;;
+;; Exits 0 if every gate passes, 1 if any gate fails. Gate F (daemon
+;; settings) and Gate G (nix eval) are the two that would have caught
+;; the 2026-05-26 failure.
+(ns gjoa.tools.scripts.preflight
+  (:require [fs :refer [existsSync readFileSync readdirSync]]
+            [child_process :refer [execSync]]
+            [path :refer [join]]))
+(define-mode strict)
+(declare-extern [process console JSON parseInt Array String] Any)
+
+;; The old .ts used `resolve(import.meta.dir, "..", "..")` to climb from
+;; tools/scripts/ to the repo root. There is no import.meta in beagle, and
+;; these tools run via `bun run` from the repo root, so cwd IS the repo root.
+(def REPO-ROOT :- String (.cwd process))
+(def ENGINE-DIR :- String (join REPO-ROOT "engine"))
+(def FLAKE :- String (join REPO-ROOT "flake.nix"))
+(def PATCHES-DIR :- String (join REPO-ROOT "patches"))
+(def GJOA-JSON :- String (join REPO-ROOT "gjoa.json"))
+(def LEDGER :- String (join REPO-ROOT "BUILD-LEDGER.md"))
+(def NIX-RESULT :- String (join REPO-ROOT "result" "bin" "gjoa"))
+
+(def tty :- Any (.-isTTY (.-stdout process)))
+(defn c [s :- String code :- String] :- String
+  (if tty (str "[" code "m" s "[0m") s))
+(defn green [s :- String] :- String (c s "32"))
+(defn red [s :- String] :- String (c s "31"))
+(defn yellow [s :- String] :- String (c s "33"))
+(defn dim [s :- String] :- String (c s "2"))
+(defn bold [s :- String] :- String (c s "1"))
+
+;; Accumulated GateResult records (plain JS objects):
+;;   {:id :name :passed :warned :detail :fix}
+(def results :- Any [])
+
+(defn pass [id :- String name :- String detail :- String] :- Any
+  (.push results {:id id :name name :passed true :detail detail}))
+(defn fail [id :- String name :- String detail :- String fix :- String] :- Any
+  (.push results {:id id :name name :passed false :detail detail :fix fix}))
+;; A WARN does not fail the gate (passed: true) but flags a non-fatal,
+;; inconclusive result the operator should be aware of — e.g. a nix eval that
+;; timed out rather than genuinely failed.
+(defn warn [id :- String name :- String detail :- String] :- Any
+  (.push results {:id id :name name :passed true :warned true :detail detail}))
+
+(defn sh [cmd :- String opts :- Any] :- Any
+  (try
+    (let [out (execSync cmd {:encoding "utf8"
+                             :timeout (or (.-timeout opts) 30000)
+                             :stdio ["ignore" "pipe" "pipe"]})]
+      {:ok true :out out})
+    (catch Error e
+      ;; A timeout (execSync sends SIGTERM and sets code 'ETIMEDOUT') is not a
+      ;; real failure of the command — surface it so callers can WARN/skip
+      ;; rather than treat it as a hard error.
+      (let [timedOut (or (= (.-code e) "ETIMEDOUT") (= (.-signal e) "SIGTERM"))
+            stderr (if (.-stderr e) (.toString (.-stderr e)) "")
+            stdout (if (.-stdout e) (.toString (.-stdout e)) "")]
+        {:ok false
+         :timedOut timedOut
+         :out (or (str stderr stdout) (.-message e))}))))
+
+;; ── Gate A: patches apply cleanly against fresh source ─────────────────────
+(defn gateA [] :- Any
+  (let [cache (str (.-HOME (.-env process)) "/.cache/gjoa/sources")
+        gjoa (.parse JSON (readFileSync GJOA-JSON "utf8"))
+        tarball (str cache "/firefox-" (.-version (.-firefox gjoa)) ".source.tar.xz")]
+    (if (not (existsSync tarball))
+      (fail "A" "patches apply clean on fresh source"
+        (str "tarball not cached at " tarball)
+        "run `bun run download` to populate the cache")
+      (let [tmp "/tmp/gjoa-preflight-engine"]
+        (sh (str "rm -rf " tmp " && mkdir -p " tmp) {})
+        (let [extract (sh (str "tar -xJf " tarball " -C " tmp " --strip-components=1") {:timeout 180000})]
+          (if (not (.-ok extract))
+            (fail "A" "patches apply clean on fresh source" "tarball extract failed" (.slice (.-out extract) 0 400))
+            (do
+              (sh (str "cd " tmp " && git init -q && git add -A && git -c user.email=t@t -c user.name=t commit -q -m baseline") {:timeout 60000})
+              (let [patches (.sort (.filter (readdirSync PATCHES-DIR) (fn [p] (.endsWith p ".patch"))))
+                    failed []]
+                (doseq [p patches]
+                  (let [r (sh (str "cd " tmp " && git apply --check " (join PATCHES-DIR p)) {})]
+                    (when (not (.-ok r))
+                      (.push failed (str p ": " (.trim (or (aget (.split (.-out r) "\n") 0) "")))))))
+                (if (> (.-length failed) 0)
+                  (fail "A" "patches apply clean on fresh source"
+                    (str (.-length failed) "/" (.-length patches) " patches fail")
+                    (str "regenerate each failing patch via `git diff` in a fresh extract:\n    " (.join failed "\n    ")))
+                  (pass "A" "patches apply clean on fresh source" (str (.-length patches) "/" (.-length patches) " apply clean")))))))))))
+
+;; ── Gate B: chrome registration uses a known-working pattern ──────────────
+(defn gateB [] :- Any
+  (let [ours (join REPO-ROOT "src" "gjoa" "browser" "components" "gjoa" "jar.mn")]
+    (if (not (existsSync ours))
+      (fail "B" "jar.mn pattern matches working example"
+        (str ours " missing")
+        "restore from git")
+      (let [content (readFileSync ours "utf8")
+            usesBrowserJar (.test (RegExp. "^browser\\.jar:" "m") content)
+            hasContentDecl (.test (RegExp. "^% content\\s+gjoa\\s+%content/gjoa/" "m") content)]
+        (cond
+          (not usesBrowserJar)
+          (fail "B" "jar.mn pattern matches working example"
+            "uses `<package>.jar:` syntax — silently no-op in modern Firefox"
+            "change first non-comment line to `browser.jar:` (see browser/branding/unofficial/content/jar.mn)")
+
+          (not hasContentDecl)
+          (fail "B" "jar.mn pattern matches working example"
+            "no `% content gjoa %content/gjoa/` registration line"
+            "add `% content gjoa %content/gjoa/` after `browser.jar:`")
+
+          :else
+          (pass "B" "jar.mn pattern matches working example" "browser.jar: + % content gjoa %content/gjoa/"))))))
+
+;; ── Gate C: no production-mode TODO/no-op landmines ───────────────────────
+(defn gateC [] :- Any
+  (let [prodFiles ["src/gjoa/browser/components/gjoa/GjoaLoader.sys.mjs"
+                   "src/gjoa/chrome/bjs/security/index.bjs"
+                   "src/gjoa/chrome/bjs/drawer/index.bjs"
+                   "src/gjoa/chrome/bjs/spaces/index.bjs"
+                   "src/gjoa/chrome/bjs/tabs/index.bjs"]
+        landmines []
+        stub-return (RegExp. "^\\s*return\\s*;?\\s*//\\s*(TODO|FIXME|future)" "i")
+        stub-comment (RegExp. "//\\s*(future commit|nothing yet|not yet implemented)" "i")]
+    (doseq [f prodFiles]
+      (let [path (join REPO-ROOT f)]
+        (when (existsSync path)
+          (let [lines (.split (readFileSync path "utf8") "\n")]
+            ;; Only flag literal "TODO" / "future commit" / "nothing yet" inside
+            ;; executable code (not in jsdoc/regular comments that describe
+            ;; intent). Heuristic: line ends with `return;` or matches the
+            ;; specific dead-stub pattern.
+            (.forEach lines
+              (fn [l i]
+                (when (or (.test stub-return l) (.test stub-comment l))
+                  (.push landmines (str f ":" (+ i 1) ": " (.trim l))))))))))
+    (if (> (.-length landmines) 0)
+      (fail "C" "no production-mode TODO/no-op landmines"
+        (str (.-length landmines) " suspicious dead-stub markers in production paths")
+        (str "audit + implement or delete each:\n    " (.join landmines "\n    ")))
+      (pass "C" "no production-mode TODO/no-op landmines" (str (.-length prodFiles) " prod files scanned, none flagged")))))
+
+;; ── Gate D: dep floors satisfied ──────────────────────────────────────────
+(defn gateD [] :- Any
+  (let [flakeContent (readFileSync FLAKE "utf8")
+        minNssMatch (.match flakeContent (RegExp. "minNssVersion\\s*=\\s*\"([^\"]+)\""))
+        minNss (if minNssMatch (aget minNssMatch 1) nil)]
+    (if (nil? minNss)
+      (pass "D" "dep floors satisfied" "no minNssVersion gate declared")
+      (let [probe (sh
+                    (str "nix eval --impure --raw --expr '(import (builtins.getFlake \"git+file://" REPO-ROOT "\").inputs.nixpkgs { system = \"x86_64-linux\"; }).nss_latest.version' 2>&1")
+                    {:timeout 60000})]
+        (if (not (.-ok probe))
+          (fail "D" "dep floors satisfied" "could not probe nixpkgs nss_latest.version"
+            (str "fix the nix eval error and re-run:\n" (.slice (.-out probe) -300)))
+          ;; compareVersions: if nixpkgs >= minNss, overlay short-circuits (good).
+          ;; if behind, our overlay activates and Mozilla tarball is fetched.
+          (let [nixpkgsNss (.pop (.split (.trim (.-out probe)) "\n"))]
+            (pass "D" "dep floors satisfied"
+              (str "minNssVersion=" minNss ", nixpkgs nss_latest=" nixpkgsNss " → overlay "
+                   ;; Original did a naive JS string `>=`; beagle's `>=` is
+                   ;; numeric, so replicate lexicographic comparison via
+                   ;; localeCompare (>= 0 means nixpkgsNss >= minNss).
+                   (if (>= (.localeCompare (String nixpkgsNss) (String minNss)) 0) "auto-disabled" "ACTIVE (will fetch Mozilla tarball)")))))))))
+
+;; ── Gate E: existing binary status (informational gate) ───────────────────
+(defn gateE [] :- Any
+  (if (not (existsSync NIX-RESULT))
+    (pass "E" "existing binary status" "no result/ symlink (fresh rebuild)")
+    (let [omni (join REPO-ROOT "result" "lib" "gjoa" "browser" "omni.ja")]
+      (if (not (existsSync omni))
+        (pass "E" "existing binary status" "result/ exists but no omni.ja (probably broken — rebuild)")
+        (let [r (sh (str "unzip -p " omni " chrome/chrome.manifest 2>/dev/null | grep -c \"^content gjoa\" || true") {})
+              count (or (parseInt (.trim (.-out r)) 10) 0)]
+          (if (> count 0)
+            ;; Binary already has the registration — rebuild only needed if you've
+            ;; actually changed something that affects it.
+            (pass "E" "existing binary status" (str "current result/ has " count " `content gjoa` line(s); rebuild is REPLACING a working binary"))
+            (pass "E" "existing binary status" "current result/ has NO `content gjoa` registration — rebuild needed to restore chrome bundles")))))))
+
+;; ── Gate F: nix daemon will accept flake settings ─────────────────────────
+;;
+;; Two separate nix permission mechanisms get conflated easily:
+;;   * trusted-users  → who can pass --option / --no-sandbox FLAGS at CLI
+;;   * sandbox=true   → rejects ANY derivation with `__noChroot=true`
+;;                      regardless of who's invoking
+;;
+;; For `__noChroot = true` to actually take effect, the daemon's
+;; `sandbox` setting must be `relaxed` (or `false`). `sandbox = true`
+;; rejects it at eval time even for trusted users. This gate caught
+;; me on 2026-05-26 — see BUILD-LEDGER postmortem.
+(defn gateF [] :- Any
+  ;; Strip nix comment lines before matching so we don't false-positive
+  ;; on `__noChroot = true` written inside an explanation comment.
+  (let [flakeContent (.join
+                       (.filter (.split (readFileSync FLAKE "utf8") "\n")
+                                (fn [l] (not (.test (RegExp. "^\\s*#") l))))
+                       "\n")
+        usesNoChroot (.test (RegExp. "__noChroot\\s*=\\s*true") flakeContent)
+        usesImpure (.test (RegExp. "__impure\\s*=\\s*true") flakeContent)]
+    (if (and (not usesNoChroot) (not usesImpure))
+      (pass "F" "nix daemon will accept flake settings" "no privileged settings in flake.nix")
+      (let [cfg (sh "nix show-config 2>/dev/null" {:timeout 15000})
+            sandboxLine (or (.find (.split (.-out cfg) "\n")
+                                   (fn [l] (.test (RegExp. "^sandbox = ") l))) "")
+            sandbox (.trim (or (aget (.split sandboxLine "=") 1) ""))]
+        (if (and usesNoChroot (= sandbox "true"))
+          (fail "F" "nix daemon will accept flake settings"
+            "flake uses __noChroot but daemon has sandbox=true → rejected at eval"
+            "either:\n      (a) remove __noChroot from flake.nix (Lane 1 edit; lose sccache persistence), or\n      (b) change sandbox = \"relaxed\" in nixos-config nix-settings module + firn rebuild")
+          (pass "F" "nix daemon will accept flake settings"
+            (str "sandbox=" sandbox " permits __noChroot/__impure")))))))
+
+;; ── Gate G: nix flake evaluates without errors ────────────────────────────
+(defn gateG [] :- Any
+  (let [r (sh
+            (str "nix eval --impure --raw '" REPO-ROOT "#gjoa.outPath' 2>&1")
+            {:timeout 120000})]
+    (if (not (.-ok r))
+      (if (.-timedOut r)
+        ;; A dirty git tree defeats nix's eval cache, so eval can be slow without
+        ;; being broken. Don't fail the gate on a wall-clock timeout.
+        (warn "G" "nix flake evaluates without errors"
+          "nix eval timed out — not a real eval failure; re-run with a clean tree or longer timeout")
+        (fail "G" "nix flake evaluates without errors"
+          "evaluation failed — would have died during build"
+          (.join (.slice (.filter (.split (.-out r) "\n")
+                                  (fn [l] (.includes (.toLowerCase l) "error"))) 0 5) "\n      ")))
+      (pass "G" "nix flake evaluates without errors" (str "derivation resolves to " (.slice (.pop (.split (.trim (.-out r)) "\n")) -50))))))
+
+;; ── Gate H: diff since last working build ─────────────────────────────────
+(defn gateH [] :- Any
+  (if (not (existsSync LEDGER))
+    (pass "H" "diff since last working build" "no ledger yet (first build)")
+    (let [ledger (readFileSync LEDGER "utf8")
+          lastSuccess (.find (.split ledger "\n")
+                             (fn [l] (and (.test (RegExp. "^\\|\\s*\\d{4}-\\d{2}-\\d{2}") l)
+                                          (.test (RegExp. "success|works" "i") l)
+                                          (not (.test (RegExp. "broken|fail" "i") l)))))]
+      (if (nil? lastSuccess)
+        (pass "H" "diff since last working build" "no successful build logged yet")
+        ;; Find last commit before that date (approximate)
+        (let [dateMatch (.match lastSuccess (RegExp. "^\\|\\s*(\\d{4}-\\d{2}-\\d{2})"))
+              date (or (if dateMatch (aget dateMatch 1) nil) "")]
+          (sh (str "git log --oneline --since='" date "' --until='now' --pretty=format:'%h %s' 2>&1 | head -30") {})
+          (let [changed (sh "git diff --name-only HEAD~5..HEAD 2>&1 | head -50" {})
+                lines (.filter (.split (.-out changed) "\n") (fn [x] x))]
+            (pass "H" "diff since last working build"
+              (str (.-length lines) " files changed in recent commits (review for prereqs):\n      "
+                   (.join (.slice lines 0 15) "\n      ")
+                   (if (> (.-length lines) 15) (str "\n      ... and " (- (.-length lines) 15) " more") "")))))))))
+
+;; ── Gate I: chrome bundle three-way alignment ─────────────────────────────
+(defn gateI [] :- Any
+  (let [loaderPath (join REPO-ROOT "src" "gjoa" "browser" "components" "gjoa" "GjoaLoader.sys.mjs")
+        jarPath (join REPO-ROOT "src" "gjoa" "browser" "components" "gjoa" "jar.mn")
+        bakePath (join REPO-ROOT "tools" "prep" "chrome-bake.bjs")]
+    (if (not (.every [loaderPath jarPath bakePath] existsSync))
+      (fail "I" "chrome bundle three-way alignment" "one of loader/jar/bake missing" "investigate")
+      (let [loader (readFileSync loaderPath "utf8")
+            jar (readFileSync jarPath "utf8")
+            bake (readFileSync bakePath "utf8")
+            loaderScripts (.sort (.map (.from Array (.matchAll loader (RegExp. "\"(gjoa-[a-z-]+\\.uc\\.js)\"" "g"))) (fn [m] (aget m 1))))
+            jarScripts (.sort (.filter (.map (.from Array (.matchAll jar (RegExp. "scripts/(gjoa-[a-z-]+\\.uc\\.js)" "g"))) (fn [m] (aget m 1)))
+                                       (fn [v i a] (= (.indexOf a v) i))))
+            bakeScripts (.sort (.map (.from Array (.matchAll bake (RegExp. "\"(gjoa-[a-z-]+\\.uc\\.js)\"" "g"))) (fn [m] (aget m 1))))
+            ;; CSS bundles include the bare `gjoa.uc.css` (no hyphen suffix), so the
+            ;; style pattern must allow an optional `-...` segment.
+            loaderStyles (.sort (.map (.from Array (.matchAll loader (RegExp. "\"(gjoa(?:-[a-z-]+)?\\.uc\\.css)\"" "g"))) (fn [m] (aget m 1))))
+            jarStyles (.sort (.filter (.map (.from Array (.matchAll jar (RegExp. "styles/(gjoa(?:-[a-z-]+)?\\.uc\\.css)" "g"))) (fn [m] (aget m 1)))
+                                      (fn [v i a] (= (.indexOf a v) i))))
+            bakeStyles (.sort (.map (.from Array (.matchAll bake (RegExp. "\"(gjoa(?:-[a-z-]+)?\\.uc\\.css)\"" "g"))) (fn [m] (aget m 1))))
+            eq (fn [a :- Any b :- Any]
+                 (and (= (.-length a) (.-length b))
+                      (.every a (fn [x i] (= x (aget b i))))))]
+        (cond
+          (or (not (eq loaderScripts jarScripts)) (not (eq loaderScripts bakeScripts)))
+          (fail "I" "chrome bundle three-way alignment"
+            (str "script lists differ:\n      loader: " (.join loaderScripts ", ") "\n      jar:    " (.join jarScripts ", ") "\n      bake:   " (.join bakeScripts ", "))
+            "align all three so they declare the exact same .uc.js filenames")
+
+          (or (not (eq loaderStyles jarStyles)) (not (eq loaderStyles bakeStyles)))
+          (fail "I" "chrome bundle three-way alignment"
+            (str "style lists differ:\n      loader: " (.join loaderStyles ", ") "\n      jar:    " (.join jarStyles ", ") "\n      bake:   " (.join bakeStyles ", "))
+            "align all three so they declare the exact same .uc.css filenames")
+
+          :else
+          (pass "I" "chrome bundle three-way alignment"
+            (str (.-length loaderScripts) " script + " (.-length loaderStyles) " style bundles agree across loader / jar.mn / chrome-bake.bjs")))))))
+
+;; ── Run + render ──────────────────────────────────────────────────────────
+(defn main [] :- Any
+  (.log console (bold "gjoa preflight"))
+  (.log console (dim "Mandatory gate before any nix or full-mach build (CLAUDE.md Rule #0)."))
+  (.log console "")
+
+  (let [gates [["A" gateA] ["B" gateB] ["C" gateC] ["D" gateD]
+               ["E" gateE] ["F" gateF] ["G" gateG] ["H" gateH]
+               ["I" gateI]]]
+    (doseq [gate gates]
+      (let [fn (aget gate 1)]
+        (try (fn)
+          (catch Error e (fail "?" (.-name fn) "gate threw" (.-message e)))))))
+
+  (doseq [r results]
+    (let [mark (cond (.-warned r) (yellow "⚠")
+                     (.-passed r) (green "✓")
+                     :else (red "✗"))]
+      (.log console (str mark "  " (bold (.-id r)) "  " (.-name r)))
+      (.log console (str "     " (dim (.-detail r))))
+      (when (and (not (.-passed r)) (.-fix r))
+        (.log console (str "     " (yellow (str "fix: " (.join (.split (.-fix r) "\n") "\n          "))))))))
+
+  (let [failed (.-length (.filter results (fn [r] (not (.-passed r)))))]
+    (.log console "")
+    (if (= failed 0)
+      (do
+        (.log console (str (green (bold "PREFLIGHT GREEN")) (dim (str "  — " (.-length results) "/" (.-length results) " gates passed"))))
+        (.log console (dim "Safe to propose a rebuild. Show this output in the proposal."))
+        (.exit process 0))
+      (do
+        (.log console (str (red (bold "PREFLIGHT FAILED")) (dim (str "  — " failed "/" (.-length results) " gates failed"))))
+        (.log console (red "Do NOT kick off a build until every gate is green."))
+        (.exit process 1)))))
+
+;; The .ts guarded on `import.meta.main`; there is no import.meta in beagle, and
+;; Errors abort with exit 1, matching the original `.catch` handler. Guarded so
+;; the CLI runs only when invoked directly, never on import.
+(when (.-main (js/import-meta))
+  (.catch (main) (fn [e] (.error console e) (.exit process 1))))

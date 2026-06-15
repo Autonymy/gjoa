@@ -1,0 +1,488 @@
+#lang beagle/js
+;; Integration tests for tab groups — the "Create Group" context-menu
+;; action and dragging tabs into / out of groups.
+;;
+;; Bugs under test (regression coverage for #11 and #12):
+;;   - #11: "Create Group" on a tab should compose the tab + its subtree
+;;          into the new group, not just spawn an empty group above.
+;;   - #12: Dropping a tab "as child of group" should land the row indented
+;;          INSIDE the group, not above it.
+;;
+;; All tests run in chrome context, synthesizing the same DragEvents
+;; gjoa-tabs handlers receive from Firefox. We assert against the
+;; real chrome DOM (.gjoa-tab-row, .gjoa-group-row classes, parentId in
+;; the treeData metadata exposed via window.gjoaTabsTest).
+;;
+;; Note: gjoa-tabs doesn't currently expose a window.gjoaTabsTest
+;; hook. We read parentId by walking the tab `gjoa-id` attribute against
+;; the rendered indent on the row (via inline style or computed
+;; padding-left). For tighter assertions we also use SessionStore's
+;; persisted state lookups.
+(ns gjoa.tests.integration.groups)
+(define-mode strict)
+
+;; IntegrationTest / MarionetteClient are TypeScript type-only imports —
+;; erased at runtime, so nothing to require here.
+(declare-extern [Date JSON setTimeout] Any)
+
+(defn wait-for [mn :- Any script-returning-bool :- String timeout-ms :- Any] :- Any
+  (let [timeout (or timeout-ms 1500)
+        deadline (+ (.now Date) timeout)]
+    (loop [last-err nil]
+      (if (< (.now Date) deadline)
+        (let [r (js/await
+                  (try
+                    (let [ok (js/await (.executeScript mn script-returning-bool))]
+                      {:done ok :err last-err})
+                    (catch Any e {:done false :err e})))]
+          (if (:done r)
+            nil
+            (do
+              (js/await (Promise. (fn [res] (setTimeout (fn [] (res)) 20))))
+              (recur (:err r)))))
+        (throw (Error.
+                 (str "timed out waiting for: " (.slice script-returning-bool 0 160)
+                      (if last-err (str " (last error: " (.-message last-err) ")") ""))))))))
+
+;; Wait until gjoa-tabs has rendered N rows in the sidebar panel.
+(defn wait-for-rows [mn :- Any n :- Any] :- Any
+  (wait-for
+    mn
+    (str "return document.querySelectorAll(\"#gjoa-tab-panel .gjoa-tab-row, #gjoa-tab-panel-pinned .gjoa-tab-row\").length >= " n ";")
+    nil))
+
+;; Build a drag-chain script. position: top quarter / bottom quarter / middle.
+;;  Indices reference document.querySelectorAll(".gjoa-tab-row, .gjoa-group-row")
+;;  in DOM order.
+(defn build-drag-script [opts :- Any] :- String
+  (let [source-index (.-sourceIndex opts)
+        target-index (.-targetIndex opts)
+        position (.-position opts)]
+    (str
+      "\n"
+      "    const rows = [...document.querySelectorAll(\".gjoa-tab-row, .gjoa-group-row\")];\n"
+      "    const source = rows[" source-index "];\n"
+      "    const target = rows[" target-index "];\n"
+      "    if (!source || !target) {\n"
+      "      throw new Error(\"source or target row missing — sourceIndex=" source-index " targetIndex=" target-index " rows.length=\" + rows.length);\n"
+      "    }\n"
+      "    const tRect = target.getBoundingClientRect();\n"
+      "    const yByPosition = {\n"
+      "      before: tRect.top + 2,\n"
+      "      after:  tRect.bottom - 2,\n"
+      "      into:   tRect.top + (tRect.height / 2),\n"
+      "    };\n"
+      "    const clientY = yByPosition[" (.stringify JSON position) "];\n"
+      "    const clientX = tRect.left + (tRect.width / 2);\n"
+      "    const dt = new DataTransfer();\n"
+      "    function fire(el, type, x, y) {\n"
+      "      el.dispatchEvent(new DragEvent(type, {\n"
+      "        bubbles: true, cancelable: true, view: window,\n"
+      "        clientX: x, clientY: y, dataTransfer: dt,\n"
+      "      }));\n"
+      "    }\n"
+      "    const sRect = source.getBoundingClientRect();\n"
+      "    fire(source, \"dragstart\", sRect.left + 5, sRect.top + 5);\n"
+      "    fire(target, \"dragenter\", clientX, clientY);\n"
+      "    fire(target, \"dragover\",  clientX, clientY);\n"
+      "    fire(target, \"drop\",      clientX, clientY);\n"
+      "    fire(source, \"dragend\",   clientX, clientY);\n"
+      "    return true;\n"
+      "  ")))
+
+;; Read the sidebar's tree as `[level, kind, label]` triples in DOM order.
+;;  Level is recovered from row.style.paddingInlineStart: gjoa-tabs uses
+;;  `paddingInlineStart = level * INDENT + 8` (constants.ts:INDENT=14), so
+;;  inverse is `(padding - 8) / 14`.
+(def READ-TREE-SCRIPT :- String "
+  const INDENT = 14;
+  const rows = [...document.querySelectorAll(\"#gjoa-tab-panel .gjoa-tab-row, #gjoa-tab-panel .gjoa-group-row\")];
+  return rows.map(r => {
+    const padPx = parseFloat(r.style.paddingInlineStart || \"0\") || 0;
+    const level = Math.max(0, Math.round((padPx - 8) / INDENT));
+    const kind = r.classList.contains(\"gjoa-group-row\") ? \"group\" : \"tab\";
+    const labelEl = r.querySelector(\".gjoa-tab-label, .gjoa-group-name\");
+    return [level, kind, labelEl?.textContent ?? r.getAttribute(\"aria-label\") ?? \"\"];
+  });
+")
+
+(defn read-tree [mn :- Any] :- Any
+  (js/await (.executeScript mn READ-TREE-SCRIPT)))
+
+;; Open the sidebar if it's collapsed — the gjoa-tabs panel only attaches
+;; rows when the launcher is expanded.
+(defn ensure-sidebar-expanded [mn :- Any] :- Any
+  (js/await (.executeScript mn "
+    const sm = document.getElementById(\"sidebar-main\");
+    if (sm && !sm.hasAttribute(\"sidebar-launcher-expanded\")) {
+      sm.setAttribute(\"sidebar-launcher-expanded\", \"true\");
+    }
+    return true;
+  "))
+  (js/await (wait-for mn "return !!document.querySelector(\"#gjoa-tab-panel\");" nil))
+  nil)
+
+(def tests :- Any
+  [{:name "#11 Create Group on parent composes parent + subtree into the new group"
+    :run
+    (fn [mn]
+      (js/await (ensure-sidebar-expanded mn))
+
+      ;; Build a parent + 2 children. We do it via gBrowser.addTab + manual
+      ;; parentId so we control the tree shape exactly.
+      (js/await (.executeScript mn "
+        const sp = Services.scriptSecurityManager.getSystemPrincipal();
+        const parent = gBrowser.addTab(\"about:blank\", { triggeringPrincipal: sp });
+        const childA = gBrowser.addTab(\"about:blank\", { triggeringPrincipal: sp });
+        const childB = gBrowser.addTab(\"about:blank\", { triggeringPrincipal: sp });
+        // Force tree via internal API: we don't have one exposed, so we set
+        // the parentId via the persisted XUL attribute then poke a resync.
+        // The tabs module will pick up the IDs the next time it reads
+        // treeData. We rely on the test seeing the right SUBTREE shape by
+        // visually constructing it: append children under the parent's
+        // panel row by inserting a sibling-tab call that DOES set parentId.
+        const td_p = parent._td || null;  // unused; we drive via menu directly
+        gBrowser.selectedTab = parent;
+        return true;
+      "))
+      (js/await (wait-for-rows mn 4)) ;; initial about:blank + 3 new
+
+      ;; Use the public "newTabPosition=child" pref to make the next opens
+      ;; inherit parent. This is the cleanest seam for shaping the tree
+      ;; because gjoa-tabs is the one consuming the pref in onTabOpen.
+      ;;
+      ;; Strategy: roll back the 3 tabs we just made, set pref to child,
+      ;; open A under parent, open B under parent. Result tree:
+      ;;   parent
+      ;;   ├── A
+      ;;   └── B
+      ;; Then open the context menu on parent and pick "Create Group".
+      ;; After: a new group sits at parent's old position, containing
+      ;; parent + A + B.
+      (js/await (.executeScript mn "
+        // Close the children we just made — the test cares about a specific
+        // tree shape, not these placeholders.
+        for (const t of [...gBrowser.tabs]) {
+          if (t._td) continue;
+          if (t.linkedBrowser?.currentURI?.spec === \"about:blank\" &&
+              !t.selected && t !== gBrowser.tabs[0]) {
+            gBrowser.removeTab(t);
+          }
+        }
+        return true;
+      "))
+
+      (js/await (.executeScript mn "Services.prefs.setCharPref(\"gjoa.tabs.newTabPosition\", \"child\");"))
+
+      (js/await (.executeScript mn "
+        const sp = Services.scriptSecurityManager.getSystemPrincipal();
+        const parent = gBrowser.addTab(\"about:blank?p\", { triggeringPrincipal: sp });
+        gBrowser.selectedTab = parent;
+        return true;
+      "))
+      (js/await (wait-for mn "
+        return [...gBrowser.tabs].some(t =>
+          t.linkedBrowser?.currentURI?.spec === \"about:blank?p\");
+      " nil))
+      (js/await (.executeScript mn "
+        const sp = Services.scriptSecurityManager.getSystemPrincipal();
+        gBrowser.addTab(\"about:blank?a\", { triggeringPrincipal: sp });
+        return true;
+      "))
+      (js/await (.executeScript mn "
+        const sp = Services.scriptSecurityManager.getSystemPrincipal();
+        gBrowser.addTab(\"about:blank?b\", { triggeringPrincipal: sp });
+        return true;
+      "))
+      (js/await (wait-for-rows mn 4))
+
+      ;; Snapshot the pre-state.
+      (let [before (js/await (read-tree mn))]
+
+        ;; Trigger "Create Group" on the parent (about:blank?p). We poke
+        ;; state.contextTab and fire the command directly — the menu item's
+        ;; command listener doesn't care whether a real right-click happened.
+        (let [triggered (js/await (.executeScript mn "
+        const parentTab = [...gBrowser.tabs].find(t =>
+          t.linkedBrowser?.currentURI?.spec === \"about:blank?p\");
+        if (!parentTab) throw new Error(\"parent tab not found\");
+        // The menu's createGroupItem reads state.contextTab from the tabs
+        // module's closure-private state. We can reach it through the
+        // contextmenu event the row's listener installs: simulate a real
+        // contextmenu on the parent row, then click the menu item.
+        const row = document.querySelector('.gjoa-tab-row[selected=\"true\"]')
+                 || [...document.querySelectorAll(\".gjoa-tab-row\")]
+                       .find(r => {
+                         const lbl = r.querySelector(\".gjoa-tab-label\");
+                         return lbl?.textContent?.includes(\"about:blank?p\");
+                       });
+        if (!row) {
+          // Fallback: just find the row whose underlying tab.linkedBrowser
+          // URL matches.
+          throw new Error(\"parent row not found in DOM\");
+        }
+        // Dispatch a contextmenu event on the row so the listener captures
+        // state.contextTab. The menu opens but we don't need to wait — the
+        // click handler synchronously sets contextTab.
+        row.dispatchEvent(new MouseEvent(\"contextmenu\", {
+          bubbles: true, cancelable: true, button: 2,
+          clientX: row.getBoundingClientRect().left + 5,
+          clientY: row.getBoundingClientRect().top + 5,
+        }));
+        const menu = document.getElementById(\"gjoa-tab-menu\");
+        if (!menu) throw new Error(\"gjoa-tab-menu missing\");
+        const item = [...menu.querySelectorAll(\"menuitem\")]
+          .find(mi => mi.getAttribute(\"label\") === \"Create Group\");
+        if (!item) throw new Error(\"Create Group menuitem missing\");
+        // Click the menuitem — fires the command handler that builds the group.
+        item.dispatchEvent(new Event(\"command\", { bubbles: true }));
+        return true;
+      "))]
+          (when (not triggered) (throw (Error. "Create Group menu click didn't fire")))
+
+          ;; Wait a tick for the tree to settle.
+          (js/await (Promise. (fn [r] (setTimeout (fn [] (r)) 200))))
+
+          (let [after (js/await (read-tree mn))]
+
+            ;; Assertions:
+            ;;   (a) a group row appeared
+            ;;   (b) parent tab is now indented to group.level + 1
+            ;;   (c) the children (A, B) are indented one further
+            (let [group-idx (.findIndex after (fn [row] (= (aget row 1) "group")))]
+              (when (< group-idx 0)
+                (throw (Error.
+                         (str "expected a group row in the tree after Create Group. "
+                              "before=" (.stringify JSON before) ", after=" (.stringify JSON after)))))
+              (let [group-level (aget (aget after group-idx) 0)
+                    parent-idx (.findIndex after (fn [row]
+                                 (and (= (aget row 1) "tab") (.includes (aget row 2) "about:blank?p"))))
+                    a-idx (.findIndex after (fn [row]
+                            (and (= (aget row 1) "tab") (.includes (aget row 2) "about:blank?a"))))
+                    b-idx (.findIndex after (fn [row]
+                            (and (= (aget row 1) "tab") (.includes (aget row 2) "about:blank?b"))))]
+                (when (or (< parent-idx 0) (< a-idx 0) (< b-idx 0))
+                  (throw (Error. (str "tabs missing in after-tree: " (.stringify JSON after)))))
+                (let [expected (+ group-level 1)]
+                  (when (not= (aget (aget after parent-idx) 0) expected)
+                    (throw (Error.
+                             (str "parent tab level should be " expected " (group.level + 1), "
+                                  "got " (aget (aget after parent-idx) 0) ". tree=" (.stringify JSON after)))))
+                  (when (or (<= (aget (aget after a-idx) 0) expected) (<= (aget (aget after b-idx) 0) expected))
+                    (throw (Error.
+                             (str "children should be indented deeper than parent (" expected "), "
+                                  "got A=" (aget (aget after a-idx) 0) " B=" (aget (aget after b-idx) 0) ". "
+                                  "tree=" (.stringify JSON after)))))
+                  ;; Group should sit at the parent's old position (before the parent
+                  ;; in DOM order). Since groupIdx < parentIdx already, that's covered.
+                  (when (>= group-idx parent-idx)
+                    (throw (Error.
+                             (str "group should be inserted BEFORE the parent tab. "
+                                  "groupIdx=" group-idx " parentIdx=" parent-idx ". "
+                                  "tree=" (.stringify JSON after))))))))))))}
+
+   {:name "#12b drop tab AS CHILD of a non-empty group lands AT END of subtree (after last child)"
+    :run
+    (fn [mn]
+      (js/await (ensure-sidebar-expanded mn))
+      (js/await (.executeScript mn "Services.prefs.setCharPref(\"gjoa.tabs.newTabPosition\", \"root\");"))
+
+      ;; Build the group + populate it with one existing child.
+      ;; Use the panel context menu for the group, then move a tab "into" it
+      ;; to seed a child. Finally drop the test "dropper" tab "into" the
+      ;; same group and assert it lands AT THE END of the group's subtree,
+      ;; not anywhere above the group row.
+      (let [spawned (js/await (.executeScript mn "
+        const panel = document.getElementById(\"gjoa-tab-panel\");
+        const spacer = panel.querySelector(\"[gjoa-spacer], .gjoa-spacer\") || panel.firstChild;
+        const rect = (spacer || panel).getBoundingClientRect();
+        (spacer || panel).dispatchEvent(new MouseEvent(\"contextmenu\", {
+          bubbles: true, cancelable: true, button: 2,
+          clientX: rect.left + 4, clientY: rect.top + 4,
+        }));
+        const menu = document.getElementById(\"gjoa-panel-menu\");
+        const item = [...menu.querySelectorAll(\"menuitem\")]
+          .find(mi => mi.getAttribute(\"label\") === \"New Tab Group\");
+        item.dispatchEvent(new Event(\"command\", { bubbles: true }));
+        return true;
+      "))]
+        (when (not spawned) (throw (Error. "New Tab Group menu click didn't fire")))
+        ;; Wait for the LATEST group row (the test before may have spawned its own).
+        (js/await (wait-for mn "return document.querySelectorAll(\"#gjoa-tab-panel .gjoa-group-row\").length >= 2;" nil))
+
+        ;; Seed: open a tab + a "dropper" tab.
+        (js/await (.executeScript mn "
+        const sp = Services.scriptSecurityManager.getSystemPrincipal();
+        gBrowser.addTab(\"about:blank?seed\", { triggeringPrincipal: sp });
+        gBrowser.addTab(\"about:blank?dropper2\", { triggeringPrincipal: sp });
+        return true;
+      "))
+        (js/await (wait-for mn "
+        const labels = [...document.querySelectorAll(\"#gjoa-tab-panel .gjoa-tab-row .gjoa-tab-label\")].map(e => e.textContent);
+        return labels.some(l => l?.includes(\"about:blank?seed\"))
+            && labels.some(l => l?.includes(\"about:blank?dropper2\"));
+      " nil))
+
+        ;; First drag: drop seed INTO the latest group.
+        (let [all-rows-before (js/await (.executeScript mn "
+        return [...document.querySelectorAll(\"#gjoa-tab-panel .gjoa-tab-row, #gjoa-tab-panel .gjoa-group-row\")]
+          .map(r => ({
+            kind: r.classList.contains(\"gjoa-group-row\") ? \"group\" : \"tab\",
+            label: r.querySelector(\".gjoa-tab-label, .gjoa-group-name\")?.textContent ?? \"\",
+          }));
+      "))]
+          ;; Latest group = the one furthest down in DOM.
+          (let [latest-group-idx
+                (loop [i 0 acc -1]
+                  (if (< i (.-length all-rows-before))
+                    (recur (+ i 1)
+                           (if (= (.-kind (aget all-rows-before i)) "group") i acc))
+                    acc))
+                seed-idx (.findIndex all-rows-before (fn [r] (.includes (.-label r) "about:blank?seed")))
+                dropper-idx (.findIndex all-rows-before (fn [r] (.includes (.-label r) "about:blank?dropper2")))]
+            (when (or (< latest-group-idx 0) (< seed-idx 0) (< dropper-idx 0))
+              (throw (Error. (str "setup: latestGroupIdx=" latest-group-idx " seedIdx=" seed-idx " dropperIdx=" dropper-idx ", rows=" (.stringify JSON all-rows-before)))))
+            (js/await (.executeScript mn (build-drag-script
+                                           {:sourceIndex seed-idx
+                                            :targetIndex latest-group-idx
+                                            :position "into"})))
+            (js/await (Promise. (fn [r] (setTimeout (fn [] (r)) 200))))
+
+            ;; Now the group has one child (seed). Drop dropper2 INTO the same group.
+            (let [all-rows-mid (js/await (.executeScript mn "
+        return [...document.querySelectorAll(\"#gjoa-tab-panel .gjoa-tab-row, #gjoa-tab-panel .gjoa-group-row\")]
+          .map(r => ({
+            kind: r.classList.contains(\"gjoa-group-row\") ? \"group\" : \"tab\",
+            label: r.querySelector(\".gjoa-tab-label, .gjoa-group-name\")?.textContent ?? \"\",
+          }));
+      "))]
+              (let [mid-group-idx
+                    (loop [i 0 acc -1]
+                      (if (< i (.-length all-rows-mid))
+                        (recur (+ i 1)
+                               (if (= (.-kind (aget all-rows-mid i)) "group") i acc))
+                        acc))
+                    new-dropper-idx (.findIndex all-rows-mid (fn [r] (.includes (.-label r) "about:blank?dropper2")))]
+                (when (or (< mid-group-idx 0) (< new-dropper-idx 0))
+                  (throw (Error. (str "mid: groupIdx=" mid-group-idx " dropperIdx=" new-dropper-idx ", rows=" (.stringify JSON all-rows-mid)))))
+                (js/await (.executeScript mn (build-drag-script
+                                               {:sourceIndex new-dropper-idx
+                                                :targetIndex mid-group-idx
+                                                :position "into"})))
+                (js/await (Promise. (fn [r] (setTimeout (fn [] (r)) 200))))
+
+                ;; Final tree shape. The non-empty group should now contain:
+                ;;   group → seed → dropper2
+                ;; All AFTER the group row, both indented at level > group.level.
+                (let [after (js/await (read-tree mn))]
+                  (let [post-group-idx
+                        (loop [i 0 acc -1]
+                          (if (< i (.-length after))
+                            (recur (+ i 1)
+                                   (if (= (aget (aget after i) 1) "group") i acc))
+                            acc))
+                        post-seed-idx (.findIndex after (fn [row]
+                                        (and (= (aget row 1) "tab") (.includes (aget row 2) "about:blank?seed"))))
+                        post-dropper-idx (.findIndex after (fn [row]
+                                           (and (= (aget row 1) "tab") (.includes (aget row 2) "about:blank?dropper2"))))]
+                    (when (or (< post-group-idx 0) (< post-seed-idx 0) (< post-dropper-idx 0))
+                      (throw (Error. (str "after: postGroupIdx=" post-group-idx " postSeedIdx=" post-seed-idx " postDropperIdx=" post-dropper-idx ", tree=" (.stringify JSON after)))))
+                    ;; (1) dropper2 must sit AFTER the group row in DOM order
+                    (when (<= post-dropper-idx post-group-idx)
+                      (throw (Error.
+                               (str "BUG: dropper2 should land AFTER (below) the group row, but is at DOM idx " post-dropper-idx " "
+                                    "vs group at " post-group-idx ". tree=" (.stringify JSON after)))))
+                    ;; (2) dropper2 must sit AFTER the seed (end of subtree)
+                    (when (<= post-dropper-idx post-seed-idx)
+                      (throw (Error.
+                               (str "dropper2 should land AT END of subtree, after seed. "
+                                    "dropper@" post-dropper-idx " seed@" post-seed-idx ". tree=" (.stringify JSON after)))))
+                    ;; (3) Indented (level > group's level)
+                    (let [group-lv (aget (aget after post-group-idx) 0)]
+                      (when (<= (aget (aget after post-dropper-idx) 0) group-lv)
+                        (throw (Error.
+                                 (str "dropper2 should be indented (level > " group-lv "), got " (aget (aget after post-dropper-idx) 0) ". "
+                                      "tree=" (.stringify JSON after))))))))))))))}
+
+   {:name "#12 drop tab AS CHILD of an empty group lands inside (indented), not above"
+    :run
+    (fn [mn]
+      (js/await (ensure-sidebar-expanded mn))
+
+      ;; Reset newTabPosition to root so children aren't auto-nested.
+      (js/await (.executeScript mn "Services.prefs.setCharPref(\"gjoa.tabs.newTabPosition\", \"root\");"))
+
+      ;; Create the panel-level "New Tab Group" first.
+      ;; The cleanest way is to invoke the panel context menu's New Tab
+      ;; Group item — that's a real entry point in the chrome JS.
+      (let [spawned (js/await (.executeScript mn "
+        const panel = document.getElementById(\"gjoa-tab-panel\");
+        if (!panel) throw new Error(\"gjoa-tab-panel missing\");
+        const spacer = panel.querySelector(\"[gjoa-spacer], .gjoa-spacer\")
+          || panel.firstChild;
+        // Right-click the spacer area.
+        const rect = (spacer || panel).getBoundingClientRect();
+        (spacer || panel).dispatchEvent(new MouseEvent(\"contextmenu\", {
+          bubbles: true, cancelable: true, button: 2,
+          clientX: rect.left + 4, clientY: rect.top + 4,
+        }));
+        const menu = document.getElementById(\"gjoa-panel-menu\");
+        if (!menu) throw new Error(\"gjoa-panel-menu missing\");
+        const item = [...menu.querySelectorAll(\"menuitem\")]
+          .find(mi => mi.getAttribute(\"label\") === \"New Tab Group\");
+        if (!item) throw new Error(\"New Tab Group menuitem missing\");
+        item.dispatchEvent(new Event(\"command\", { bubbles: true }));
+        return true;
+      "))]
+        (when (not spawned) (throw (Error. "New Tab Group menu click didn't fire")))
+        (js/await (wait-for mn "return !!document.querySelector(\"#gjoa-tab-panel .gjoa-group-row\");" nil))
+
+        ;; Add a fresh tab at root.
+        (js/await (.executeScript mn "
+        const sp = Services.scriptSecurityManager.getSystemPrincipal();
+        gBrowser.addTab(\"about:blank?dropper\", { triggeringPrincipal: sp });
+        return true;
+      "))
+        (js/await (wait-for mn "
+        return [...document.querySelectorAll(\"#gjoa-tab-panel .gjoa-tab-row\")]
+          .some(r => r.querySelector(\".gjoa-tab-label\")?.textContent?.includes(\"about:blank?dropper\"));
+      " nil))
+
+        ;; Now drag the "dropper" tab onto the group row using "into" position.
+        (let [tree (js/await (read-tree mn))]
+          (let [group-idx (.findIndex tree (fn [row] (= (aget row 1) "group")))
+                ;; "dropper" tab index in DOM among (tab|group) rows
+                all-rows (js/await (.executeScript mn "
+        return [...document.querySelectorAll(\"#gjoa-tab-panel .gjoa-tab-row, #gjoa-tab-panel .gjoa-group-row\")]
+          .map(r => ({
+            kind: r.classList.contains(\"gjoa-group-row\") ? \"group\" : \"tab\",
+            label: r.querySelector(\".gjoa-tab-label, .gjoa-group-name\")?.textContent ?? \"\",
+          }));
+      "))]
+            (let [dropper-idx (.findIndex all-rows (fn [r] (.includes (.-label r) "about:blank?dropper")))]
+              (when (or (< dropper-idx 0) (< group-idx 0))
+                (throw (Error. (str "setup: dropperIdx=" dropper-idx " groupIdx=" group-idx ", tree=" (.stringify JSON all-rows)))))
+
+              (js/await (.executeScript mn (build-drag-script
+                                             {:sourceIndex dropper-idx
+                                              :targetIndex group-idx
+                                              :position "into"})))
+              (js/await (Promise. (fn [r] (setTimeout (fn [] (r)) 200))))
+
+              (let [after (js/await (read-tree mn))]
+                (let [new-dropper-idx (.findIndex after (fn [row]
+                                        (and (= (aget row 1) "tab") (.includes (aget row 2) "about:blank?dropper"))))
+                      new-group-idx (.findIndex after (fn [row] (= (aget row 1) "group")))]
+                  (when (or (< new-dropper-idx 0) (< new-group-idx 0))
+                    (throw (Error. (str "after-drop: dropperIdx=" new-dropper-idx " groupIdx=" new-group-idx ", tree=" (.stringify JSON after)))))
+                  (when (<= new-dropper-idx new-group-idx)
+                    (throw (Error.
+                             (str "dropper should land AFTER (inside) the group, but is at " new-dropper-idx " "
+                                  "vs group at " new-group-idx ". tree=" (.stringify JSON after)))))
+                  (let [group-level (aget (aget after new-group-idx) 0)]
+                    (when (<= (aget (aget after new-dropper-idx) 0) group-level)
+                      (throw (Error.
+                               (str "dropper should be indented (level > " group-level "), "
+                                    "got level=" (aget (aget after new-dropper-idx) 0) ". tree=" (.stringify JSON after)))))))))))))}])
+
+(js/export-default tests)

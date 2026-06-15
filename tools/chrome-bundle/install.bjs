@@ -1,0 +1,61 @@
+#lang beagle/js
+;; Wire dist/chrome/ into the running gjoa install for dev-mode loading.
+;;
+;; Replaces the previous fx-autoconfig install (which dropped a loader into
+;; the install root + scripts into a profile chrome/). With the native
+;; loader baked into omni.ja, the only thing dev mode needs is a single
+;; `<install_root>/gjoa-dev/` directory containing JS/ and CSS/
+;; subdirectories. The loader (browser/components/gjoa/GjoaLoader.sys.mjs)
+;; reads from there at startup.
+;;
+;; We use a SYMLINK rather than a copy:
+;;   - Copy:    every iteration needs `bun run chrome:dist && bun run chrome:install`
+;;   - Symlink: only `bun run chrome:dist` is needed; the install path
+;;              transparently points at the freshly-rebuilt dist/.
+;;
+;; Trust note: the symlink target is owned by the current user (your repo
+;; checkout). The install root for a dev build is also owned by the current
+;; user, so this is the same trust boundary. For a production install (root-
+;; owned install root), only root could create this symlink — end users
+;; can't accidentally activate dev mode.
+(ns gjoa.tools.chrome-bundle.install
+  (:require [fs :refer [existsSync]]
+            [fs/promises :refer [rm symlink]]
+            [path :refer [join]]))
+(define-mode strict)
+(declare-extern [process console] Any)
+
+;; tools/chrome-bundle/install.ts used resolve(import.meta.dir, "..", "..")
+;; to reach the repo root. Tools run via `bun run` from the repo root, so
+;; cwd IS the repo root.
+(def REPO-ROOT :- String (.cwd process))
+(def DIST-CHROME :- String (join REPO-ROOT "dist" "chrome"))
+
+(def REPO-OBJDIR :- String (join REPO-ROOT "engine" "obj-x86_64-pc-linux-gnu"))
+(def ENV-OBJDIR :- Any (.-MOZ_OBJDIR (.-env process)))
+(def MOZ-OBJDIR :- Any
+  (if (and ENV-OBJDIR (.startsWith ENV-OBJDIR REPO-ROOT)) ENV-OBJDIR REPO-OBJDIR))
+(def INSTALL-ROOT :- String (join MOZ-OBJDIR "dist" "bin"))
+(def GJOA-DEV :- String (join INSTALL-ROOT "gjoa-dev"))
+
+(defn main [] :- Any
+  (when (not (existsSync DIST-CHROME))
+    (.error console "✗ dist/chrome/ not built — run `bun run chrome:dist` first")
+    (.exit process 1))
+  (when (not (existsSync INSTALL-ROOT))
+    (.error console
+      (str "✗ install root not found at " INSTALL-ROOT " — has gjoa been built "
+           "via mach? (`cd engine && ./mach build`)"))
+    (.exit process 1))
+
+  ;; Replace any existing symlink/dir so re-runs are idempotent.
+  (when (existsSync GJOA-DEV)
+    (js/await (rm GJOA-DEV {:recursive true :force true})))
+  (js/await (symlink DIST-CHROME GJOA-DEV "dir"))
+
+  (.log console (str "✓ symlinked " DIST-CHROME " → " GJOA-DEV))
+  (.log console "\nLaunch:")
+  (.log console (str "  " INSTALL-ROOT "/gjoa --no-remote --profile <profile_dir>"))
+  (.log console "\nDaily loop: edit src/gjoa/chrome/bjs/* → `bun run chrome:dist` → restart gjoa."))
+
+(js/await (main))

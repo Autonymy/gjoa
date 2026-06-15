@@ -1,0 +1,372 @@
+#lang beagle/js
+;; `gjoa status` -- single-screen operational dashboard.
+;;
+;; Answers the recurring questions: what version of Firefox are we on,
+;; what's Mozilla shipping, what's nixpkgs shipping, what's Zen on, are
+;; there unfixed CVEs against our pin, what changes are pending, what's
+;; my rebuild budget, what command should I run next.
+;;
+;; Every run does fresh network pulls -- no caching. ~1-2 sec total
+;; because the fetches happen in parallel. If you're offline, missing
+;; values render as "-" and the rest of the dashboard still works.
+
+(ns gjoa.tools.scripts.status
+  (:require [fs :refer [existsSync readFileSync statSync]]
+            [child_process :refer [execSync]]
+            [path :refer [join]]
+            [gjoa.tools.prep.paths :refer [REPO-ROOT ENGINE-DIR]]))
+(define-mode strict)
+;; `process` comes through the paths.bjs import; `RegExp.`/`Error.` constructors
+;; don't need the extern declared, so neither is listed here.
+(declare-extern [console fetch AbortSignal Promise JSON Date Math String isNaN] Any)
+
+;; REPO-ROOT / ENGINE-DIR come from tools/prep/paths.bjs (cwd-based, since
+;; tools run via `bun run` from the repo root -- the old .ts used
+;; import.meta.dir, which has no beagle equivalent).
+(def MACH-BIN :- String (join ENGINE-DIR "obj-x86_64-pc-linux-gnu" "dist" "bin" "gjoa-bin"))
+(def MACH-DEV-OVERLAY :- String (join ENGINE-DIR "obj-x86_64-pc-linux-gnu" "dist" "bin" "gjoa-dev"))
+(def NIX-RESULT :- String (join REPO-ROOT "result" "bin" "gjoa"))
+(def DIST-CHROME :- String (join REPO-ROOT "dist" "chrome"))
+(def LEDGER :- String (join REPO-ROOT "BUILD-LEDGER.md"))
+(def GJOA-JSON :- String (join REPO-ROOT "gjoa.json"))
+
+;; -- ANSI helpers ------------------------------------------------------------
+(def tty :- Any (.-isTTY (.-stdout process)))
+(defn c [s :- Any code :- String] :- Any
+  (if tty (str "[" code "m" s "[0m") s))
+(defn dim [s :- Any] :- Any (c s "2"))
+(defn bold [s :- Any] :- Any (c s "1"))
+(defn green [s :- Any] :- Any (c s "32"))
+(defn yellow [s :- Any] :- Any (c s "33"))
+(defn red [s :- Any] :- Any (c s "31"))
+(defn cyan [s :- Any] :- Any (c s "36"))
+(defn magenta [s :- Any] :- Any (c s "35"))
+
+;; -- Version helpers ---------------------------------------------------------
+(defn parseVer [v :- String] :- Any
+  (let [cleaned (.trim (.replace (.replace v (RegExp. "esr$" "i") "") (RegExp. "[a-z].*$") ""))
+        p (.map (.split cleaned ".") (fn [x] (or (parseInt x 10) 0)))]
+    [(or (aget p 0) 0) (or (aget p 1) 0) (or (aget p 2) 0)]))
+
+(defn cmpVer [a :- Any b :- Any] :- Any
+  (loop [i 0]
+    (if (>= i 3)
+      0
+      (if (not= (aget a i) (aget b i))
+        (if (< (aget a i) (aget b i)) -1 1)
+        (recur (+ i 1))))))
+
+(defn delta [a :- Any b :- Any] :- Any
+  (if (or (not a) (not b))
+    (dim "—")
+    (let [aT (parseVer a)
+          bT (parseVer b)
+          cmp (cmpVer aT bT)]
+      (if (= cmp 0)
+        (green "match")
+        ;; a > b -> we're AHEAD of the comparison target.
+        (if (> cmp 0)
+          (if (> (aget aT 0) (aget bT 0))
+            (cyan (str "+" (- (aget aT 0) (aget bT 0)) " major ahead"))
+            (cyan "patch ahead"))
+          ;; a < b -> we're BEHIND.
+          (if (< (aget aT 0) (aget bT 0))
+            (red (str "-" (- (aget bT 0) (aget aT 0)) " major"))
+            (yellow "point behind")))))))
+
+;; -- Oracles -----------------------------------------------------------------
+;; Oracles shape (was a TS interface; carried as documentation here):
+;;   mozillaLatest mozillaEsr mozillaNightly mozillaBeta
+;;   nixpkgsFirefox nixpkgsFirefoxEsr zen librewolf
+;;   advisoryCount inTheWildCount errors
+
+(defn fetchJson [url :- String timeoutMs :- Any] :- Any
+  (try
+    (let [r (js/await (fetch url {:signal (.timeout AbortSignal timeoutMs)}))]
+      (if (not (.-ok r))
+        nil
+        (js/await (.json r))))
+    (catch Any e nil)))
+
+(defn fetchText [url :- String timeoutMs :- Any] :- Any
+  (try
+    (let [r (js/await (fetch url {:signal (.timeout AbortSignal timeoutMs)}))]
+      (if (not (.-ok r))
+        nil
+        (js/await (.text r))))
+    (catch Any e nil)))
+
+(defn nixEvalRaw [expr :- String] :- Any
+  (try
+    (let [out (execSync (str "nix eval --impure --raw --expr '" expr "' 2>/dev/null")
+                        {:timeout 10000 :encoding "utf8"})]
+      (or (.trim out) nil))
+    (catch Any e nil)))
+
+(defn loadOracles [pinned :- String] :- Any
+  (let [errors []]
+    ;; Run all the network probes in parallel.
+    (let [probes (js/await (.all Promise
+                   [(fetchJson "https://product-details.mozilla.org/1.0/firefox_versions.json" 5000)
+                    (fetchText "https://www.mozilla.org/en-US/security/known-vulnerabilities/firefox/" 5000)
+                    ;; Zen pins Firefox in surfer.json on the dev branch (their main branch
+                    ;; doesn't have this file -- releases get merged from dev).
+                    (fetchText "https://raw.githubusercontent.com/zen-browser/desktop/dev/surfer.json" 5000)
+                    (fetchText "https://gitlab.com/librewolf-community/browser/source/-/raw/main/version" 5000)]))
+          moz (aget probes 0)
+          advHtml (aget probes 1)
+          zenSurfer (aget probes 2)
+          librewolfPkgbuild (aget probes 3)]
+
+      (if (not moz) (.push errors "Mozilla product-details unreachable"))
+      (if (not advHtml) (.push errors "Mozilla advisories page unreachable"))
+      (if (not zenSurfer) (.push errors "Zen browser version probe failed"))
+      (if (not librewolfPkgbuild) (.push errors "LibreWolf version probe failed"))
+
+      ;; nixpkgs current Firefox -- uses the same nixpkgs the flake locks to.
+      (let [nixpkgsFirefox (nixEvalRaw "(import (builtins.getFlake \"git+file:///home/tom/code/gjoa\").inputs.nixpkgs { system = \"x86_64-linux\"; }).firefox-unwrapped.version")
+            nixpkgsFirefoxEsr (nixEvalRaw "(import (builtins.getFlake \"git+file:///home/tom/code/gjoa\").inputs.nixpkgs { system = \"x86_64-linux\"; }).firefox-esr-unwrapped.version")
+            ;; Parse Zen's pinned version out of surfer.json.
+            zen (if zenSurfer
+                  (try
+                    (let [j (.parse JSON zenSurfer)]
+                      (or (some-> (.-version j) .-version) nil))
+                    (catch Any e
+                      (do (.push errors "Zen surfer.json parse failed") nil)))
+                  nil)
+            ;; LibreWolf's version file is plain text.
+            librewolf (if librewolfPkgbuild
+                        (or (aget (.split (aget (.split (.trim librewolfPkgbuild) "\n") 0) "-") 0) nil)
+                        nil)
+            ;; Count advisories newer than our pin from the known-vulns page.
+            advisoryCount (atom nil)
+            inTheWildCount (atom nil)]
+
+        (if advHtml
+          (do
+            (reset! advisoryCount 0)
+            (reset! inTheWildCount 0)
+            (let [sectionRe (RegExp. "<h3 id=\"firefox([0-9.]+(?:esr)?)\"[^>]*>[\\s\\S]*?Fixed in Firefox ([0-9.]+(?:esr)?)\\s*</a>\\s*</h3>([\\s\\S]*?)(?=<h3 id=\"firefox|</main|<footer|$)" "g")
+                  advRe (RegExp. "<a href=\"(/en-US/security/advisories/mfsa\\d{4}-\\d+/?)\"[^>]*>\\s*<span class=\"level ([a-z]+)\">" "g")
+                  pinTuple (parseVer pinned)]
+              (loop []
+                (let [sm (.exec sectionRe advHtml)]
+                  (when (not (nil? sm))
+                    (let [v (aget sm 2)]
+                      (if (.endsWith v "esr")
+                        nil ;; skip esr sections
+                        (let [vt (parseVer v)]
+                          (if (<= (cmpVer vt pinTuple) 0)
+                            nil ;; only count fixes newer than us
+                            (let [body (aget sm 3)]
+                              (set! (.-lastIndex advRe) 0)
+                              (loop []
+                                (let [am (.exec advRe body)]
+                                  (when (not (nil? am))
+                                    (reset! advisoryCount (+ (deref advisoryCount) 1))
+                                    (if (= (aget am 2) "critical")
+                                      (reset! inTheWildCount (+ (deref inTheWildCount) 1)))
+                                    (recur)))))))))
+                    (recur)))))))
+
+        {:mozillaLatest (or (some-> moz .-LATEST_FIREFOX_VERSION) nil)
+         :mozillaEsr (or (some-> moz .-FIREFOX_ESR) nil)
+         :mozillaNightly (or (some-> moz .-FIREFOX_NIGHTLY) nil)
+         :mozillaBeta (or (some-> moz .-LATEST_FIREFOX_DEVEL_VERSION) (some-> moz .-FIREFOX_DEVEDITION) nil)
+         :nixpkgsFirefox nixpkgsFirefox
+         :nixpkgsFirefoxEsr nixpkgsFirefoxEsr
+         :zen zen
+         :librewolf librewolf
+         :advisoryCount (deref advisoryCount)
+         :inTheWildCount (deref inTheWildCount)
+         :errors errors}))))
+
+;; -- Local state -------------------------------------------------------------
+(defn mtime [p :- String] :- Any
+  (try (.-mtime (statSync p)) (catch Any e nil)))
+
+(defn fmtAge [d :- Any] :- Any
+  ;; Nix store paths use the 1970 epoch for reproducibility -- meaningless
+  ;; as a "how old is the build" signal. Detect and short-circuit.
+  (if (<= (.getFullYear d) 1970)
+    "nix-built"
+    (let [ms (- (.now Date) (.getTime d))
+          min (/ ms 60000)]
+      (if (< min 1)
+        "just now"
+        (if (< min 60)
+          (str (.round Math min) " min ago")
+          (if (< min (* 60 24))
+            (str (.round Math (/ min 60)) " hr ago")
+            (str (.round Math (/ (/ min 60) 24)) " d ago")))))))
+
+(defn gitStatusByLane [] :- Any
+  (let [lane1 [] lane2 [] lane3 [] other []
+        raw (try (execSync "git status --porcelain" {:cwd REPO-ROOT :encoding "utf8"})
+                 (catch Any e ""))]
+    (doseq [line (.split raw "\n")]
+      (when (.trim line)
+        (let [file (.trim (.slice line 3))]
+          (cond
+            (.startsWith file "src/gjoa/chrome/") (.push lane1 file)
+            (.startsWith file "src/gjoa/browser/") (.push lane2 file)
+            (.startsWith file "patches/") (.push lane2 file)
+            (.startsWith file "configs/branding/") (.push lane2 file)
+            (= file "gjoa.json") (.push lane3 file)
+            (or (= file "flake.nix") (= file "flake.lock")) (.push lane3 file)
+            :else (.push other file)))))
+    {:lane1 lane1 :lane2 lane2 :lane3 lane3 :other other}))
+
+(defn ledgerEntries [] :- Any
+  (if (not (existsSync LEDGER))
+    []
+    (let [text (readFileSync LEDGER "utf8")
+          rows []
+          rowRe (RegExp. "^\\|\\s*(\\d{4}-\\d{2}-\\d{2})\\s*\\|\\s*(\\w+)\\s*\\|\\s*([^|]+?)\\s*\\|\\s*([^|]+?)\\s*\\|")]
+      (doseq [line (.split text "\n")]
+        (let [m (.match line rowRe)]
+          (when m
+            (.push rows {:date (aget m 1)
+                         :type (aget m 2)
+                         :reason (.trim (aget m 3))
+                         :outcome (.trim (aget m 4))}))))
+      rows)))
+
+(defn buildsThisWeek [entries :- Any] :- Any
+  (let [sevenAgo (Date. (- (.now Date) (* 7 86400000)))]
+    (.-length (.filter entries
+                       (fn [e]
+                         (let [d (Date. (.-date e))]
+                           (and (not (isNaN (.getTime d)))
+                                (>= d sevenAgo)
+                                (or (= (.-type e) "nix") (= (.-type e) "mach-full")))))))))
+
+(defn nextSunday [] :- Any
+  (let [now (Date.)
+        days (or (mod (- 7 (.getDay now)) 7) 7) ;; 0=Sun -> next Sunday = 7
+        d (Date. (+ (.getTime now) (* days 86400000)))
+        iso (.slice (.toISOString d) 0 10)]
+    (str iso " (in " days " day" (if (= days 1) "" "s") ")")))
+
+;; -- Rendering ---------------------------------------------------------------
+(defn section [title :- String] :- Any
+  (.log console "")
+  (.log console (bold (str "▸ " title))))
+
+(defn row [label :- Any value :- Any] :- Any
+  (.log console (str "  " (.padEnd label 22) " " value)))
+
+(defn main [] :- Any
+  (let [jsonMode (.includes (.-argv process) "--json")
+        gjoa (.parse JSON (readFileSync GJOA-JSON "utf8"))
+        pinned (.-version (.-firefox gjoa))]
+
+    (.write (.-stderr process) (dim "probing oracles…\r"))
+    (let [oracles (js/await (loadOracles pinned))]
+      (.write (.-stderr process) "                  \r")
+
+      (if jsonMode
+        (do
+          (.log console (.stringify JSON {:pinned pinned :oracles oracles} nil 2))
+          nil)
+        (let [hasMach (existsSync MACH-BIN)
+              hasNix (existsSync NIX-RESULT)
+              hasDist (existsSync DIST-CHROME)
+              hasDevOverlay (existsSync MACH-DEV-OVERLAY)
+              lanes (gitStatusByLane)
+              ledger (ledgerEntries)
+              buildsWeek (buildsThisWeek ledger)
+              ;; Overall threat color.
+              critical (or (> (or (:inTheWildCount oracles) 0) 0)
+                           (and (:mozillaLatest oracles)
+                                (< (aget (parseVer pinned) 0) (- (aget (parseVer (:mozillaLatest oracles)) 0) 1))))
+              stale (and (not critical)
+                         (:mozillaLatest oracles)
+                         (< (cmpVer (parseVer pinned) (parseVer (:mozillaLatest oracles))) 0))
+              threat (if critical (red "CRITICAL") (if stale (yellow "STALE") (green "OK")))]
+
+          (.log console (str (bold "gjoa // status") "  " (dim (.replace (.slice (.toISOString (Date.)) 0 19) "T" " ")) "  " threat))
+
+          (section "VERSION POSITION")
+          (row "our pin"         (bold pinned))
+          (row "Mozilla stable"  (str (or (:mozillaLatest oracles) (dim "—")) "  " (delta pinned (:mozillaLatest oracles))))
+          (row "Mozilla ESR"     (or (:mozillaEsr oracles) (dim "—")))
+          (row "Mozilla beta"    (or (:mozillaBeta oracles) (dim "—")))
+          (row "Mozilla nightly" (or (:mozillaNightly oracles) (dim "—")))
+          (row "nixpkgs firefox" (str (or (:nixpkgsFirefox oracles) (dim "—")) "  " (delta pinned (:nixpkgsFirefox oracles))))
+          (row "nixpkgs ESR"     (or (:nixpkgsFirefoxEsr oracles) (dim "—")))
+          (row "Zen browser"     (str (or (:zen oracles) (dim "—")) "  " (delta pinned (:zen oracles))))
+          (row "LibreWolf"       (str (or (:librewolf oracles) (dim "—")) "  " (delta pinned (:librewolf oracles))))
+
+          (section "SECURITY POSTURE")
+          (cond
+            (nil? (:advisoryCount oracles))
+            (row "advisories"         (dim "offline -- could not fetch"))
+            (= (:advisoryCount oracles) 0)
+            (do
+              (row "unfixed CVEs"       (green "0"))
+              (row "in-the-wild"        (green "0")))
+            :else
+            (let [sevColor (if (> (or (:inTheWildCount oracles) 0) 0) red yellow)]
+              (row "unfixed CVEs"       (sevColor (String (:advisoryCount oracles))))
+              (row "in-the-wild"        (sevColor (String (or (:inTheWildCount oracles) 0))))))
+
+          (section "BUILD STATE")
+          (row "are we using nixpkgs?" (dim "no -- we feed buildMozillaMach our own patched source"))
+          (row "nix binary"      (if hasNix (str (green "✓") "  " (dim (if (mtime NIX-RESULT) (fmtAge (mtime NIX-RESULT)) "?"))) (dim "·  not built")))
+          (row "mach binary"     (if hasMach (str (green "✓") "  " (dim (if (mtime MACH-BIN) (fmtAge (mtime MACH-BIN)) "?"))) (dim "·  not built")))
+          (row "dist/chrome"     (if hasDist (str (green "✓") "  " (dim (if (mtime DIST-CHROME) (fmtAge (mtime DIST-CHROME)) "?"))) (dim "·  stale, run `bun run chrome:dist`")))
+          (row "dev-mode overlay" (if hasDevOverlay (green "✓") (dim "·  gjoa-dev/ not symlinked yet")))
+
+          (section "REBUILD BUDGET")
+          (let [budgetColor (if (> buildsWeek 1) red (if (= buildsWeek 1) yellow green))]
+            (row "builds this week" (str (budgetColor (str buildsWeek)) " / 1 (Rule #0)")))
+          (row "next Sunday"      (nextSunday))
+          (when (> (.-length ledger) 0)
+            (let [last (aget ledger 0)]
+              (row "last logged"     (str (.-date last) " (" (.-type last) ") -- " (.-outcome last)))))
+
+          (section "WORKING TREE")
+          (.log console (str "  " (dim "Lane 1: chrome TS/CSS -- `gjoa sync` + restart, ~1s, no rebuild")))
+          (.log console (str "  " (dim "Lane 2: Firefox .sys.mjs / patches / branding -- `bun run import && ./mach build faster`, ~30s")))
+          (.log console (str "  " (dim "Lane 3: gjoa.json (version) / flake.nix / C++/Rust -- full mach or nix build, 30-60 min")))
+          (.log console "")
+          (when (.-length (:lane1 lanes)) (row (green "Lane 1") (str (String (.-length (:lane1 lanes))) " file" (if (= (.-length (:lane1 lanes)) 1) "" "s"))))
+          (when (.-length (:lane2 lanes)) (row (yellow "Lane 2") (str (String (.-length (:lane2 lanes))) " file" (if (= (.-length (:lane2 lanes)) 1) "" "s"))))
+          (when (.-length (:lane3 lanes)) (row (red "Lane 3") (str (String (.-length (:lane3 lanes))) " file" (if (= (.-length (:lane3 lanes)) 1) "" "s"))))
+          (when (.-length (:other lanes)) (row (dim "other") (dim (str (String (.-length (:other lanes))) " files (docs/config/test, no rebuild)"))))
+          (when (and (not (.-length (:lane1 lanes))) (not (.-length (:lane2 lanes))) (not (.-length (:lane3 lanes))) (not (.-length (:other lanes))))
+            (row "(clean tree)" ""))
+
+          (section "RECOMMENDED NEXT")
+          (let [rec []]
+            (cond
+              (.-length (:lane3 lanes))
+              (.push rec (red "Lane 3 changes pending. Wait for Sunday. Confirm rebuild with Claude."))
+              (.-length (:lane2 lanes))
+              (if (not hasMach)
+                (do
+                  (.push rec (yellow "Lane 2 changes pending but no mach binary."))
+                  (.push rec (str "  nix develop .#mach  &&  cd engine && ./mach build   " (dim "(~30-60 min cold; do on Sunday)"))))
+                (do
+                  (.push rec (yellow "Lane 2 changes pending."))
+                  (.push rec "  bun run import  &&  (cd engine && ./mach build faster)  &&  gjoa dev")))
+              (.-length (:lane1 lanes))
+              (do
+                (.push rec (green "Lane 1 only."))
+                (.push rec (str "  gjoa sync  &&  " (if hasMach "gjoa dev" "gjoa") (dim (str "  (" (if hasMach "mach" "nix") " binary)")))))
+              :else
+              (.push rec (green "Clean. Launch with `gjoa` or `gjoa dev`.")))
+            (doseq [line rec] (.log console (str "  " line))))
+
+          (when (> (.-length (:errors oracles)) 0)
+            (.log console "")
+            (.log console (dim (str "oracles offline: " (.join (:errors oracles) ", ")))))
+
+          (.log console "")
+          (.log console (dim "docs/ARCHITECTURE.md  ·  CLAUDE.md Rule #0  ·  BUILD-LEDGER.md")))))))
+
+;; Entry point: run via `bun run`. Gated on import.meta.main so the CLI runs
+;; only when invoked directly, never on import.
+(when (.-main (js/import-meta))
+  (.catch (main) (fn [e] (.error console e) (.exit process 1))))

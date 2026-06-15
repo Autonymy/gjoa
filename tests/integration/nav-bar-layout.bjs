@@ -1,0 +1,192 @@
+#lang beagle/js
+;; Verify the gjoa nav-bar layout per 2026-05-27 user spec:
+;;   [☰ hamburger][□ taskbar-tabs-favicon]  ←GAP→  [← → ↻ 🧩]
+;;
+;; Hamburger + sidebar-toggle (taskbar-tabs-favicon in 151 vertical+revamp)
+;; pin LEFT via CSS `order`. nav-bar-customization-target (back / forward
+;; / refresh / extensions) pins RIGHT via `margin-inline-start: auto`.
+;;
+;; Asserts visual left-to-right ordering AND that there's a visible gap
+;; between the left group and the right group.
+(ns gjoa.tests.integration.nav-bar-layout)
+(define-mode strict)
+
+;; `IntegrationTest` from ../../tools/test-driver/runner is a type-only
+;; import in the original — used purely for annotation, no runtime value.
+;; Beagle has no type-only import; we annotate with Any.
+(declare-extern [Math JSON] Any)
+
+;; Plain JS source string evaluated in the browser via mn.executeScript —
+;; the tokens inside are literal JS for the browser, NOT beagle, so it
+;; stays one string literal.
+(def layoutCheck :- String "
+  const ids = [
+    \"PanelUI-button\",
+    \"taskbar-tabs-favicon\",
+    \"nav-bar-customization-target\",
+    \"back-button\",
+    \"forward-button\",
+    \"stop-reload-button\",
+    \"unified-extensions-button\",
+  ];
+  const result = {};
+  for (const id of ids) {
+    const el = document.getElementById(id);
+    if (!el) { result[id] = null; continue; }
+    const r = el.getBoundingClientRect();
+    result[id] = { left: Math.round(r.left), right: Math.round(r.right), width: Math.round(r.width) };
+  }
+  const navBar = document.getElementById(\"nav-bar\");
+  result[\"__nav-bar__\"] = navBar ? {
+    left: Math.round(navBar.getBoundingClientRect().left),
+    right: Math.round(navBar.getBoundingClientRect().right),
+  } : null;
+  return result;
+")
+
+(def allIconYCheck :- String "
+  // Collect every visible icon in nav-bar (any depth — including inside
+  // customization-target). Report each by id+ancestry+top-position so a
+  // failure can pinpoint the misaligned widget.
+  const navBar = document.getElementById(\"nav-bar\");
+  if (!navBar) return { error: \"no #nav-bar\" };
+  const icons = navBar.querySelectorAll(\"toolbarbutton .toolbarbutton-icon, toolbarbutton image\");
+  const hits = [];
+  for (const ic of icons) {
+    const r = ic.getBoundingClientRect();
+    if (r.width <= 0 || r.height <= 0) continue;
+    // Walk up to first parent with an id.
+    let p = ic.parentElement;
+    let id = \"\";
+    while (p && p !== navBar) {
+      if (p.id) { id = p.id; break; }
+      p = p.parentElement;
+    }
+    hits.push({ id, top: r.top, bottom: r.bottom, left: r.left });
+  }
+  return { hits };
+")
+
+(def tests :- Any
+  [{:name "nav-bar — gjoa-sidebar-button (if present) is direct child of nav-bar, adjacent to PanelUI-button"
+    :run
+    (fn [mn]
+      (let [r (js/await (.executeScript mn "
+        const navBar = document.getElementById(\"nav-bar\");
+        const pui = document.getElementById(\"PanelUI-button\");
+        if (!pui) throw new Error(\"no PanelUI-button\");
+        const gj = document.getElementById(\"gjoa-sidebar-button\");
+        const puiR = pui.getBoundingClientRect();
+        const gjR = gj ? gj.getBoundingClientRect() : null;
+        return {
+          gjoaBtn: gj ? {
+            parentId: gj.parentElement ? (gj.parentElement.id || gj.parentElement.tagName) : \"\",
+            left: gjR.left, right: gjR.right, top: gjR.top,
+          } : null,
+          panelUI: { left: puiR.left, right: puiR.right, top: puiR.top },
+        };
+      "))]
+        ;; If gjoa-sidebar-button doesn't exist on this profile (no native
+        ;; #sidebar-button to swap), this assertion is moot — skip (the body
+        ;; only runs when gjoaBtn is present; otherwise the test passes).
+        (when (.-gjoaBtn r)
+          (when (not= (.-parentId (.-gjoaBtn r)) "nav-bar")
+            (throw (Error.
+              (str "#gjoa-sidebar-button must be a direct child of #nav-bar, "
+                   "found in: \"" (.-parentId (.-gjoaBtn r)) "\". "
+                   "(layout-reparent in src/drawer/sidebar-button.ts didn't run)"))))
+          ;; Adjacent to hamburger: gjoa-btn.left should be within ~50px of
+          ;; PanelUI's right edge (allowing for normal toolbar gap).
+          (let [gap (- (.-left (.-gjoaBtn r)) (.-right (.-panelUI r)))]
+            (when (or (< gap 0) (> gap 50))
+              (throw (Error.
+                (str "#gjoa-sidebar-button not adjacent to hamburger: "
+                     "PanelUI.right=" (.-right (.-panelUI r)) " gjoaBtn.left=" (.-left (.-gjoaBtn r)) " gap=" gap "px "
+                     "(expected 0-50px)."))))))))}
+
+   {:name "nav-bar — all visible top-row icons share the same vertical CENTER (±2px)"
+    :run
+    (fn [mn]
+      (let [r (js/await (.executeScript mn allIconYCheck))]
+        (when (.-error r)
+          (throw (Error. (.-error r))))
+        ;; need ≥2 icons to compare; otherwise the body is skipped and the
+        ;; test passes (the original early-returned here).
+        (when (and (.-hits r) (>= (.-length (.-hits r)) 2))
+          ;; Use center-Y, not top-Y. Icons can have different intrinsic sizes
+          ;; (hamburger 16px vs back-button 32px) but visually align by CENTER.
+          ;; Reference: PanelUI-button (or PanelUI-menu-button) — the hamburger.
+          (let [center (fn [h] (/ (+ (.-top h) (.-bottom h)) 2))
+                ref (or (.find (.-hits r) (fn [h] (or (= (.-id h) "PanelUI-button") (= (.-id h) "PanelUI-menu-button"))))
+                        (aget (.-hits r) 0))
+                refC (center ref)
+                TOL 2]
+            (doseq [h (.-hits r)]
+              (let [c (center h)]
+                (when (> (.abs Math (- c refC)) TOL)
+                  (throw (Error.
+                    (str "Top-row icon center misaligned: id=\"" (.-id h) "\" center=" (.toFixed c 1) " "
+                         "vs ref=\"" (.-id ref) "\" center=" (.toFixed refC 1) " "
+                         "(diff=" (.toFixed (- c refC) 1) "px, tolerance ±" TOL ").\n"
+                         "All hits: " (.stringify JSON (.-hits r) nil 2))))))))))) }
+
+   {:name "nav-bar — [hamburger][sidebar][ext] left-anchored, [back forward refresh] right-anchored"
+    :run
+    (fn [mn]
+      (let [rects (js/await (.executeScript mn layoutCheck))
+            hamburger (get rects "PanelUI-button")
+            navBar (get rects "__nav-bar__")
+            ext (get rects "unified-extensions-button")
+            back (get rects "back-button")]
+        (when (not hamburger)
+          (throw (Error. (str "PanelUI-button not found. rects: " (.stringify JSON rects nil 2)))))
+        (when (not navBar)
+          (throw (Error. "#nav-bar not found")))
+        (when (not ext)
+          (throw (Error. (str "unified-extensions-button not found. rects: " (.stringify JSON rects nil 2)))))
+        (when (not back)
+          (throw (Error. (str "back-button not found. rects: " (.stringify JSON rects nil 2)))))
+
+        ;; Hamburger at or very near LEFT edge of nav-bar.
+        (when (> (.-left hamburger) (+ (.-left navBar) 80))
+          (throw (Error.
+            (str "Hamburger not left-anchored: nav-bar.left=" (.-left navBar) " hamburger.left=" (.-left hamburger) ".\n"
+                 (.stringify JSON rects nil 2)))))
+
+        ;; Extensions should be in the LEFT group (within ~150px of hamburger).
+        (when (> (.-left ext) (+ (.-right hamburger) 150))
+          (throw (Error.
+            (str "Extensions not left-anchored alongside hamburger: hamburger.right=" (.-right hamburger) " "
+                 "ext.left=" (.-left ext) " (gap=" (- (.-left ext) (.-right hamburger)) "px, expected ≤150).\n"
+                 (.stringify JSON rects nil 2)))))
+
+        ;; Back-button should be RIGHT of extensions (the right group).
+        (when (<= (.-left back) (.-right ext))
+          (throw (Error.
+            (str "back-button must be RIGHT of extensions in expanded layout: "
+                 "ext.right=" (.-right ext) " back.left=" (.-left back) ".\n"
+                 (.stringify JSON rects nil 2)))))
+
+        ;; The right group (back/forward/refresh) must be ACTUALLY anchored
+        ;; to the right of nav-bar. Use the right-most of the three (refresh
+        ;; if present, else forward, else back) and assert its right edge is
+        ;; within 60px of nav-bar's right edge.
+        (let [refresh (get rects "stop-reload-button")
+              forward (get rects "forward-button")
+              rightmost (or refresh forward back)
+              distFromRight (- (.-right navBar) (.-right rightmost))]
+          (when (> distFromRight 60)
+            (throw (Error.
+              (str "Right group not anchored to right edge: rightmost-button.right=" (.-right rightmost) " "
+                   "nav-bar.right=" (.-right navBar) " distance=" distFromRight "px (expected ≤60).\n"
+                   (.stringify JSON rects nil 2))))))
+
+        ;; And there should be a visible gap between extensions and back-button.
+        (let [gap (- (.-left back) (.-right ext))]
+          (when (< gap 40)
+            (throw (Error.
+              (str "Gap between left group (ext) and right group (back) too small: "
+                   "ext.right=" (.-right ext) " back.left=" (.-left back) " gap=" gap "px (expected ≥40).\n"
+                   (.stringify JSON rects nil 2))))))))}])
+
+(js/export-default tests)

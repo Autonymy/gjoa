@@ -1,0 +1,16 @@
+#lang beagle/js
+;; Tiny logger. ANSI dim for INFO, yellow for WARN, red for ERROR.
+;; Prefixed with [prep] so output is identifiable when interleaved with
+;; mach/nix output.
+(ns gjoa.tools.prep.log)
+(define-mode strict)
+(declare-extern [console] Any)
+
+(def PREFIX :- String "[2m[prep][0m")
+
+(js/export (def log :- Any
+  {:info  (fn [msg] (.error console (str PREFIX " " msg)))
+   :warn  (fn [msg] (.error console (str PREFIX " [33mwarn:[0m " msg)))
+   :error (fn [msg] (.error console (str PREFIX " [31merror:[0m " msg)))
+   :step  (fn [msg] (.error console (str PREFIX " [1m→[0m " msg)))
+   :ok    (fn [msg] (.error console (str PREFIX " [32m✓[0m " msg)))}))

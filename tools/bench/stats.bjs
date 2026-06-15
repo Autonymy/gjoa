@@ -1,0 +1,110 @@
+#lang beagle/js
+;; tools/bench/stats.bjs — Statistical utilities for benchmarking.
+(ns gjoa.tools.bench.stats)
+(define-mode strict)
+(declare-extern [Math Number parseFloat] Any)
+
+;; Student's t critical values for 95% CI (two-tailed, alpha=0.05)
+;; Index by degrees of freedom (n-1), for n=3..30
+(def T-CRITICAL-95 :- Any
+  {2 4.303
+   3 3.182
+   4 2.776
+   5 2.571
+   6 2.447
+   7 2.365
+   8 2.306
+   9 2.262
+   10 2.228
+   11 2.201
+   12 2.179
+   13 2.160
+   14 2.145
+   15 2.131
+   16 2.120
+   17 2.110
+   18 2.101
+   19 2.093
+   20 2.086
+   21 2.080
+   22 2.074
+   23 2.069
+   24 2.064
+   25 2.060
+   26 2.056
+   27 2.052
+   28 2.048
+   29 2.045})
+
+(defn tCritical [df :- Number] :- Number
+  (let [v (get T-CRITICAL-95 df)]
+    (cond
+      (some? v) v
+      (< df 2) 12.706 ;; df=1, very wide
+      :else 1.96))) ;; approximate for df > 29
+
+(js/export (defn geometricMean [values :- Any] :- Number
+  (if (= (.-length values) 0)
+    0
+    (let [logSum (.reduce values (fn [acc v] (+ acc (.log Math v))) 0)]
+      (.exp Math (/ logSum (.-length values)))))))
+
+(js/export (defn arithmeticMean [values :- Any] :- Number
+  (if (= (.-length values) 0)
+    0
+    (/ (.reduce values (fn [a b] (+ a b)) 0) (.-length values)))))
+
+(js/export (defn standardDeviation [values :- Any] :- Number
+  (if (< (.-length values) 2)
+    0
+    (let [mean (arithmeticMean values)
+          squaredDiffs (.map values (fn [v] (.pow Math (- v mean) 2)))
+          variance (/ (.reduce squaredDiffs (fn [a b] (+ a b)) 0) (- (.-length values) 1))]
+      (.sqrt Math variance)))))
+
+(js/export (defn confidenceInterval95 [values :- Any] :- Any
+  (let [n (.-length values)
+        mean (arithmeticMean values)]
+    (if (< n 2)
+      {:mean mean :ci 0 :low mean :high mean}
+      (let [sd (standardDeviation values)
+            df (- n 1)
+            t (tCritical df)
+            se (/ sd (.sqrt Math n))
+            ci (* t se)]
+        {:mean mean :ci ci :low (- mean ci) :high (+ mean ci)})))))
+
+(js/export (defn median [values :- Any] :- Number
+  (if (= (.-length values) 0)
+    0
+    (let [sorted (.sort [...values] (fn [a b] (- a b)))
+          mid (.floor Math (/ (.-length sorted) 2))]
+      (if (= (mod (.-length sorted) 2) 0)
+        (/ (+ (get sorted (- mid 1)) (get sorted mid)) 2)
+        (get sorted mid))))))
+
+(js/export (defn formatResult [label :- String gjoa :- Any firefox :- Any unit :- String] :- String
+  (let [gjoaCI (confidenceInterval95 gjoa)
+        firefoxCI (confidenceInterval95 firefox)
+        lines []]
+    (.push lines (str "  " label))
+    (.push lines
+      (str "    Gjoa:    " (.toFixed (.-mean gjoaCI) 1) " " unit "  "
+           "[" (.toFixed (.-low gjoaCI) 1) " .. " (.toFixed (.-high gjoaCI) 1) "] "
+           "(95% CI, n=" (.-length gjoa) ")"))
+    (.push lines
+      (str "    Firefox: " (.toFixed (.-mean firefoxCI) 1) " " unit "  "
+           "[" (.toFixed (.-low firefoxCI) 1) " .. " (.toFixed (.-high firefoxCI) 1) "] "
+           "(95% CI, n=" (.-length firefox) ")"))
+    ;; Guard against division by zero / empty samples (BENCH-6).
+    (if (or (< (.-length gjoa) 1) (< (.-length firefox) 1)
+            (= (.-mean gjoaCI) 0) (= (.-mean firefoxCI) 0))
+      (do
+        (.push lines "    Ratio:   n/a (insufficient samples)")
+        (.join lines "\n"))
+      (let [speedup (/ (.-mean firefoxCI) (.-mean gjoaCI))
+            pct (.toFixed (* (- speedup 1) 100) 1)
+            dir (if (>= speedup 1) "faster" "slower")
+            absPct (.toFixed (.abs Math (parseFloat pct)) 1)]
+        (.push lines (str "    Ratio:   " (.toFixed speedup 3) "x — Gjoa is " absPct "% " dir))
+        (.join lines "\n"))))))

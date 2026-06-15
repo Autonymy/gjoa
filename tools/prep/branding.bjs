@@ -1,0 +1,220 @@
+#lang beagle/js
+;; Generate engine/browser/branding/<binaryName>/ from mozilla's "unofficial"
+;; branding template: string-substitute brand text into recognized patterns,
+;; overlay gjoa icons + content, append gjoa default prefs, and assert no
+;; zen-browser.app substring leaked through.
+(ns gjoa.tools.prep.branding
+  (:require [fs :refer [existsSync readdirSync statSync]]
+            [path :refer [dirname extname join relative]]
+            [fs/promises :refer [mkdir readFile rm writeFile]]
+            [gjoa.tools.prep.config :refer [loadConfig]]
+            [gjoa.tools.prep.paths :refer [BRANDING-SRC
+                                           ENGINE-BRANDING-DIR
+                                           ENGINE-UNOFFICIAL-BRANDING
+                                           SRC-DIR]]
+            [gjoa.tools.prep.log :refer [log]]))
+(define-mode strict)
+(declare-extern [Bun] Any)
+
+;; Files we string-substitute. Anything else (binary icons, archive formats,
+;; platform-specific blobs) is copied as-is from the unofficial template.
+(def TEXT-EXTS :- Any
+  (Set. [".js" ".dtd" ".ftl" ".properties" ".sh" ".nsi"
+         ".xml" ".css" ".json" ".mn" ".svg" ".html"]))
+(def TEXT-FILENAMES :- Any
+  (Set. ["moz.build" "configure.sh" "branding.nsi" "jar.mn" "jar.inc.mn"]))
+
+(defn is-text-file [path :- String] :- Any
+  (let [base (or (.pop (.split path "/")) "")]
+    (if (.has TEXT-FILENAMES base)
+      true
+      (.has TEXT-EXTS (.toLowerCase (extname path))))))
+
+;; Substitution map. Each pattern is INTENTIONALLY narrow — never substitute
+;; bare "Mozilla" or "Firefox" as that breaks MPL headers ("Mozilla Public
+;; License"), URLs (mozilla.org/MPL/2.0), file paths (firefox-branding.js),
+;; and generic comments. Only swap brand strings inside specific structured
+;; patterns we recognize.
+(defn substitutions [cfg :- Any] :- Any
+  (let [b (.-branding cfg)
+        u (.-urls cfg)]
+    [
+     ;; ---- brand.ftl entries (Fluent localization format) ----
+     [(RegExp. "^-brand-shorter-name\\s*=.*$" "m") (str "-brand-shorter-name = " (.-shorterName b))]
+     [(RegExp. "^-brand-short-name\\s*=.*$" "m") (str "-brand-short-name = " (.-shortName b))]
+     [(RegExp. "^-brand-shortcut-name\\s*=.*$" "m") (str "-brand-shortcut-name = " (.-shortName b))]
+     [(RegExp. "^-brand-full-name\\s*=.*$" "m") (str "-brand-full-name = " (.-fullName b))]
+     [(RegExp. "^-brand-product-name\\s*=.*$" "m") (str "-brand-product-name = " (.-productName b))]
+     [(RegExp. "^-vendor-short-name\\s*=.*$" "m") (str "-vendor-short-name = " (.-vendorName b))]
+
+     ;; ---- brand.dtd entries (XML entity format) ----
+     [(RegExp. "<!ENTITY brandShorterName \".*?\">" "g") (str "<!ENTITY brandShorterName \"" (.-shorterName b) "\">")]
+     [(RegExp. "<!ENTITY brandShortName \".*?\">" "g") (str "<!ENTITY brandShortName \"" (.-shortName b) "\">")]
+     [(RegExp. "<!ENTITY brandShortcutName \".*?\">" "g") (str "<!ENTITY brandShortcutName \"" (.-shortName b) "\">")]
+     [(RegExp. "<!ENTITY brandFullName \".*?\">" "g") (str "<!ENTITY brandFullName \"" (.-fullName b) "\">")]
+     [(RegExp. "<!ENTITY brandProductName \".*?\">" "g") (str "<!ENTITY brandProductName \"" (.-productName b) "\">")]
+     [(RegExp. "<!ENTITY vendorShortName \".*?\">" "g") (str "<!ENTITY vendorShortName \"" (.-vendorName b) "\">")]
+
+     ;; ---- brand.properties entries (key=value format) ----
+     [(RegExp. "^brandShorterName\\s*=.*$" "m") (str "brandShorterName=" (.-shorterName b))]
+     [(RegExp. "^brandShortName\\s*=.*$" "m") (str "brandShortName=" (.-shortName b))]
+     [(RegExp. "^brandShortcutName\\s*=.*$" "m") (str "brandShortcutName=" (.-shortName b))]
+     [(RegExp. "^brandFullName\\s*=.*$" "m") (str "brandFullName=" (.-fullName b))]
+     [(RegExp. "^brandProductName\\s*=.*$" "m") (str "brandProductName=" (.-productName b))]
+     [(RegExp. "^vendorShortName\\s*=.*$" "m") (str "vendorShortName=" (.-vendorName b))]
+
+     ;; ---- firefox-branding.js prefs ----
+     ;; Welcome/whatsnew URLs (the ones that opened "Welcome to Zen!" pre-fix).
+     [(RegExp. "pref\\(\"startup\\.homepage_override_url\",\\s*\".*?\"\\);")
+      (str "pref(\"startup.homepage_override_url\", \"" (.-homepageOverride u) "\");")]
+     [(RegExp. "pref\\(\"startup\\.homepage_welcome_url\",\\s*\".*?\"\\);")
+      (str "pref(\"startup.homepage_welcome_url\", \"" (.-welcome u) "\");")]
+     [(RegExp. "pref\\(\"startup\\.homepage_welcome_url\\.additional\",\\s*\".*?\"\\);")
+      (str "pref(\"startup.homepage_welcome_url.additional\", \"" (.-welcomeAdditional u) "\");")]
+     ;; Update + release-notes URLs. Catches both nightly.mozilla.org and
+     ;; www.mozilla.org/firefox/* upstream templates.
+     [(RegExp. "pref\\(\"app\\.update\\.url\\.manual\",\\s*\".*?\"\\);")
+      (str "pref(\"app.update.url.manual\", \"" (.-updateManual u) "\");")]
+     [(RegExp. "pref\\(\"app\\.update\\.url\\.details\",\\s*\".*?\"\\);")
+      (str "pref(\"app.update.url.details\", \"" (.-updateDetails u) "\");")]
+     [(RegExp. "pref\\(\"app\\.releaseNotesURL\",\\s*\".*?\"\\);")
+      (str "pref(\"app.releaseNotesURL\", \"" (.-releaseNotes u) "\");")]
+     [(RegExp. "pref\\(\"app\\.releaseNotesURL\\.aboutDialog\",\\s*\".*?\"\\);")
+      (str "pref(\"app.releaseNotesURL.aboutDialog\", \"" (.-releaseNotesAboutDialog u) "\");")]
+     [(RegExp. "pref\\(\"app\\.releaseNotesURL\\.prompt\",\\s*\".*?\"\\);")
+      (str "pref(\"app.releaseNotesURL.prompt\", \"" (.-releaseNotesPrompt u) "\");")]
+
+     ;; ---- configure.sh ----
+     [(RegExp. "^MOZ_APP_DISPLAYNAME=.*$" "m")
+      (str "MOZ_APP_DISPLAYNAME=" (.-displayName b))]
+
+     ;; ---- branding.nsi (Windows NSIS installer defines) ----
+     [(RegExp. "^!define BrandShortName \".*?\"$" "m")
+      (str "!define BrandShortName \"" (.-shortName b) "\"")]
+     [(RegExp. "^!define BrandFullName \".*?\"$" "m")
+      (str "!define BrandFullName \"" (.-fullName b) "\"")]
+     [(RegExp. "^!define BrandFullNameInternal \".*?\"$" "m")
+      (str "!define BrandFullNameInternal \"" (.-fullName b) "\"")]
+     [(RegExp. "^!define CompanyName \".*?\"$" "m")
+      (str "!define CompanyName \"" (.-vendorName b) "\"")]]))
+
+(defn apply-substitutions [text :- String cfg :- Any] :- String
+  (let [out (atom text)]
+    (doseq [pair (substitutions cfg)]
+      (let [re (nth pair 0)
+            replacement (nth pair 1)]
+        (reset! out (.replace @out re replacement))))
+    @out))
+
+(defn walk-files [root :- String] :- Any
+  (let [out []]
+    (letfn [(recurse [dir :- String] :- Any
+              (doseq [name (readdirSync dir)]
+                (let [path (join dir name)]
+                  (if (.isDirectory (statSync path))
+                    (recurse path)
+                    (.push out path)))))]
+      (recurse root))
+    out))
+
+;; Copy mozilla's unofficial branding tree to engine/browser/branding/<binaryName>/,
+;; applying string substitutions to text files and overwriting our PNG icons.
+(js/export (defn branding [] :- Any
+  (let [cfg (loadConfig)
+        target (join ENGINE-BRANDING-DIR (.-binaryName cfg))]
+
+    (when (not (existsSync ENGINE-UNOFFICIAL-BRANDING))
+      (throw (Error. (str "unofficial branding not found at " ENGINE-UNOFFICIAL-BRANDING " — "
+                          "did you run `bun run download` first?"))))
+
+    (.step log (str "generating branding tree at engine/browser/branding/" (.-binaryName cfg) "/"))
+    (when (existsSync target) (js/await (rm target {:recursive true})))
+    (js/await (mkdir target {:recursive true}))
+
+    ;; 1. Walk mozilla's unofficial tree and copy each file, with substitution
+    ;;    on text files.
+    (let [all-files (walk-files ENGINE-UNOFFICIAL-BRANDING)
+          text-count (atom 0)
+          binary-count (atom 0)]
+      (doseq [src all-files]
+        (let [rel (relative ENGINE-UNOFFICIAL-BRANDING src)
+              dst (join target rel)]
+          (js/await (mkdir (dirname dst) {:recursive true}))
+          (if (is-text-file src)
+            (let [text (js/await (readFile src "utf8"))]
+              (js/await (writeFile dst (apply-substitutions text cfg)))
+              (reset! text-count (+ @text-count 1)))
+            ;; Binary copy — preserves icon bytes etc.
+            (do
+              (.spawnSync Bun ["cp" src dst])
+              (reset! binary-count (+ @binary-count 1))))))
+      (.info log (str "copied " @text-count " text + " @binary-count " binary files from unofficial template")))
+
+    ;; 1b. Append gjoa's default prefs onto the branding pref file. firefox-branding.js
+    ;;     is the ONE default-pref file this repo can ship without patching Mozilla
+    ;;     source: it's already declared in branding-common.mozbuild via
+    ;;     JS_PREFERENCE_FILES and enumerated in package-manifest.in, so it lands in
+    ;;     omni.ja under defaults/pref/ and is read onto the default branch at startup.
+    ;;     (The same source files also overlay to engine/defaults/pref/ via the generic
+    ;;     overlay, but THAT path has no moz.build and is never packaged — this append
+    ;;     is what actually makes the prefs take effect. See BUILD-LEDGER: unreferenced
+    ;;     files in the objdir are silently dropped by mozpack.)
+    ;;     Appended AFTER substitutions so pref values pass through verbatim.
+    (let [branding-pref-file (join target "pref" "firefox-branding.js")]
+      (when (not (existsSync branding-pref-file))
+        (throw (Error. (str "branding pref file missing at " branding-pref-file " — Mozilla's unofficial "
+                            "template no longer ships pref/firefox-branding.js, so gjoa default prefs "
+                            "would not be packaged. Register a pref file explicitly before relying on this."))))
+      (let [gjoa-pref-files ["perf-prefs.js" "dark-mode-prefs.js"]
+            pref-blocks (atom "\n\n// ===== gjoa default prefs (appended by tools/prep/branding.ts) =====\n")]
+        (doseq [name gjoa-pref-files]
+          (let [src (join SRC-DIR "defaults" "pref" name)]
+            (when (not (existsSync src)) (throw (Error. (str "gjoa pref source missing: " src))))
+            (let [contents (js/await (readFile src "utf8"))]
+              (reset! pref-blocks (str @pref-blocks "\n// ---- " name " ----\n" (.trimEnd contents) "\n")))))
+        (let [existing (js/await (readFile branding-pref-file "utf8"))]
+          (js/await (writeFile branding-pref-file (str existing @pref-blocks))))
+        (.info log (str "appended " (.-length gjoa-pref-files) " gjoa pref files to branding/" (.-binaryName cfg) "/pref/firefox-branding.js"))))
+
+    ;; 2. Overlay our own logo PNGs from configs/branding/gjoa/. Mozilla's
+    ;;    convention: defaultNN.png at the branding root for sizes the desktop
+    ;;    integration needs (16/22/24/32/48/64/128/256/512). We expect logoNN.png
+    ;;    in our source dir at matching sizes.
+    (let [sizes [16 22 24 32 48 64 128 256 512]
+          icon-count (atom 0)]
+      (doseq [size sizes]
+        (let [src (join BRANDING-SRC (str "logo" size ".png"))
+              dst (join target (str "default" size ".png"))]
+          (if (existsSync src)
+            (do
+              (.spawnSync Bun ["cp" src dst])
+              (reset! icon-count (+ @icon-count 1)))
+            (.warn log (str "missing source icon: configs/branding/" (.-binaryName cfg) "/logo" size ".png")))))
+      (.info log (str "installed " @icon-count " desktop icons")))
+
+    ;; 3. Overlay our content/ directory wholesale onto engine/.../gjoa/content/.
+    ;;    Replaces the Firefox-logo PNGs/SVGs that copied through from the
+    ;;    unofficial template (about-logo*, about-wordmark, etc.) with ours.
+    (let [our-content (join BRANDING-SRC "content")
+          target-content (join target "content")]
+      (when (existsSync our-content)
+        (let [content-count (atom 0)]
+          (doseq [name (readdirSync our-content)]
+            (let [src (join our-content name)]
+              (when (.isFile (statSync src))
+                (let [dst (join target-content name)]
+                  (.spawnSync Bun ["cp" src dst])
+                  (reset! content-count (+ @content-count 1))))))
+          (.info log (str "overlaid " @content-count " content/ files (about-logo, wordmarks)")))))
+
+    ;; 4. Sanity check: assert no zen-browser.app substring leaked through. If
+    ;;    mozilla ships a future template that references zen, our regex won't
+    ;;    catch it — fail loud rather than silently shipping it.
+    (let [written (walk-files target)]
+      (doseq [f written]
+        (when (is-text-file f)
+          (let [text (js/await (readFile f "utf8"))]
+            (when (.includes text "zen-browser.app")
+              (throw (Error. (str "zen-browser.app leaked into " f " — extend substitutions in branding.bjs"))))))))
+
+    (.ok log "branding ready"))))

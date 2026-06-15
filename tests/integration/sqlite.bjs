@@ -1,0 +1,60 @@
+#lang beagle/js
+;; SQLite probe — confirms what FTS extensions and version the bundled
+;; SQLite ships with. Pure diagnostic, doesn't assert anything; the
+;; chrome-script result is dumped to test:log so you can read it in
+;; the runner output.
+(ns gjoa.tests.integration.sqlite)
+(define-mode strict)
+
+;; IntegrationTest is a type-only import in the .ts source; types live in
+;; .ts and have no runtime form in beagle, so the test objects are plain
+;; maps typed Any.
+(declare-extern [console JSON] Any)
+
+;; The chrome-script run inside the browser by executeAsyncScript. It has
+;; no `${}` interpolation, so it's a plain string literal.
+(def PROBE-SCRIPT :- String
+  "
+        const cb = arguments[arguments.length - 1];
+        (async () => {
+          const { Sqlite } = ChromeUtils.importESModule(\"resource://gre/modules/Sqlite.sys.mjs\");
+          const conn = await Sqlite.openConnection({ path: \":memory:\" });
+          let version = \"?\";
+          try {
+            const rows = await conn.execute(\"SELECT sqlite_version() AS v\");
+            version = rows[0]?.getResultByName(\"v\") ?? \"?\";
+          } catch (e) {
+            version = \"error: \" + e.message;
+          }
+          let fts3 = \"?\";
+          try {
+            await conn.execute(\"CREATE VIRTUAL TABLE t3 USING fts3(x)\");
+            fts3 = \"ok\";
+          } catch (e) {
+            fts3 = e.message;
+          }
+          let fts5 = \"?\";
+          try {
+            await conn.execute(\"CREATE VIRTUAL TABLE t5 USING fts5(x)\");
+            fts5 = \"ok\";
+          } catch (e) {
+            fts5 = e.message;
+          }
+          try { await conn.close(); } catch {}
+          cb({ version, fts3, fts5 });
+        })().catch(e => cb({ version: \"?\", fts3: \"?\", fts5: \"ERROR: \" + (e.message || e) }));
+      ")
+
+;; NOTE: the .ts source did `export default tests`. Beagle has no
+;; `export default` form (parse.rkt: js/export only prefixes `export `;
+;; `export const default = …` is invalid JS, and js/quote's `export`
+;; statement supports only function/class). Exported as a named binding
+;; `tests`; the runner's `mod.default` lookup needs a default-export shim
+;; or a switch to the named export. See issues.
+(js/export (def tests :- Any
+  [{:name "sqlite: report version + FTS3/FTS5 availability"
+    :run  (fn [mn]
+            (let [probe (js/await (.executeAsyncScript mn PROBE-SCRIPT))]
+              (.error console "[sqlite probe]" (.stringify JSON probe nil 2))))}]))
+
+(js/export-default tests)

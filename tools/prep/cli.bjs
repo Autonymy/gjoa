@@ -1,0 +1,115 @@
+#lang beagle/js
+(ns gjoa.tools.prep.cli
+  (:require [fs :refer [existsSync]]
+            [fs/promises :refer [rm]]
+            [gjoa.tools.prep.download :refer [download]]
+            [gjoa.tools.prep.import :refer [importSources]]
+            [gjoa.tools.prep.paths :refer [ENGINE-DIR]]
+            [gjoa.tools.prep.log :refer [log]]
+            [gjoa.tools.security.check :refer [check]]))
+(define-mode strict)
+(declare-extern [process console] Any)
+
+(def USAGE :- String
+  (.trim "
+gjoa prep — Firefox source preparation pipeline
+
+Commands:
+  download    Fetch + verify + extract mozilla-central into engine/
+  import      Apply src/gjoa/ overlays, patches/, and branding to engine/
+  clean       Remove engine/ (forces fresh download next time)
+  help        Show this message
+
+Cold start: `bun run init` (= download + import).
+After editing src/gjoa/ or gjoa.json: `bun run import`.
+"))
+
+;; Print a loud, structured security banner above any build phase. We
+;; deliberately make this hard to ignore — it's the highest-leverage
+;; intervention preventing "I'll update later" drift. The banner is
+;; fail-OPEN if the network probe can't run (e.g. offline) so it
+;; never blocks legitimate work; it does ALWAYS produce output.
+(defn printSecurityBanner [] :- Any
+  (let [r :- Any (try
+                   (js/await (check))
+                   (catch Error e
+                     (let [warn (.-warn log)]
+                       (warn (str "[security] check threw: " (.-message e) " — proceeding without status")))
+                     nil))]
+    (cond
+      (not r)
+      nil
+
+      (= (.-status r) "OK")
+      (let [ok (.-ok log)]
+        (ok (str "[security] " (.-summary r))))
+
+      :else
+      (let [bar (.repeat "═" 72)
+            header (cond
+                     (= (.-status r) "CRITICAL") "🛑 SECURITY: CRITICAL"
+                     (= (.-status r) "STALE")    "⚠  SECURITY: STALE"
+                     :else                        "?  SECURITY: UNKNOWN")]
+        (.error console "")
+        (.error console (str "[33m" bar "[0m"))
+        (.error console (str "[1;33m" header "[0m  — " (.-summary r)))
+        (.error console (str "[33m" bar "[0m"))
+        (.error console (.-detail r))
+        (.error console (str "[33m" bar "[0m"))
+        (cond
+          (= (.-status r) "CRITICAL")
+          (do
+            (.error console (str "[1;31mAction: bump and rebuild within 24 hours. Run:  bun run security:bump[0m"))
+            (.error console (str "[33m" bar "[0m")))
+
+          (= (.-status r) "STALE")
+          (do
+            (.error console (str "Action: bump within the SLA in docs/security-policy.md. Run:  bun run security:bump"))
+            (.error console (str "[33m" bar "[0m"))))
+        (.error console "")))))
+
+(defn main [] :- Any
+  (let [cmd (aget (.-argv process) 2)]
+    (cond
+      (= cmd "download")
+      (do
+        (js/await (printSecurityBanner))
+        (js/await (download)))
+
+      (= cmd "import")
+      (do
+        (when (not (existsSync ENGINE-DIR))
+          (let [err (.-error log)]
+            (err "engine/ does not exist — run `bun run download` first"))
+          (.exit process 1))
+        (js/await (printSecurityBanner))
+        (js/await (importSources)))
+
+      (= cmd "clean")
+      (if (existsSync ENGINE-DIR)
+        (let [step (.-step log)
+              ok (.-ok log)]
+          (step "removing engine/")
+          (js/await (rm ENGINE-DIR {:recursive true}))
+          (ok "engine/ removed"))
+        (let [info (.-info log)]
+          (info "engine/ already absent")))
+
+      (or (= cmd "help") (= cmd "--help") (= cmd "-h"))
+      (.log console USAGE)
+
+      :else
+      (do
+        (.error console USAGE)
+        (when cmd
+          (let [err (.-error log)]
+            (err (str "unknown command: " cmd))))
+        (.exit process (if cmd 1 0))))))
+
+(-> (main)
+    (.catch (fn [err]
+              (let [err-fn (.-error log)]
+                (err-fn (or (.-message err) (String err))))
+              (when (.-DEBUG (.-env process))
+                (.error console (.-stack err)))
+              (.exit process 1))))

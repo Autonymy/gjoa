@@ -1,0 +1,154 @@
+#lang beagle/js
+;; Patch-header helper. Implements the gjoa convention:
+;;
+;;   Every patches/*.patch MUST begin with a structured metadata block:
+;;     # gjoa-patch:
+;;     #   baseline-firefox: <version>
+;;     #   touches:
+;;     #     - <path/from/mozilla/root>
+;;     #     - ...
+;;     #
+;;   ...followed by the freeform description, then the unified diff.
+;;
+;; Why: on Firefox upgrades, knowing the EXACT upstream version a patch
+;; was last calibrated against turns merge-conflict resolution from
+;; archaeology into a 3-way merge: pull `firefox-<baseline>.source.tar.xz`,
+;; diff its <touches> against the new version, apply our delta on top.
+;;
+;; Usage:
+;;   bun tools/prep/patch-header.ts check         # warn on missing/stale headers
+;;   bun tools/prep/patch-header.ts retrofit      # add header to any patch missing it
+;;                                                  (uses gjoa.json.firefox.version
+;;                                                   as the baseline — only run after
+;;                                                   regenerating a patch against
+;;                                                   the current pin)
+(ns gjoa.tools.prep.patch-header
+  (:require [fs/promises :refer [readdir readFile writeFile]]
+            [path :refer [join]]
+            [gjoa.tools.prep.paths :refer [PATCHES-DIR REPO-ROOT]]))
+(define-mode strict)
+(declare-extern [process console JSON] Any)
+
+(def HEADER-TAG :- String "# gjoa-patch:")
+
+;; PatchInfo shape: {:filename :text :hasHeader :declaredBaseline :touches}
+
+;; Extract diff-touched paths from a patch body. Looks for
+;; `diff --git a/<path> b/<path>` lines (git-format) and falls back to
+;; `--- a/<path>` (plain unified diff).
+(defn extractTouches [text :- String] :- Any
+  (let [out (Set.)]
+    (doseq [m (.matchAll text (RegExp. "^diff --git a/(\\S+)\\s+b/\\S+$" "gm"))]
+      (.add out (aget m 1)))
+    (when (= (.-size out) 0)
+      (doseq [m (.matchAll text (RegExp. "^---\\s+a/(\\S+)$" "gm"))]
+        (.add out (aget m 1))))
+    (Array.from out)))
+
+(defn parseHeader [text :- String] :- Any
+  (if (not (.startsWith text HEADER-TAG))
+    ;; Header may be preceded by nothing, but must be at the very top of the file.
+    {:hasHeader false :declaredBaseline nil}
+    (let [m (.exec (RegExp. "^#\\s*baseline-firefox:\\s*(\\S+)\\s*$" "m") text)]
+      {:hasHeader true :declaredBaseline (if m (aget m 1) nil)})))
+
+(defn formatHeader [baseline :- String touches :- Any] :- String
+  (let [lines (.concat [HEADER-TAG
+                        (str "#   baseline-firefox: " baseline)
+                        "#   touches:"]
+                       (.map touches (fn [p] (str "#     - " p)))
+                       ["#" ""])]
+    (.join lines "\n")))
+
+(defn loadPatch [filename :- String] :- Any
+  (let [text (js/await (readFile (join PATCHES-DIR filename) "utf8"))
+        parsed (parseHeader text)
+        touches (extractTouches text)]
+    {:filename filename
+     :text text
+     :hasHeader (.-hasHeader parsed)
+     :declaredBaseline (.-declaredBaseline parsed)
+     :touches touches}))
+
+(defn listPatches [] :- Any
+  (let [entries (js/await (readdir PATCHES-DIR))]
+    (.sort (.filter entries (fn [n] (.endsWith n ".patch"))))))
+
+(defn loadCurrentBaseline [] :- String
+  (let [raw (js/await (readFile (join REPO-ROOT "gjoa.json") "utf8"))
+        cfg (.parse JSON raw)]
+    (.-version (.-firefox cfg))))
+
+;; Public verb: warn on any patch without a header or with a baseline
+;; that differs from gjoa.json.firefox.version. Returns the count of
+;; problems found (0 = clean). Non-fatal: prints to stderr; caller
+;; decides whether to bail.
+(js/export (defn checkAll [] :- Any
+  (let [current (js/await (loadCurrentBaseline))
+        names (js/await (listPatches))]
+    (loop [i 0 problems 0]
+      (if (>= i (.-length names))
+        problems
+        (let [n (aget names i)
+              p (js/await (loadPatch n))]
+          (cond
+            (not (.-hasHeader p))
+            (do
+              (.error console (str "[patch-header] " n ": MISSING header — run `bun tools/prep/patch-header.ts retrofit` after regenerating against " current))
+              (recur (+ i 1) (+ problems 1)))
+
+            (not (.-declaredBaseline p))
+            (do
+              (.error console (str "[patch-header] " n ": header present but `baseline-firefox` not parseable"))
+              (recur (+ i 1) (+ problems 1)))
+
+            (not= (.-declaredBaseline p) current)
+            (do
+              ;; Not necessarily a problem — patches accumulate across versions.
+              ;; Flag at INFO level so the user sees the drift.
+              (.error console (str "[patch-header] " n ": baseline " (.-declaredBaseline p) " ≠ gjoa.json " current " (informational; regenerate when this patch fails to apply)"))
+              (recur (+ i 1) problems))
+
+            :else
+            (recur (+ i 1) problems))))))))
+
+;; Public verb: add header to patches that are missing one. Uses the
+;; current gjoa.json firefox.version as the baseline label. Only run
+;; AFTER you've just regenerated the patch against the current source,
+;; otherwise the baseline label will lie.
+(js/export (defn retrofitAll [] :- Any
+  (let [current (js/await (loadCurrentBaseline))
+        names (js/await (listPatches))]
+    (loop [i 0 changed 0]
+      (if (>= i (.-length names))
+        (do
+          (.error console (str "[patch-header] done. " changed " patch(es) updated."))
+          js/undefined)
+        (let [n (aget names i)
+              p (js/await (loadPatch n))]
+          (if (.-hasHeader p)
+            (recur (+ i 1) changed)
+            (let [header (formatHeader current (.-touches p))
+                  wrote (js/await (writeFile (join PATCHES-DIR n) (str header (.-text p)) "utf8"))
+                  logged (.error console (str "[patch-header] " n ": added header (baseline=" current ", touches=" (.-length (.-touches p)) ")"))]
+              (recur (+ i 1) (+ changed 1))))))))))
+
+;; CLI entrypoint. The .ts used `import.meta.main`; under bun the compiled
+;; module is invoked directly, so dispatch on process.argv.
+(defn main [] :- Any
+  (let [cmd (aget (.-argv process) 2)]
+    (cond
+      (= cmd "check")
+      (let [problems (js/await (checkAll))]
+        (.exit process (if (= problems 0) 0 2)))
+
+      (= cmd "retrofit")
+      (js/await (retrofitAll))
+
+      :else
+      (do
+        (.error console "Usage: bun tools/prep/patch-header.ts <check|retrofit>")
+        (.exit process 1)))))
+
+;; CLI dispatch runs only when invoked directly, never on import.
+(when (.-main (js/import-meta)) (main))

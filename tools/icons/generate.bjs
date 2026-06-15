@@ -1,0 +1,101 @@
+#lang beagle/js
+;; Render assets/gjoa.svg → all the PNG sizes Firefox/gjoa needs.
+;; Outputs go into configs/branding/gjoa/ and configs/branding/gjoa/content/.
+;; Run after editing assets/gjoa.svg, then `bun run import` to push to engine/.
+(ns gjoa.tools.icons.generate
+  (:require [fs :refer [existsSync mkdirSync]]
+            [path :refer [join]]
+            [fs/promises :refer [copyFile]]
+            [gjoa.tools.prep.paths :refer [BRANDING-SRC REPO-ROOT]]
+            [gjoa.tools.prep.log :refer [log]]))
+(define-mode strict)
+(declare-extern [process Bun Promise Error Response String console] Any)
+
+(def SOURCE-SVG :- String (join REPO-ROOT "assets" "gjoa.svg"))
+(def CONTENT-DIR :- String (join BRANDING-SRC "content"))
+
+;; Desktop integration sizes (default<N>.png in the install tree). Mozilla
+;; expects these exact sizes — see how unofficial branding ships them.
+(def DESKTOP-SIZES :- Any [16 22 24 32 48 64 128 256 512])
+
+;; Larger logo sizes Gjoa carries beyond what unofficial branding does.
+;; Used by macOS bundles + as upscale source for hi-DPI surfaces.
+(def EXTRA-LOGO-SIZES :- Any [1024])
+
+;; about:* page logos (in-omni.ja, used for new-tab favicon, about:home, etc).
+;; Need 1x and 2x for retina.
+(def ABOUT-LOGO-SIZE :- Any 192)
+(def ABOUT-LOGO-2X-SIZE :- Any 384)
+
+;; Run an argv with Bun.spawn, draining pipes, and throw on non-zero exit —
+;; mirrors the old `$`…`.quiet()` behavior (silent on success, throws on fail).
+(defn run-quiet [argv :- Any] :- Any
+  (let [proc (.spawn Bun {:cmd argv :stdout "pipe" :stderr "pipe"})
+        results (js/await (.all Promise [(.text (Response. (.-stdout proc)))
+                                         (.text (Response. (.-stderr proc)))
+                                         (.-exited proc)]))
+        stderr (aget results 1)
+        code (aget results 2)]
+    (if (not= code 0)
+      (throw (Error. (str "command failed: " (.join argv " ") "\n" stderr)))
+      nil)))
+
+(defn ensureRsvg [] :- Any
+  (run-quiet ["rsvg-convert" "--version"]))
+
+(defn renderPng [size :- Any dest :- String] :- Any
+  (run-quiet ["rsvg-convert" "-w" (String size) "-h" (String size) SOURCE-SVG "-o" dest]))
+
+(defn main [] :- Any
+  (if (not (existsSync SOURCE-SVG))
+    (throw (Error. (str "source SVG not found at " SOURCE-SVG)))
+    nil)
+  (js/await (ensureRsvg))
+  (mkdirSync BRANDING-SRC {:recursive true})
+  (mkdirSync CONTENT-DIR {:recursive true})
+
+  (.step log "rendering desktop integration icons (logo<N>.png)")
+  ;; Await each render in sequence (a doseq body would fire them concurrently).
+  (let [sizes (.concat DESKTOP-SIZES EXTRA-LOGO-SIZES)
+        n (.-length sizes)]
+    (js/await
+      (loop [i 0]
+        (if (< i n)
+          (let [size (aget sizes i)
+                dest (join BRANDING-SRC (str "logo" size ".png"))
+                _ (js/await (renderPng size dest))]
+            (recur (+ i 1)))
+          nil))))
+  ;; logo.png + logo-mac.png are aliases for the largest sizes.
+  (js/await (copyFile (join BRANDING-SRC "logo512.png") (join BRANDING-SRC "logo.png")))
+  (js/await (copyFile (join BRANDING-SRC "logo1024.png") (join BRANDING-SRC "logo-mac.png")))
+  (.ok log (str "wrote " (+ (.-length DESKTOP-SIZES) (.-length EXTRA-LOGO-SIZES) 2) " desktop icons"))
+
+  (.step log "rendering about-page logos (in-omni.ja)")
+  (js/await (renderPng ABOUT-LOGO-SIZE (join CONTENT-DIR "about-logo.png")))
+  (js/await (renderPng ABOUT-LOGO-2X-SIZE (join CONTENT-DIR "about-logo@2x.png")))
+  ;; Private-browsing variant — same icon for now (could add a tinted version later).
+  (js/await (renderPng ABOUT-LOGO-SIZE (join CONTENT-DIR "about-logo-private.png")))
+  (js/await (renderPng ABOUT-LOGO-2X-SIZE (join CONTENT-DIR "about-logo-private@2x.png")))
+  (.ok log "wrote 4 about-page icons")
+
+  (.step log "copying source SVG to about-logo + wordmark slots")
+  ;; about-logo SVGs render directly in about: pages for theme-aware tinting.
+  (js/await (copyFile SOURCE-SVG (join CONTENT-DIR "about-logo.svg")))
+  (js/await (copyFile SOURCE-SVG (join CONTENT-DIR "about-logo-private.svg")))
+  ;; wordmark slots — for now ship the icon SVG; we can replace with a real
+  ;; text-wordmark when the brand identity is set.
+  (js/await (copyFile SOURCE-SVG (join CONTENT-DIR "about-wordmark.svg")))
+  (js/await (copyFile SOURCE-SVG (join CONTENT-DIR "firefox-wordmark.svg")))
+  (.ok log "wrote 4 SVGs")
+
+  (.ok log "done — run `bun run import` to push these into engine/"))
+
+;; Entry point: run main, surfacing errors and exiting non-zero on failure.
+(.catch (main)
+  (fn [err]
+    (.error log (or (.-message err) (String err)))
+    (if (.-DEBUG (.-env process))
+      (.error console (.-stack err))
+      nil)
+    (.exit process 1)))

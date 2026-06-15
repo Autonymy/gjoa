@@ -1,0 +1,276 @@
+#lang beagle/js
+;; security:check — does this gjoa pin a Firefox version that's still
+;; covered by recent security fixes?
+;;
+;; What it actually does:
+;;   1. Reads gjoa.json → our pinned firefox.version
+;;   2. Fetches Mozilla product-details:
+;;        LATEST_FIREFOX_VERSION    (latest stable)
+;;        FIREFOX_ESR / ESR_NEXT     (extended-support track)
+;;   3. Fetches Mozilla MFSA RSS, parses the advisories newer than our pin,
+;;      flags any that mention "exploited in the wild" or "critical".
+;;   4. Classifies the situation:
+;;        OK        — we're at latest stable
+;;        STALE     — point release behind, or 1 major behind <7d
+;;        CRITICAL  — 2+ majors behind, or any unfixed in-the-wild CVE
+;;   5. Prints a human-readable status. Exits 0 for OK, 2 for STALE,
+;;      3 for CRITICAL. (Pre-build hooks treat anything non-zero as a
+;;      banner-worthy warning; CRITICAL trips the loud path.)
+;;
+;; Network failures are fail-OPEN with a clear "could not verify" message
+;; rather than failing the build — losing the network shouldn't stop you
+;; from working, but you should know the check didn't run.
+;;
+;; JSON output mode: `--json` for machine consumers (the import banner).
+(ns gjoa.tools.security.check
+  (:require [fs/promises :refer [readFile]]
+            [path :refer [join]]
+            [gjoa.tools.prep.paths :refer [REPO-ROOT]]))
+(define-mode strict)
+(declare-extern [process console fetch AbortSignal JSON RegExp Error parseInt Array] Any)
+
+(def PRODUCT-DETAILS-URL :- String "https://product-details.mozilla.org/1.0/firefox_versions.json")
+(def KNOWN-VULNS-URL :- String "https://www.mozilla.org/en-US/security/known-vulnerabilities/firefox/")
+
+;; Parse Firefox version into comparable numeric tuple. Format examples:
+;;  "150.0", "151.0.1", "140.11.0esr". Drops "esr" suffix; treats missing
+;;  patch as 0. Returns [major, minor, patch].
+(defn parseVersion [v :- String] :- Any
+  (let [cleaned (.trim (.replace v (RegExp. "esr$" "i") ""))
+        parts (.map (.split cleaned ".") (fn [x] (or (parseInt x 10) 0)))]
+    [(or (aget parts 0) 0) (or (aget parts 1) 0) (or (aget parts 2) 0)]))
+
+;; -1 if a < b, 0 if equal, 1 if a > b.
+(defn cmpVersion [a :- Any b :- Any] :- Any
+  (loop [i 0]
+    (if (>= i 3)
+      0
+      (if (not= (aget a i) (aget b i))
+        (if (< (aget a i) (aget b i)) -1 1)
+        (recur (+ i 1))))))
+
+(defn fetchVersions [] :- Any
+  (let [r (js/await (fetch PRODUCT-DETAILS-URL {:signal (.timeout AbortSignal 10000)}))]
+    (if (not (.-ok r))
+      (throw (Error. (str "product-details HTTP " (.-status r))))
+      nil)
+    (js/await (.json r))))
+
+;; Parse Mozilla's known-vulnerabilities index page. Format (stable for
+;;  years; if it changes we report partial info rather than crash):
+;;
+;;    <h3 id="firefoxN.M.P">Fixed in Firefox N.M.P</h3>
+;;    <ul>
+;;      <li><a href=".../mfsaYYYY-NN/">
+;;        <span class="level high|moderate|low|critical">YYYY-NN</span>
+;;        Security Vulnerabilities fixed in Firefox N.M.P
+;;      </a></li>
+;;    </ul>
+;;
+;;  We extract each (version, advisory id, severity, link) tuple from
+;;  the page, then the caller filters by "newer than our pin".
+(defn fetchAdvisories [] :- Any
+  (let [r (js/await (fetch KNOWN-VULNS-URL {:signal (.timeout AbortSignal 10000)}))]
+    (if (not (.-ok r))
+      (throw (Error. (str "known-vulns HTTP " (.-status r))))
+      nil)
+    (let [html (js/await (.text r))
+          ;; Split into per-version sections. Each section's MFSAs apply to that
+          ;; exact Firefox version. The regex captures the version label + the
+          ;; chunk of HTML up to the next <h3> (or end).
+          sectionRe (RegExp. "<h3 id=\"firefox([0-9.]+(?:esr)?)\"[^>]*>[\\s\\S]*?Fixed in Firefox ([0-9.]+(?:esr)?)\\s*</a>\\s*</h3>([\\s\\S]*?)(?=<h3 id=\"firefox|</main|<footer|$)" "g")
+          advRe (RegExp. "<a href=\"(/en-US/security/advisories/mfsa(\\d{4}-\\d+)/?)\"[^>]*>\\s*<span class=\"level ([a-z]+)\">[^<]*</span>([^<]*)</a>" "g")
+          out []]
+      (loop []
+        (let [sm (.exec sectionRe html)]
+          (when sm
+            (let [version (aget sm 2)
+                  sectionBody (aget sm 3)]
+              (set! (.-lastIndex advRe) 0)
+              (loop []
+                (let [am (.exec advRe sectionBody)]
+                  (when am
+                    (let [path (aget am 1)
+                          slug (str "mfsa" (aget am 2))
+                          severity (aget am 3)
+                          title (.trim (aget am 4))]
+                      (.push out {:id slug
+                                  :title (or title (str "Security advisory " slug))
+                                  :link (str "https://www.mozilla.org" path)
+                                  :severity severity
+                                  :affectsVersion version
+                                  :published ""
+                                  :description ""})
+                      (recur))))))
+            (recur))))
+      out)))
+
+;; Advisory affects our pin if it fixes a Firefox version STRICTLY
+;;  newer than our pinned version. (We're missing its fix.)
+(defn advisoryAffectsOurPin [entry :- Any pinned :- Any] :- Any
+  (if (not (.-affectsVersion entry))
+    false
+    (if (.endsWith (.-affectsVersion entry) "esr") ; ESR track is separate
+      false
+      (let [v (parseVersion (.-affectsVersion entry))]
+        (> (cmpVersion v pinned) 0)))))
+
+(defn isInTheWild [entry :- Any] :- Any
+  ;; Severity "critical" or explicit in-the-wild flag in title.
+  (let [text (.toLowerCase (str (.-title entry) " " (.-description entry)))]
+    (or (= (.-severity entry) "critical")
+        (.test (RegExp. "(exploit|exploited)\\s+in\\s+the\\s+wild") text)
+        (.test (RegExp. "actively\\s+exploited") text))))
+
+(defn classify [pinnedTuple :- Any latestTuple :- Any advisories :- Any inTheWild :- Any] :- Any
+  (cond
+    (> (.-length inTheWild) 0)
+    {:status "CRITICAL"
+     :summary (str (.-length inTheWild) " in-the-wild CVE(s) unaddressed")}
+
+    :else
+    (let [majorDelta (- (aget latestTuple 0) (aget pinnedTuple 0))]
+      (cond
+        (>= majorDelta 2)
+        {:status "CRITICAL" :summary (str majorDelta " major versions behind")}
+
+        :else
+        (let [cmp (cmpVersion pinnedTuple latestTuple)]
+          (cond
+            (= cmp 0)
+            {:status "OK" :summary (str "at latest stable (" (.join latestTuple ".") ")")}
+
+            (> cmp 0)
+            ;; We're ahead of "latest stable" — likely tracking beta/nightly.
+            {:status "OK" :summary (str "ahead of latest stable (" (.join latestTuple ".") ")")}
+
+            :else
+            {:status "STALE"
+             :summary (str (if (> majorDelta 0) (str majorDelta " major(s)") "point release")
+                           " behind"
+                           (if (.-length advisories)
+                             (str "; " (.-length advisories) " advisor" (if (= (.-length advisories) 1) "y" "ies"))
+                             ""))}))))))
+
+(js/export (defn check [] :- Any
+  (let [gjoaJsonPath (join REPO-ROOT "gjoa.json")
+        gjoaJson (.parse JSON (js/await (readFile gjoaJsonPath "utf8")))
+        pinned (.-version (.-firefox gjoaJson))
+        pinnedTuple (parseVersion pinned)
+        state {:versions nil :advisories [] :netError nil}]
+
+    (try
+      (set! (.-versions state) (js/await (fetchVersions)))
+      (catch Error e
+        (set! (.-netError state) (str "version probe failed: " (.-message e)))))
+    (when (.-versions state)
+      (try
+        (set! (.-advisories state) (js/await (fetchAdvisories)))
+        (catch Error e
+          ;; Treat as partial: we have version info but not advisories.
+          (set! (.-netError state) (str "advisory probe failed: " (.-message e))))))
+
+    (let [versions (.-versions state)
+          advisories (.-advisories state)
+          netError (.-netError state)]
+      (if (not versions)
+        {:pinned pinned
+         :latest nil
+         :esr nil
+         :majorDelta 0
+         :patchDelta nil
+         :advisories []
+         :inTheWild []
+         :status "UNKNOWN"
+         :summary "could not verify — network probe failed"
+         :detail (str "Pinned: " pinned "\nCould not reach Mozilla product-details (" netError ").\nRe-run on a working network to verify.")
+         :unverified netError}
+        (let [latest (.-LATEST_FIREFOX_VERSION versions)
+              esr (.-FIREFOX_ESR versions)
+              latestTuple (parseVersion latest)
+              matchedAdvisories (.filter advisories (fn [a] (advisoryAffectsOurPin a pinnedTuple)))
+              inTheWild (.filter matchedAdvisories isInTheWild)
+              result (classify pinnedTuple latestTuple matchedAdvisories inTheWild)
+              status (.-status result)
+              summary (.-summary result)
+              detailLines [(str "Pinned:        " pinned)
+                           (str "Latest stable: " latest)
+                           (str "ESR track:     " esr)]]
+          (when (> (.-length matchedAdvisories) 0)
+            (.push detailLines "")
+            (.push detailLines (str "Unfixed advisories on your pin (" (.-length matchedAdvisories) "):"))
+            ;; Sort by severity (critical first), then advisory id newest first.
+            (let [sevRank {:critical 0 :high 1 :moderate 2 :low 3}
+                  sorted (.sort (.from Array matchedAdvisories)
+                                (fn [a b]
+                                  (let [sa (let [r (aget sevRank (or (.-severity a) "low"))] (if (= r undefined) 4 r))
+                                        sb (let [r (aget sevRank (or (.-severity b) "low"))] (if (= r undefined) 4 r))]
+                                    (if (not= sa sb)
+                                      (- sa sb)
+                                      (if (< (.-id a) (.-id b)) 1 -1)))))]
+              (doseq [a (.slice sorted 0 8)]
+                (let [sev (.padEnd (or (.-severity a) "?") 8)
+                      wild (if (isInTheWild a) "  [in-the-wild]" "")]
+                  (.push detailLines (str "  [" sev "] " (.-id a) "  fixes Firefox " (.-affectsVersion a) wild))))
+              (when (> (.-length sorted) 8)
+                (.push detailLines (str "  ... and " (- (.-length sorted) 8) " more")))
+              (.push detailLines "")
+              (.push detailLines "Details: https://www.mozilla.org/en-US/security/known-vulnerabilities/firefox/")))
+          (when (and netError versions)
+            (.push detailLines "")
+            (.push detailLines (str "Note: " netError)))
+
+          (let [majorDelta (- (aget latestTuple 0) (aget pinnedTuple 0))
+                patchDelta (if (= majorDelta 0) (cmpVersion pinnedTuple latestTuple) nil)
+                base {:pinned pinned
+                      :latest latest
+                      :esr esr
+                      :majorDelta majorDelta
+                      :patchDelta patchDelta
+                      :advisories matchedAdvisories
+                      :inTheWild inTheWild
+                      :status status
+                      :summary summary
+                      :detail (.join detailLines "\n")}]
+            (when netError
+              (set! (.-unverified base) netError))
+            base)))))))
+
+(defn statusColor [status :- String] :- String
+  (cond
+    (= status "OK") "[32m" ; green
+    (= status "STALE") "[33m" ; yellow
+    (= status "CRITICAL") "[31m" ; red
+    :else "[36m")) ; cyan for UNKNOWN
+
+(defn exitCodeFor [status :- String] :- Any
+  (cond
+    (= status "OK") 0
+    (= status "STALE") 2
+    (= status "CRITICAL") 3
+    :else 1)) ; UNKNOWN
+
+(defn main [] :- Any
+  (let [jsonMode (.includes (.-argv process) "--json")
+        quietMode (.includes (.-argv process) "--quiet")
+        r (js/await (check))]
+    (cond
+      jsonMode
+      (.log console (.stringify JSON r nil 2))
+
+      (not quietMode)
+      (let [color (statusColor (.-status r))
+            reset "[0m"]
+        (.error console (str color "[security] " (.-status r) reset " — " (.-summary r)))
+        (.error console (.-detail r))))
+    (.exit process (exitCodeFor (.-status r)))))
+
+;; Entrypoint. The old .ts guarded on `import.meta.main`; beagle has no
+;; import.meta, and these tools are invoked directly via `bun run`, so we
+;; Run the CLI only when invoked directly — cli.bjs imports `check` as a library
+;; and must not trigger the CLI (or its process.exit) on import.
+(when (.-main (js/import-meta))
+  (.catch (main)
+    (fn [err]
+      (.error console (str "[security] check threw: " (.-message err)))
+      (.exit process 1))))

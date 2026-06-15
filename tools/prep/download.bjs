@@ -1,0 +1,106 @@
+#lang beagle/js
+;; Download + verify + extract the mozilla-central source tarball into engine/.
+;; Mirrors Mozilla's release URL convention, checks SHA256 against the published
+;; SHA256SUMS, caches under SOURCES_CACHE, and strips the firefox-VERSION/ level
+;; so engine/ holds the source tree directly.
+(ns gjoa.tools.prep.download
+  (:require [fs :refer [existsSync mkdirSync statSync]]
+            [path :refer [join]]
+            [gjoa.tools.prep.config :refer [loadConfig]]
+            [gjoa.tools.prep.paths :refer [ENGINE-DIR REPO-ROOT SOURCES-CACHE]]
+            [gjoa.tools.prep.log :refer [log]]))
+(define-mode strict)
+(declare-extern [Bun fetch Number Error] Any)
+
+;; Mirrors Mozilla's release URL convention. Used for both .source.tar.xz and
+;; the SHA256SUMS file that publishes its hash.
+(defn tarballUrl [version :- String] :- String
+  (str "https://archive.mozilla.org/pub/firefox/releases/" version
+       "/source/firefox-" version ".source.tar.xz"))
+
+(defn checksumUrl [version :- String] :- String
+  (str "https://archive.mozilla.org/pub/firefox/releases/" version "/SHA256SUMS"))
+
+(defn tarballName [version :- String] :- String
+  (str "firefox-" version ".source.tar.xz"))
+
+(defn fetchSha256 [version :- String] :- Any
+  (.step log (str "fetching upstream SHA256SUMS for firefox " version))
+  (let [res (js/await (fetch (checksumUrl version)))]
+    (if (not (.-ok res))
+      (throw (Error. (str "failed to fetch SHA256SUMS: " (.-status res))))
+      nil)
+    (let [text (js/await (.text res))
+          ;; Mozilla's SHA256SUMS lists files with subdirectory prefixes, e.g.
+          ;; `source/firefox-150.0.source.tar.xz`. Match by basename.
+          want (tarballName version)
+          lines (.split text "\n")]
+      (loop [i 0]
+        (if (>= i (.-length lines))
+          (throw (Error. (str "SHA256SUMS does not list " want)))
+          (let [parts (.split (.trim (aget lines i)) (RegExp. "\\s+"))
+                hash (aget parts 0)
+                file (aget parts 1)]
+            (if (and file (or (= file want) (.endsWith file (str "/" want))))
+              hash
+              (recur (+ i 1)))))))))
+
+(defn sha256OfFile [path :- String] :- Any
+  (let [file (.file Bun path)
+        buf (js/await (.arrayBuffer file))
+        hash (Bun.CryptoHasher. "sha256")]
+    (.update hash buf)
+    (.digest hash "hex")))
+
+(defn downloadTo [url :- String dest :- String] :- Any
+  (.step log (str "downloading " url))
+  (let [res (js/await (fetch url))]
+    (if (not (.-ok res))
+      (throw (Error. (str "download failed (" (.-status res) "): " url)))
+      nil)
+    (let [total (Number (or (.get (.-headers res) "content-length") 0))]
+      (if total
+        (.info log (str "expecting " (.toFixed (/ total 1024 1024) 1) " MB"))
+        nil)
+      (js/await (.write Bun dest res)))))
+
+(js/export (defn download [] :- Any
+  (let [cfg (loadConfig)]
+    (mkdirSync SOURCES-CACHE {:recursive true})
+    (let [version (.-version (.-firefox cfg))
+          tarball (join SOURCES-CACHE (tarballName version))
+          expectedHash (js/await (fetchSha256 version))]
+      ;; Cache hit: existing tarball matches upstream hash. Skip download.
+      (if (existsSync tarball)
+        (let [have (js/await (sha256OfFile tarball))]
+          (if (= have expectedHash)
+            (.ok log "cached tarball matches upstream hash, skipping download")
+            (do
+              (.warn log "cached tarball hash mismatch, re-downloading")
+              (js/await (downloadTo (tarballUrl version) tarball)))))
+        (js/await (downloadTo (tarballUrl version) tarball)))
+      ;; Verify post-download (also catches partial writes / network corruption).
+      (let [actualHash (js/await (sha256OfFile tarball))]
+        (if (not= actualHash expectedHash)
+          (throw (Error. (str "tarball SHA256 mismatch.\n  expected: " expectedHash
+                              "\n  got:      " actualHash)))
+          nil))
+      (.ok log (str "tarball verified (" (.toFixed (/ (.-size (statSync tarball)) 1024 1024) 1) " MB)"))
+      ;; Extract into engine/. mozilla-central tarballs unpack as firefox-VERSION/
+      ;; — strip that level so engine/ holds the source tree directly.
+      (if (existsSync ENGINE-DIR)
+        (do
+          (.warn log "engine/ already exists; remove it first if you want a fresh extract")
+          nil)
+        (do
+          (.step log "extracting tarball to engine/ (this takes a couple minutes)")
+          (mkdirSync ENGINE-DIR)
+          (let [proc (.spawn Bun {:cmd ["tar" "-xJf" tarball "-C" ENGINE-DIR "--strip-components=1"]
+                                  :cwd REPO-ROOT
+                                  :stdout "inherit"
+                                  :stderr "inherit"})
+                code (js/await (.-exited proc))]
+            (if (not= code 0)
+              (throw (Error. (str "tar extraction failed (exit " code ")")))
+              nil))
+          (.ok log "engine/ ready")))))))

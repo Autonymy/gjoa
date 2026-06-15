@@ -1,0 +1,33 @@
+#lang beagle/js
+;; Canonical repo paths: source overlays, engine dir, branding, caches.
+;; Run via `bun run` from the repo root, so cwd IS the repo root. (The old .ts
+;; used import.meta.dir, but the compiled .js lives elsewhere, so cwd is correct.)
+(ns gjoa.tools.prep.paths
+  (:require [path :refer [join]]
+            [os :refer [homedir]]))
+(define-mode strict)
+(declare-extern [process] Any)
+
+(js/export (def REPO-ROOT :- String (.cwd process)))
+
+;; Source overlays (committed). Layered onto engine/ during import.
+(js/export (def SRC-DIR :- String (join REPO-ROOT "src" "gjoa")))
+
+;; Branding source (icons live here; text derived from mozilla `unofficial`).
+(js/export (def BRANDING-SRC :- String (join REPO-ROOT "configs" "branding" "gjoa")))
+
+;; Patches applied on top of mozilla-central.
+(js/export (def PATCHES-DIR :- String (join REPO-ROOT "patches")))
+
+;; Working tree where mozilla-central is downloaded + overlaid. Gitignored.
+(js/export (def ENGINE-DIR :- String (join REPO-ROOT "engine")))
+
+;; Inside engine/, where Firefox expects branding subtrees to live.
+(js/export (def ENGINE-BRANDING-DIR :- String (join ENGINE-DIR "browser" "branding")))
+
+;; Mozilla's vanilla "unofficial" branding — known-good template base.
+(js/export (def ENGINE-UNOFFICIAL-BRANDING :- String (join ENGINE-BRANDING-DIR "unofficial")))
+
+;; Per-gjoa source-tarball cache, outside the repo (XDG-style).
+(js/export (def CACHE-DIR :- String (join (homedir) ".cache" "gjoa")))
+(js/export (def SOURCES-CACHE :- String (join CACHE-DIR "sources")))

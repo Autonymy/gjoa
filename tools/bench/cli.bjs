@@ -1,0 +1,136 @@
+#lang beagle/js
+;; tools/bench/cli.bjs — Main benchmark CLI entry point.
+;;
+;; Subcommands: cold-start, memory, all
+(ns gjoa.tools.bench.cli)
+(define-mode strict)
+(declare-extern [Bun process console] Any)
+
+(def subcommand :- Any (aget (.-argv Bun) 2))
+
+(defn usage [] :- Any
+  (.log console (str "
+Usage: bun tools/bench/cli.ts <command> [options]
+
+Commands:
+  cold-start    Measure time-to-window-visible
+  memory        Measure memory usage with N tabs
+  all           Run all benchmarks
+  env-check     Check if environment is ready for benchmarking
+
+Options are passed through to subcommands. See individual scripts for details.
+
+Common options:
+  --gjoa-bin=<path>       Path to gjoa binary
+  --firefox-bin=<path>    Path to firefox binary
+  --runs=N                Number of runs (cold-start, default 20)
+  --tabs=N                Number of tabs (memory, default 50)
+
+Prepare environment first:
+  sudo bash tools/bench/env.sh           # disable turbo, set governor, etc.
+  sudo bash tools/bench/env.sh --restore # undo after benchmarking
+")))
+
+(defn check-environment [] :- Any
+  (let [warnings []
+        push (fn [w] (.push warnings w))]
+    ;; Check turbo boost
+    (let [intel-turbo (.spawnSync Bun ["cat" "/sys/devices/system/cpu/intel_pstate/no_turbo"])
+          amd-boost (.spawnSync Bun ["cat" "/sys/devices/system/cpu/cpufreq/boost"])]
+      (cond
+        (= (.-exitCode intel-turbo) 0)
+        (when (= (.trim (.toString (.-stdout intel-turbo))) "0")
+          (push "Intel turbo boost is ON — results will have high variance. Run: sudo bash tools/bench/env.sh"))
+
+        (= (.-exitCode amd-boost) 0)
+        (when (= (.trim (.toString (.-stdout amd-boost))) "1")
+          (push "AMD boost is ON — results will have high variance. Run: sudo bash tools/bench/env.sh"))
+
+        :else nil))
+
+    ;; Check governor
+    (let [governor (.spawnSync Bun ["cat" "/sys/devices/system/cpu/cpu0/cpufreq/scaling_governor"])]
+      (when (= (.-exitCode governor) 0)
+        (let [gov (.trim (.toString (.-stdout governor)))]
+          (when (not (= gov "performance"))
+            (push (str "CPU governor is '" gov "' (want 'performance'). Run: sudo bash tools/bench/env.sh"))))))
+
+    ;; Check ASLR
+    (let [aslr (.spawnSync Bun ["cat" "/proc/sys/kernel/randomize_va_space"])]
+      (when (= (.-exitCode aslr) 0)
+        (let [val (.trim (.toString (.-stdout aslr)))]
+          (when (not (= val "0"))
+            (push (str "ASLR is enabled (" val "). Run: sudo bash tools/bench/env.sh"))))))
+
+    ;; Check xdotool
+    (let [xdotool (.spawnSync Bun ["which" "xdotool"])]
+      (when (not (= (.-exitCode xdotool) 0))
+        (push "xdotool not found — required for window detection. Install it.")))
+
+    {:warnings warnings}))
+
+(defn print-environment-status [] :- Any
+  (let [warnings (.-warnings (check-environment))]
+    (if (= (.-length warnings) 0)
+      (.log console "  Environment: OK (turbo off, performance governor, ASLR off)")
+      (do
+        (.log console "  Environment warnings:")
+        (doseq [w warnings]
+          (.log console (str "    WARN: " w)))))
+    (.log console "")))
+
+(defn find-binary [name :- String] :- Any
+  (if (= name "gjoa")
+    (let [local (str (.cwd process) "/result/bin/gjoa")
+          stat (try (.file Bun local) (catch Any e nil))]
+      (if (and stat (> (.-size stat) 0))
+        local
+        (let [result (.spawnSync Bun ["which" name])
+              path (.trim (.toString (.-stdout result)))]
+          (if (and (= (.-exitCode result) 0) path) path nil))))
+    (let [result (.spawnSync Bun ["which" name])
+          path (.trim (.toString (.-stdout result)))]
+      (if (and (= (.-exitCode result) 0) path) path nil))))
+
+(defn run-subcommand [script :- String] :- Any
+  (let [args (.slice (.-argv Bun) 3) ; pass through all args after subcommand
+        cmd (.concat ["bun" (str (.cwd process) "/.beagle-tools/gjoa/tools/bench/" script)] args)
+        proc (.spawn Bun cmd
+               {:stdout "inherit"
+                :stderr "inherit"
+                :stdin "inherit"})
+        code (js/await (.-exited proc))]
+    (when (not (= code 0)) (.exit process code))))
+
+;; --- Main ---
+
+(if (or (not subcommand) (= subcommand "--help") (= subcommand "-h"))
+  (do
+    (usage)
+    (.exit process 0))
+  (do
+    ;; Print header
+    (.log console "\n=== Gjoa Benchmark Suite ===\n")
+
+    ;; Auto-detect binaries
+    (let [gjoa-bin (find-binary "gjoa")
+          firefox-bin (find-binary "firefox")]
+      (.log console (str "  Gjoa binary:    " (or gjoa-bin "NOT FOUND")))
+      (.log console (str "  Firefox binary: " (or firefox-bin "NOT FOUND")))
+      (.log console ""))
+
+    ;; Environment check
+    (print-environment-status)
+
+    (match subcommand
+      ["cold-start" (js/await (run-subcommand "cold-start.js"))]
+      ["memory" (js/await (run-subcommand "memory.js"))]
+      ["all" (do
+               (js/await (run-subcommand "cold-start.js"))
+               (js/await (run-subcommand "memory.js")))]
+      ;; Already printed above
+      ["env-check" nil]
+      [_ (do
+           (.error console (str "Unknown command: " subcommand))
+           (usage)
+           (.exit process 1))])))

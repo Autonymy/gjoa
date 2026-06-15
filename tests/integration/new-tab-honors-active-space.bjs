@@ -1,0 +1,148 @@
+#lang beagle/js
+;; Bug fix regression: when the user is on Space B, opening a new tab
+;; (Ctrl+T, +button, etc.) must land in B — NOT in the space of the
+;; currently-selected tab's owner, NOT in the default space.
+;;
+;; Failure mode pre-fix: Firefox auto-sets tab.owner to the previously-
+;; selected tab on Ctrl+T. The previously-selected tab was usually in
+;; a different space than the user just switched to. Our onTabOpen
+;; handler inherited from owner, so new tabs went to the OWNER's space,
+;; not the active space. Sidebar showed nothing in the active space and
+;; the tab silently appeared in the owner's space.
+(ns gjoa.tests.integration.new-tab-honors-active-space)
+(define-mode strict)
+
+;; IntegrationTest / MarionetteClient were `import type` only — erased at
+;; runtime, so no require here. The module's runtime contract is a single
+;; default export: an array of { name, run } test objects.
+(declare-extern [Date Error Promise setTimeout JSON] Any)
+
+(defn sleep [ms :- Any] :- Any
+  (Promise. (fn [r] (setTimeout r ms))))
+
+(defn wait-for [mn :- Any script-returning-bool :- String timeout-ms :- Any] :- Any
+  (let [deadline (+ (.now Date) timeout-ms)
+        last-err (atom nil)]
+    (loop []
+      (if (< (.now Date) deadline)
+        (let [ok (js/await (.catch (.executeScript mn script-returning-bool)
+                                   (fn [e] (reset! last-err e) false)))]
+          (if ok
+            nil
+            (do
+              (js/await (sleep 20))
+              (recur))))
+        (throw (Error. (str "timed out: " (.slice script-returning-bool 0 200)
+                            (if (deref last-err)
+                              (str " (last: " (.-message (deref last-err)) ")")
+                              ""))))))))
+
+(def tests :- Any
+  [{:name "new-tab-honors-active-space — Ctrl+T while in Workspace places tab in Workspace, NOT Main, even when owner is a Main tab"
+    :run
+    (fn [mn]
+      (js/await (wait-for mn "return !!window.Spaces;" 1500))
+      ;; Clean slate.
+      (js/await (.executeScript mn "
+        const main = window.Spaces.list().find(s => s.name === \"Main\") || window.Spaces.list()[0];
+        window.Spaces.setActive(main.id);
+        for (const s of [...window.Spaces.list()]) {
+          if (s.id !== main.id) window.Spaces.delete(s.id);
+        }
+      "))
+
+      ;; Open a "anchor" tab while in Main, and assign it explicitly to Main.
+      (js/await (.executeScript mn "
+        const principal = Services.scriptSecurityManager.getSystemPrincipal();
+        const anchor = gBrowser.addTab(\"https://example.com/main-anchor\", { triggeringPrincipal: principal });
+        anchor.setAttribute(\"gjoa-test-marker\", \"main-anchor\");
+        gBrowser.selectedTab = anchor;
+        const main = window.Spaces.list().find(s => s.name === \"Main\");
+        window.Spaces.assignTab(anchor, main.id);
+      "))
+      (js/await (wait-for mn "
+        return [...gBrowser.tabs].some(t => t.getAttribute(\"gjoa-test-marker\") === \"main-anchor\");
+      " 1500))
+
+      ;; Create Workspace and switch into it. The anchor tab in Main is
+      ;; still gBrowser.selectedTab, so a fresh Ctrl+T would set owner=anchor.
+      (js/await (.executeScript mn "
+        const ws = window.Spaces.create(\"Workspace\");
+        window.Spaces.setActive(ws.id);
+      "))
+      (js/await (wait-for mn "return window.Spaces.active().name === \"Workspace\";" 1500))
+
+      ;; Open a new tab WITH owner explicitly set to the anchor tab in Main.
+      ;; This mimics what Firefox does on Ctrl+T (carry over previously-
+      ;; active tab as owner).
+      (js/await (.executeScript mn "
+        const principal = Services.scriptSecurityManager.getSystemPrincipal();
+        const anchor = [...gBrowser.tabs].find(t => t.getAttribute(\"gjoa-test-marker\") === \"main-anchor\");
+        const newTab = gBrowser.addTab(\"https://example.com/in-workspace\", {
+          triggeringPrincipal: principal,
+          ownerTab: anchor,
+        });
+        newTab.setAttribute(\"gjoa-test-marker\", \"new-in-workspace\");
+      "))
+      ;; Tab must exist.
+      (js/await (wait-for mn "
+        return [...gBrowser.tabs].some(t => t.getAttribute(\"gjoa-test-marker\") === \"new-in-workspace\");
+      " 1500))
+
+      ;; CRITICAL: the new tab's space must be Workspace, NOT Main.
+      (let [sp (js/await (.executeScript mn "
+        const newTab = [...gBrowser.tabs].find(t => t.getAttribute(\"gjoa-test-marker\") === \"new-in-workspace\");
+        const ws = window.Spaces.list().find(s => s.name === \"Workspace\");
+        const main = window.Spaces.list().find(s => s.name === \"Main\");
+        return {
+          space: window.Spaces.spaceOf(newTab),
+          active: ws.id,
+          main: main.id,
+        };
+      "))]
+        (when (= (.-space sp) (.-main sp))
+          (throw (Error. (str "new tab went to Main instead of Workspace. (Owner-inheritance bug.) sp=" (.stringify JSON sp)))))
+        (when (not= (.-space sp) (.-active sp))
+          (throw (Error. (str "new tab not in active Workspace. sp=" (.stringify JSON sp))))))
+
+      ;; And the row must be visible in the sidebar while Workspace is active.
+      (let [visible-in-workspace (js/await (.executeScript mn "
+        return [...document.querySelectorAll(\"#gjoa-tab-panel .gjoa-tab-row\")]
+          .filter(r => !r.hidden)
+          .some(r => r._tab && r._tab.getAttribute(\"gjoa-test-marker\") === \"new-in-workspace\");
+      "))]
+        (when (not visible-in-workspace)
+          (throw (Error. "new tab is in Workspace logically but its row is hidden — visibility filter broken")))))}
+
+   {:name "new-tab-honors-active-space — Ctrl+T with NO owner still goes to active space"
+    :run
+    (fn [mn]
+      (js/await (wait-for mn "return !!window.Spaces;" 1500))
+      ;; Clean slate.
+      (js/await (.executeScript mn "
+        const main = window.Spaces.list().find(s => s.name === \"Main\") || window.Spaces.list()[0];
+        window.Spaces.setActive(main.id);
+        for (const s of [...window.Spaces.list()]) {
+          if (s.id !== main.id) window.Spaces.delete(s.id);
+        }
+        const ws = window.Spaces.create(\"Work2\");
+        window.Spaces.setActive(ws.id);
+      "))
+      (js/await (wait-for mn "return window.Spaces.active().name === \"Work2\";" 1500))
+      (js/await (.executeScript mn "
+        const principal = Services.scriptSecurityManager.getSystemPrincipal();
+        const t = gBrowser.addTab(\"https://example.com/no-owner\", { triggeringPrincipal: principal });
+        t.setAttribute(\"gjoa-test-marker\", \"no-owner\");
+      "))
+      (js/await (wait-for mn "
+        return [...gBrowser.tabs].some(t => t.getAttribute(\"gjoa-test-marker\") === \"no-owner\");
+      " 1500))
+      (let [sp (js/await (.executeScript mn "
+        const t = [...gBrowser.tabs].find(t => t.getAttribute(\"gjoa-test-marker\") === \"no-owner\");
+        const ws = window.Spaces.active();
+        return { inActive: window.Spaces.spaceOf(t) === ws.id, activeName: ws.name };
+      "))]
+        (when (not (.-inActive sp))
+          (throw (Error. (str "no-owner tab not in active space " (.-activeName sp)))))))}])
+
+(js/export-default tests)

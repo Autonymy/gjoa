@@ -1,0 +1,44 @@
+#lang beagle/js
+;; Apply src/gjoa/ overlays onto engine/. Mirrors the directory structure:
+;; src/gjoa/browser/components/foo/X.mjs → engine/browser/components/foo/X.mjs.
+;; Existing engine/ files are overwritten. New files are added.
+;;
+;; We don't currently delete files from engine/ that aren't in src/ — Firefox
+;; build is forgiving of extra files but breaks fast on missing ones. If we
+;; later want true "tree-replace" semantics we can switch to rsync --delete
+;; scoped to specific subtrees.
+(ns gjoa.tools.prep.overlay
+  (:require [fs :refer [existsSync readdirSync statSync]]
+            [path :refer [join]]
+            [gjoa.tools.prep.paths :refer [ENGINE-DIR SRC-DIR]]
+            [gjoa.tools.prep.log :refer [log]]))
+(define-mode strict)
+(declare-extern [Bun] Any)
+
+(defn count-files [dir :- String] :- Any
+  (reduce
+    (fn [count name]
+      (let [path (join dir name)]
+        (if (.isDirectory (statSync path))
+          (+ count (count-files path))
+          (+ count 1))))
+    0
+    (readdirSync dir)))
+
+(js/export (defn overlay [] :- Any
+  (if (not (existsSync SRC-DIR))
+    (do
+      (.info log "no src/gjoa/ overlays present, skipping")
+      nil)
+    (let [entries (readdirSync SRC-DIR)]
+      (if (= (.-length entries) 0)
+        (do
+          (.info log "src/gjoa/ is empty, skipping overlay")
+          nil)
+        (do
+          (.step log "applying src/gjoa/ overlays")
+          ;; -a preserves perms/timestamps; trailing slash on source so contents
+          ;; merge into engine/ rather than creating engine/gjoa/.
+          (.spawnSync Bun ["cp" "-a" (str SRC-DIR "/.") (str ENGINE-DIR "/")])
+          (let [file-count (count-files SRC-DIR)]
+            (.ok log (str "overlaid " file-count " file" (if (= file-count 1) "" "s"))))))))))

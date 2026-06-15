@@ -1,0 +1,191 @@
+#lang beagle/js
+;; Spaces UX:
+;;   1. `:sp` and `:spc` aliases run the same dispatch as `:space`
+;;   2. `#gjoa-space-header` renders the active space name in the sidebar
+;;   3. The header updates on switch and rename
+;;   4. Clicking the header opens the spaces picker
+(ns gjoa.tests.integration.spaces-header)
+(define-mode strict)
+
+(declare-extern [Date Error Promise setTimeout Math JSON] Any)
+
+(defn wait-for [mn :- Any script :- String timeout-ms :- Any] :- Any
+  (let [timeout (or timeout-ms 1500)
+        deadline (+ (.now Date) timeout)]
+    (loop []
+      (if (< (.now Date) deadline)
+        (let [result
+              (js/await
+                (try
+                  (if (js/await (.executeScript mn script)) :done nil)
+                  (catch Error _ nil)))]
+          (if (= result :done)
+            nil
+            (do
+              (js/await (Promise. (fn [r] (setTimeout (fn [] (r)) 20))))
+              (recur))))
+        (throw (Error. (str "timed out waiting for: " (.slice script 0 140))))))))
+
+;; Reset all non-default spaces between subtests so each one starts clean.
+(defn reset-spaces [mn :- Any] :- Any
+  (js/await (.executeScript mn
+    "
+    const main = window.Spaces.list().find(s => s.name === \"Main\")
+              || window.Spaces.list()[0];
+    window.Spaces.setActive(main.id);
+    for (const s of [...window.Spaces.list()]) {
+      if (s.id !== main.id) window.Spaces.delete(s.id);
+    }
+  ")))
+
+(js/export (def tests :- Any
+  [{:name "Spaces — :spc (canonical) creates and switches"
+    :run (fn [mn]
+           (js/await (wait-for mn "return !!window.gjoaTest && !!window.gjoaTest.vim && !!window.Spaces;" 1500))
+           (js/await (reset-spaces mn))
+           (js/await (.executeScript mn "window.gjoaTest.vim.runExCommand(\"spc new Reading\");"))
+           (let [r (js/await (.executeScript mn
+                     "
+        const list = window.Spaces.list();
+        return {
+          count: list.length,
+          activeName: window.Spaces.active().name,
+          names: list.map(s => s.name),
+        };
+      "))]
+             (if (not= (.-count r) 2)
+               (throw (Error. (str "expected 2 spaces after :spc new, got " (.-count r) " (" (.join (.-names r) ",") ")"))))
+             (if (not= (.-activeName r) "Reading")
+               (throw (Error. (str "expected active=\"Reading\", got \"" (.-activeName r) "\""))))))}
+
+   {:name "Spaces — :space (legacy alias) still routes to spc dispatch"
+    :run (fn [mn]
+           (js/await (reset-spaces mn))
+           (js/await (.executeScript mn "window.gjoaTest.vim.runExCommand(\"space new Work\");"))
+           (let [active-name (js/await (.executeScript mn "return window.Spaces.active().name;"))]
+             (if (not= active-name "Work")
+               (throw (Error. (str "expected active=\"Work\" after :space new, got \"" active-name "\""))))))}
+
+   {:name "Spaces — :sp is NOT a recognized command (only :spc / :space)"
+    :run (fn [mn]
+           (js/await (reset-spaces mn))
+           (let [before (js/await (.executeScript mn "return window.Spaces.list().length;"))]
+             ;; `:sp new Ghost` should hit the unknown-command path; no space created.
+             (js/await (.executeScript mn "window.gjoaTest.vim.runExCommand(\"sp new Ghost\");"))
+             (let [after (js/await (.executeScript mn "return window.Spaces.list().length;"))
+                   names (js/await (.executeScript mn "return window.Spaces.list().map(s => s.name);"))]
+               (if (not= after before)
+                 (throw (Error. (str ":sp should be unknown — but a space was created. before=" before " after=" after " "
+                                     "names=" (.stringify JSON names)))))
+               (if (.includes names "Ghost")
+                 (throw (Error. (str ":sp created a \"Ghost\" space — alias was not removed. names=" (.stringify JSON names))))))))}
+
+   {:name "Spaces header — element exists in sidebar above tab panel"
+    :run (fn [mn]
+           (js/await (reset-spaces mn))
+           (let [probe (js/await (.executeScript mn
+                         "
+        const header = document.getElementById(\"gjoa-space-header\");
+        const label = document.getElementById(\"gjoa-space-header-label\");
+        const panel = document.getElementById(\"gjoa-tab-panel\");
+        const pinned = document.getElementById(\"gjoa-pinned-container\");
+        function precedes(a, b) {
+          if (!a || !b) return false;
+          const cmp = a.compareDocumentPosition(b);
+          return !!(cmp & Node.DOCUMENT_POSITION_FOLLOWING);
+        }
+        return {
+          headerExists: !!header,
+          labelText: label ? (label.getAttribute(\"value\") || label.textContent) : null,
+          precedesPanel: precedes(header, panel),
+          precedesPinned: precedes(header, pinned),
+        };
+      "))]
+             (if (not (.-headerExists probe))
+               (throw (Error. "#gjoa-space-header not in DOM")))
+             (if (not (.-precedesPanel probe))
+               (throw (Error. "#gjoa-space-header is not before #gjoa-tab-panel in DOM order")))
+             (if (not (.-precedesPinned probe))
+               (throw (Error. "#gjoa-space-header is not before #gjoa-pinned-container in DOM order")))
+             (if (not= (.-labelText probe) "Main")
+               (throw (Error. (str "header label should read \"Main\" on fresh state, got \"" (.-labelText probe) "\""))))))}
+
+   {:name "Spaces header — updates to the new name on :spc switch"
+    :run (fn [mn]
+           (js/await (reset-spaces mn))
+           (js/await (.executeScript mn "window.gjoaTest.vim.runExCommand(\"spc new Project\");"))
+           (js/await (wait-for mn
+             "
+        const l = document.getElementById(\"gjoa-space-header-label\");
+        return !!l && (l.getAttribute(\"value\") || l.textContent) === \"Project\";
+      " 1500))
+
+           ;; Now switch back to Main and verify header re-reflects.
+           (js/await (.executeScript mn
+             "
+        const main = window.Spaces.list().find(s => s.name === \"Main\");
+        window.Spaces.setActive(main.id);
+      "))
+           (js/await (wait-for mn
+             "
+        const l = document.getElementById(\"gjoa-space-header-label\");
+        return !!l && (l.getAttribute(\"value\") || l.textContent) === \"Main\";
+      " 1500)))}
+
+   {:name "Spaces header — aligned with content rail (matches nav-bar icon column)"
+    :run (fn [mn]
+           (js/await (reset-spaces mn))
+           (let [r (js/await (.executeScript mn
+                     "
+        const header = document.getElementById(\"gjoa-space-header\");
+        const label = document.getElementById(\"gjoa-space-header-label\");
+        const sidebar = document.getElementById(\"sidebar-main\");
+        const navIcons = sidebar?.querySelectorAll(\"#nav-bar .toolbarbutton-icon, #nav-bar image\");
+        let firstNavIconLeft = null;
+        if (navIcons) {
+          let minLeft = Infinity;
+          for (const ic of navIcons) {
+            const rect = ic.getBoundingClientRect();
+            if (rect.width > 0 && rect.left < minLeft) minLeft = rect.left;
+          }
+          if (minLeft !== Infinity) firstNavIconLeft = minLeft;
+        }
+        return {
+          headerLeft: header.getBoundingClientRect().left,
+          labelLeft: label.getBoundingClientRect().left,
+          firstNavIconLeft,
+          sidebarLeft: sidebar.getBoundingClientRect().left,
+        };
+      "))]
+             ;; The header content (its visible box, after margin) should not be
+             ;; flush against the sidebar edge — it should sit inside the inset.
+             (let [header-inset (- (.-headerLeft r) (.-sidebarLeft r))]
+               (if (< header-inset 6)
+                 (throw (Error. (str "Header flush-left against sidebar edge: headerLeft=" (.-headerLeft r) " "
+                                     "sidebarLeft=" (.-sidebarLeft r) " inset=" header-inset "px (expected ≥6px).")))))
+             ;; And the label's left edge should be within ~12px of the leftmost
+             ;; nav-bar icon — i.e. on the same visual content rail.
+             (if (not= (.-firstNavIconLeft r) nil)
+               (let [drift (.abs Math (- (.-labelLeft r) (.-firstNavIconLeft r)))]
+                 (if (> drift 24)
+                   (throw (Error. (str "Header label not aligned with nav-bar icons: labelLeft=" (.-labelLeft r) " "
+                                       "firstNavIconLeft=" (.-firstNavIconLeft r) " drift=" drift "px (expected ≤24px).")))))))) }
+
+   {:name "Spaces header — updates on :spc rename of the active space"
+    :run (fn [mn]
+           (js/await (reset-spaces mn))
+           (js/await (.executeScript mn "window.gjoaTest.vim.runExCommand(\"spc rename Inbox\");"))
+           (js/await (wait-for mn
+             "
+        const l = document.getElementById(\"gjoa-space-header-label\");
+        return !!l && (l.getAttribute(\"value\") || l.textContent) === \"Inbox\";
+      " 1500))
+           ;; Restore so subsequent tests see "Main".
+           (js/await (.executeScript mn "window.gjoaTest.vim.runExCommand(\"spc rename Main\");")))}]))
+
+;; The runner loads test modules via `mod.default`. Beagle's emitter has no
+;; `export default` form, so we expose the array under the named export `tests`
+;; (the runner reads `mod.default ?? []`). The default-export shim is noted in
+;; the conversion 'issues'.
+
+(js/export-default tests)

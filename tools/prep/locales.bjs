@@ -1,0 +1,95 @@
+#lang beagle/js
+;; Locale-string substitutions for Gjoa.
+;;
+;; Mozilla's en-US locale files contain Firefox-branded marketing
+;; (taglines, default-browser prompts, etc.). We rewrite the ones that
+;; matter so Gjoa doesn't ship with Firefox's voice baked into the UI.
+;;
+;; Pattern: literal string match -> replacement. Add new entries as we
+;; catch more Firefox-isms in the running browser. KEEP the patterns
+;; narrow -- never substitute on partial / generic substrings.
+;;
+;; Files we rewrite live under engine/browser/locales/en-US/. Each pass
+;; is idempotent: if the replacement is already present, the substitution
+;; is a no-op.
+;;
+;; Effort: Lane 2 -- these strings live in omni.ja, so changes need
+;; `bun run import` + `./mach build faster` to take effect.
+
+(ns gjoa.tools.prep.locales
+  (:require [fs :refer [existsSync readdirSync statSync]]
+            [fs/promises :refer [readFile writeFile]]
+            [path :refer [join]]
+            [gjoa.tools.prep.paths :refer [ENGINE-DIR]]
+            [gjoa.tools.prep.log :refer [log]]))
+(define-mode strict)
+
+(def LOCALE-DIR :- String (join ENGINE-DIR "browser" "locales" "en-US"))
+
+;; Substitutions to apply across every text file under LOCALE-DIR.
+;; Order doesn't matter (each is a literal find/replace).
+(def SUBSTITUTIONS :- Any
+  [ ;; Default-browser prompt tagline.
+    ["Get speed, safety, and privacy every time you browse."
+     "A browser at your command."]
+    ;; New-tab set-default-message variant (no Oxford comma).
+    ["Get speed, safety and privacy every time you browse."
+     "A browser at your command."]])
+
+;; Walk a directory recursively, collecting every regular file path.
+;; (The original used a generator; beagle has no generators, so we
+;; accumulate into an array via .push and return it.)
+(defn walk [root :- String] :- Any
+  (let [out []]
+    (letfn [(recurse [dir :- String] :- Any
+              (doseq [name (readdirSync dir)]
+                (let [p (join dir name)
+                      st (statSync p)]
+                  (if (.isDirectory st)
+                    (recurse p)
+                    (when (.isFile st) (.push out p))))))]
+      (recurse root))
+    out))
+
+(def TEXT-EXTS :- Any (RegExp. "\\.(ftl|dtd|properties|js|json|html|xml|md|txt)$" "i"))
+
+;; Apply every literal find/replace to `text`, returning the rewritten string.
+;; Folds over SUBSTITUTIONS with native Array.reduce (each entry is a literal
+;; find/replace via split+join, so order is irrelevant and the pass is idempotent).
+(defn apply-subs [text :- Any] :- Any
+  (.reduce SUBSTITUTIONS
+           (fn [acc pair]
+             (let [from (nth pair 0)
+                   to   (nth pair 1)]
+               (if (.includes acc from)
+                 (.join (.split acc from) to)
+                 acc)))
+           text))
+
+;; True when this path is one we should attempt to rewrite (text formats only).
+(defn text-file? [path :- String] :- Any
+  (.test TEXT-EXTS path))
+
+;; Rewrite a single file in place; returns 1 if it changed, else 0.
+(defn rewrite-one [path :- String] :- Any
+  (if (not (text-file? path))
+    0
+    (let [text (js/await (try (js/await (readFile path "utf8")) (catch Any e nil)))]
+      (if (nil? text)
+        0
+        (let [next (apply-subs text)]
+          (if (not= next text)
+            (do (js/await (writeFile path next "utf8")) 1)
+            0))))))
+
+(js/export (defn locales [] :- Any
+  (if (not (existsSync LOCALE-DIR))
+    (do
+      (.warn log (str "locales: " LOCALE-DIR " missing -- skipping (engine/ not imported?)"))
+      nil)
+    (do
+      (.step log "rewriting Firefox-isms in browser locales")
+      ;; Rewrite every text file, then sum the per-file change flags (0/1).
+      (let [results (js/await (.all Promise (.map (walk LOCALE-DIR) rewrite-one)))
+            changed (.reduce results (fn [a b] (+ a b)) 0)]
+        (.ok log (str "locales: rewrote " changed " file" (if (= changed 1) "" "s"))))))))

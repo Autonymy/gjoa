@@ -1,0 +1,287 @@
+#lang beagle/js
+;; Integration test runner.
+;;
+;; Spawns gjoa with --marionette + an ephemeral profile, drives the
+;; privileged chrome scope via Marionette to run integration tests.
+;; Streams structured pass/fail JSON for AI/CI consumption.
+;;
+;; Test shape:
+;;   tests/integration/<name>.ts exports `default` an array of test objects:
+;;     export default [
+;;       { name: "test name", run: async (mn) => { ... } },
+;;       ...
+;;     ];
+;;   Each `run` receives a connected, chrome-context Marionette client and
+;;   may throw to fail.
+;;
+;; Output:
+;;   {"type": "test:start", "name": "...", "file": "..."}
+;;   {"type": "test:pass",  "name": "...", "file": "...", "durationMs": N}
+;;   {"type": "test:fail",  "name": "...", "file": "...", "durationMs": N,
+;;    "error": "...", "stack": "..."}
+;;   {"type": "summary", "pass": N, "fail": M, "skip": K, "durationMs": ...}
+;;
+;; Exit code: 0 on full pass, 1 on any failure.
+;;
+;; The TS interfaces (TestContext, IntegrationTest, RunnerOptions, JsonEvent)
+;; were type-only and have no runtime presence — dropped here.
+(ns gjoa.tools.test-driver.runner
+  (:require [child_process :refer [spawn]]
+            [fs/promises :refer [readdir]]
+            [path :refer [join basename]]
+            [gjoa.tools.test-driver.marionette :refer [connectMarionette]]
+            [gjoa.tools.test-driver.profile :refer [createProfile]]
+            [gjoa.tools.test-driver.gjoa-locator :refer [locateGjoa]]))
+(define-mode strict)
+
+(declare-extern [process JSON Date setTimeout clearTimeout] Any)
+
+;; SkipError: the original was a `class extends Error` with name "SkipError".
+;; Beagle has no JS-class form, so this is a factory that builds an Error and
+;; stamps `name`. Detection downstream is by `(.-name e)` rather than
+;; `instanceof` (which beagle also has no form for).
+(js/export (defn SkipError [reason :- String] :- Any
+  (let [e (Error. reason)]
+    (set! (.-name e) "SkipError")
+    e)))
+
+(defn emit [ev :- Any] :- Any
+  (.write (.-stdout process) (str (.stringify JSON ev) "\n")))
+
+(defn logErr [line :- String] :- Any
+  (.write (.-stderr process) (str "[runner] " line "\n")))
+
+;; Dynamic `import(path)` — beagle's static `import` form can't express a
+;; runtime module load, so build the dynamic importer via Function.
+(def dynImport :- Any (Function. "p" "return import(p)"))
+
+(defn loadTests [testDir :- String] :- Any
+  (let [entries
+        (js/await
+          (try
+            (js/await (readdir testDir))
+            (catch Any e
+              (throw (Error. (str "could not read " testDir ": " (.-message e)))))))
+        files (.filter entries
+                (fn [f]
+                  (and (.test (RegExp. "\\.(ts|tsx|mjs|js)$") f)
+                       (not (.endsWith f ".d.ts")))))
+        n (.-length files)
+        out []]
+    ;; Sequential, awaited load (one dynamic import at a time). A `doseq`
+    ;; here compiles to a non-awaited forEach (fire-and-forget) which would
+    ;; return `out` before the imports resolve — so use an explicit awaited
+    ;; loop with recur as the SOLE tail form (side effects bound via _).
+    (js/await
+      (loop [i 0]
+        (when (< i n)
+          (let [f (aget files i)
+                path (join testDir f)
+                testMod (js/await (dynImport path))
+                tests (or (.-default testMod) [])
+                _push (if (not (.isArray Array tests))
+                        (logErr (str "skipping " f " — default export is not an array"))
+                        (.push out {:file (basename f) :tests tests}))]
+            (recur (+ i 1))))))
+    out))
+
+(defn spawnGjoa [opts :- Any] :- Any
+  ;; --remote-allow-system-access is required for privileged ("chrome")
+  ;; context script eval — landed in Firefox 128+ as a safety gate.
+  (let [verbose (.-verbose opts)
+        args (.concat
+               ["--profile" (.-profilePath opts)
+                "--marionette"]
+               (if (.-headed opts) [] ["--headless"])
+               ["--no-remote"
+                "--remote-allow-system-access"
+                "-marionette-port" (String (.-marionettePort opts))])
+        ;; Pass GJOA_ALLOW_INSECURE=1 unconditionally so the in-process
+        ;; security gate (src/gjoa/chrome/bjs/security/index.bjs) doesn't
+        ;; quit the test browser. The test environment runs against
+        ;; whatever Firefox version the local build is at — that's
+        ;; unrelated to "is this build safe to ship to users."
+        env (.assign Object {} (.-env process) {"GJOA_ALLOW_INSECURE" "1"})
+        child (spawn (.-gjoaBin opts) args
+                     {:stdio (if verbose "inherit" "pipe")
+                      :env env})]
+    (when (not verbose)
+      (let [out (.-stdout child)]
+        (when out (.resume out)))
+      (let [err (.-stderr child)]
+        (when err (.resume err))))
+    (.once child "error" (fn [e] (logErr (str "gjoa spawn error: " (.-message e)))))
+    child))
+
+(js/export (defn runAll [opts0 :- Any] :- Any
+  (let [opts (or opts0 {})
+        gjoaBin (or (.-gjoaBin opts) (.-path (locateGjoa)))
+        ;; Compiled test suites live under .beagle-tools/ (the source is .bjs).
+        testDir (or (.-testDir opts) (join (.cwd process) ".beagle-tools" "gjoa" "tests" "integration"))
+        marionettePort (or (.-marionettePort opts) 2828)]
+
+    (when (.-headed opts)
+      (logErr "WARNING: --headed mode will pop a real gjoa window on your display."))
+
+    (let [suites (js/await (loadTests testDir))]
+      (when (.-grep opts)
+        (let [needle (.toLowerCase (.-grep opts))]
+          (doseq [s suites]
+            (set! (.-tests s)
+                  (.filter (.-tests s)
+                           (fn [t] (.includes (.toLowerCase (.-name t)) needle)))))))
+      (let [totalCount (.reduce suites (fn [n s] (+ n (.-length (.-tests s)))) 0)]
+        (if (= totalCount 0)
+          (do
+            (emit {:type "summary" :pass 0 :fail 0 :skip 0 :durationMs 0
+                   :note (if (.-grep opts)
+                           (str "no tests match --grep \"" (.-grep opts) "\"")
+                           "no tests found")})
+            {:pass 0 :fail 0 :skip 0})
+
+          (let [profile (atom nil)
+                gjoa (atom nil)
+                mn (atom nil)
+                pass (atom 0)
+                fail (atom 0)
+                skip (atom 0)
+                start (.now Date)]
+
+            (let [killGjoa
+                  (fn [] :- Any
+                    (let [g (deref gjoa)]
+                      (when (and g (not (.-killed g)))
+                        (.kill g "SIGTERM")
+                        (js/await
+                          (Promise.
+                            (fn [r]
+                              (let [timer (setTimeout
+                                            (fn []
+                                              (try (.kill g "SIGKILL") (catch Any _ nil))
+                                              (r))
+                                            3000)]
+                                (.once g "exit" (fn [] (clearTimeout timer) (r))))))))))
+
+                  bootGjoa
+                  (fn [profilePath] :- Any
+                    (let [g (js/await
+                            (spawnGjoa {:gjoaBin gjoaBin
+                                        :profilePath profilePath
+                                        :marionettePort marionettePort
+                                        :verbose (.-verbose opts)
+                                        :headed (.-headed opts)}))]
+                    (reset! gjoa g))
+                    (let [client (js/await (connectMarionette {:port marionettePort}))]
+                      (js/await (.newSession client))
+                      (js/await (.setContext client "chrome"))
+                      client))
+
+                  ;; Run a single test: emit start, run, tally pass/skip/fail.
+                  ;; Extracted to a fn so the suite/test iteration can be a
+                  ;; clean awaited loop (recur as sole tail form).
+                  runOneTest
+                  (fn [file :- String t :- Any] :- Any
+                    (emit {:type "test:start" :name (.-name t) :file file})
+                    (let [tStart (.now Date)
+                          ctx {:profilePath (.-path (deref profile))
+                               :headed (boolean (.-headed opts))
+                               :skip (fn [reason] (throw (SkipError reason)))
+                               :restartGjoa
+                               (fn [] :- Any
+                                 (try (js/await (.quit (deref mn))) (catch Any _ nil))
+                                 (.disconnect (deref mn))
+                                 (js/await (killGjoa))
+                                 (let [m (js/await (bootGjoa (.-path (deref profile))))]
+                                   (reset! mn m))
+                                 (deref mn))}]
+                      (try
+                        (do
+                          (js/await (.run t (deref mn) ctx))
+                          (emit {:type "test:pass" :name (.-name t) :file file
+                                 :durationMs (- (.now Date) tStart)})
+                          (swap! pass inc))
+                        (catch Any e
+                          (if (= (.-name e) "SkipError")
+                            (do
+                              (emit {:type "test:skip" :name (.-name t) :file file
+                                     :durationMs (- (.now Date) tStart)
+                                     :reason (.-message e)})
+                              (swap! skip inc))
+                            (do
+                              (emit {:type "test:fail" :name (.-name t) :file file
+                                     :durationMs (- (.now Date) tStart)
+                                     :error (or (.-message e) (String e))
+                                     :stack (.-stack e)})
+                              (swap! fail inc)))))))
+
+                  ;; Sequential over all tests in a suite (awaited).
+                  runSuite
+                  (fn [suite :- Any] :- Any
+                    (let [file (.-file suite)
+                          ts (.-tests suite)
+                          m (.-length ts)]
+                      (js/await
+                        (loop [j 0]
+                          (when (< j m)
+                            (let [_run (js/await (runOneTest file (aget ts j)))]
+                              (recur (+ j 1))))))))]
+
+              (js/await
+               (try
+                (do
+                  (let [p (js/await (createProfile))] (reset! profile p))
+                  (when (.-verbose opts) (logErr (str "profile: " (.-path (deref profile)))))
+                  (when (.-verbose opts) (logErr (str "binary:  " gjoaBin)))
+                  (let [m (js/await (bootGjoa (.-path (deref profile))))] (reset! mn m))
+
+                  ;; Sequential over all suites (awaited).
+                  (js/await
+                    (loop [si 0]
+                      (when (< si (.-length suites))
+                        (let [_suite (js/await (runSuite (aget suites si)))]
+                          (recur (+ si 1)))))))
+                (catch Any e
+                  (logErr (str "runner failure: " (or (.-stack e) (.-message e))))
+                  (swap! fail inc))
+                (finally
+                  (when (deref mn)
+                    (try (js/await (.deleteSession (deref mn))) (catch Any _ nil))
+                    (.disconnect (deref mn)))
+                  (js/await (killGjoa))
+                  (when (deref profile)
+                    (if (.-verbose opts)
+                      (logErr (str "profile preserved at " (.-path (deref profile)) " for inspection"))
+                      (try (js/await (.cleanup (deref profile))) (catch Any _ nil))))))))
+
+            (emit {:type "summary" :pass (deref pass) :fail (deref fail) :skip (deref skip)
+                   :durationMs (- (.now Date) start)})
+            {:pass (deref pass) :fail (deref fail) :skip (deref skip)})))))))
+
+;; CLI entrypoint. The original guarded this with `import.meta.main`; beagle
+;; has no import.meta, and no module imports `runAll` at runtime (the integration
+;; tests import only the type-only `IntegrationTest`), so the block runs
+;; unconditionally — equivalent to running the file as a script.
+(def cliArgs :- Any (.slice (.-argv process) 2))
+(def cliVerbose :- Any (.includes cliArgs "--verbose"))
+(def cliHeaded :- Any (.includes cliArgs "--headed"))
+(def cliGrep :- Any
+  (loop [i 0 grep nil]
+    (if (>= i (.-length cliArgs))
+      grep
+      (let [a (aget cliArgs i)]
+        (cond
+          (and (= a "--grep") (aget cliArgs (+ i 1)))
+          (recur (+ i 2) (aget cliArgs (+ i 1)))
+          (.startsWith a "--grep=")
+          (recur (+ i 1) (.slice a (.-length "--grep=")))
+          :else
+          (recur (+ i 1) grep))))))
+
+;; Run the suite only when invoked directly (tests import this module for types).
+(when (.-main (js/import-meta))
+  (.catch
+    (.then (runAll {:verbose cliVerbose :grep cliGrep :headed cliHeaded})
+           (fn [res] (.exit process (if (> (.-fail res) 0) 1 0))))
+    (fn [e]
+      (logErr (str "fatal: " (or (.-stack e) e)))
+      (.exit process 1))))

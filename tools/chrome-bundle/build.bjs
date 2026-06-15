@@ -1,0 +1,92 @@
+#lang beagle/js
+;; Concatenate beagle-compiled JS files into IIFE .uc.js bundles
+;; in dist/chrome/JS/ for GjoaLoader.
+;;
+;; Run via:
+;;   bun run chrome:bundle
+(ns gjoa.tools.chrome-bundle.build
+  (:require [fs/promises :refer [readFile mkdir writeFile]]
+            [path :refer [join]]
+            [gjoa.tools.chrome-bundle.build-config :refer [entries]]))
+(define-mode strict)
+
+(declare-extern [process console Array Promise] Any)
+
+;; tools run via `bun run` from repo root; import.meta.dir is repo-relative.
+(def REPO-ROOT :- String (.cwd process))
+(def OUT-DIR :- String (join REPO-ROOT "dist" "chrome" "JS"))
+
+(defn process-file [code :- String] :- Any
+  (let [exports []
+        processed
+        (.join
+          (.map
+            (.filter
+              (.split code "\n")
+              (fn [line]
+                (cond
+                  (and (.test (RegExp. "^import\\s+") line)
+                       (.test (RegExp. "from\\s+['\"]") line)) false
+                  (.test (RegExp. "^import\\(") line) false
+                  :else true)))
+            (fn [line]
+              (let [fn-match (.match line (RegExp. "^export\\s+function\\s+(\\w+)"))]
+                (if fn-match
+                  (do
+                    (.push exports (aget fn-match 1))
+                    (.replace line (RegExp. "^export\\s+function\\s+(\\w+)") "$1 = function"))
+                  (let [decl-match (.match line (RegExp. "^export\\s+(?:const|let|var)\\s+(\\w+)"))]
+                    (if decl-match
+                      (do
+                        (.push exports (aget decl-match 1))
+                        (.replace line (RegExp. "^export\\s+(?:const|let|var)\\s+") ""))
+                      line)))))) "\n")]
+    {:code processed :exports exports}))
+
+(defn build-one [entry :- Entry] :- Any
+  (let [all-exports []
+        blocks []
+        files (.-files entry)
+        n (.-length files)
+        failed
+        (js/await
+          (loop [i 0]
+            (if (>= i n)
+              false
+              (let [file (aget files i)
+                    abs-path (join REPO-ROOT file)
+                    fail
+                    (js/await
+                      (try
+                        (let [raw (js/await (readFile abs-path "utf-8"))
+                              result (process-file raw)
+                              code (.-code result)
+                              exports (.-exports result)]
+                          (doseq [e exports]
+                            (.push all-exports e))
+                          (.push blocks (str "{\n" code "\n}"))
+                          false)
+                        (catch Any err
+                          (.error console (str "✗ " file ": " (.-message err)))
+                          true)))]
+                (if fail
+                  true
+                  (recur (+ i 1)))))))]
+    (if failed
+      false
+      (let [unique (.from Array (Set. all-exports))
+            var-decl (if (> (.-length unique) 0)
+                       (str "var " (.join unique ", ") ";\n\n")
+                       "")
+            body (.join blocks "\n\n")
+            iife (str "(function() {\n\"use strict\";\n" var-decl body "\n})();")
+            output (str (.-banner entry) "\n\n" iife)
+            out-path (join OUT-DIR (.-out entry))]
+        (js/await (writeFile out-path output))
+        (.log console (str "✓ " out-path "  (" (.-length body) " bytes)"))
+        true))))
+
+(js/await (mkdir OUT-DIR {:recursive true}))
+(def results :- Any (js/await (.all Promise (.map entries build-one))))
+(when (.some results (fn [ok] (not ok)))
+  (.exit process 1))

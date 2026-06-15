@@ -1,0 +1,47 @@
+#lang beagle/js
+(ns gjoa.tools.prep.config
+  (:require [fs :refer [readFileSync]]
+            [path :refer [join]]
+            [gjoa.tools.prep.paths :refer [REPO-ROOT]]))
+(define-mode strict)
+(declare-extern [JSON] Any)
+
+;; GjoaConfig shape (was a TS interface; carried as documentation here):
+;;   name             "Gjoa"
+;;   binaryName       "gjoa"
+;;   appId            "gjoa"
+;;   vendor           "tompassarelli"
+;;   displayVersion   "0.1.0"
+;;   license          "MPL-2.0"
+;;   github           "tompassarelli/gjoa"
+;;   firefox          { version candidate candidateBuild }
+;;   branding         { shortName shorterName fullName productName vendorName
+;;                      backgroundColor displayName }
+;;   urls             { homepageOverride welcome welcomeAdditional updateManual
+;;                      updateDetails releaseNotes releaseNotesAboutDialog
+;;                      releaseNotesPrompt updateHostname }
+
+;; Module-private cache. An atom (not a bare def) because top-level defs emit
+;; `const` in JS; the original `let cached` mutation becomes atom reset!/deref.
+(def cached :- Any (atom nil))
+
+(js/export (defn loadConfig [] :- Any
+  (if (deref cached)
+    (deref cached)
+    (let [path (join REPO-ROOT "gjoa.json")
+          raw (readFileSync path "utf8")
+          parsed (.parse JSON raw)]
+      (validate parsed)
+      (reset! cached parsed)
+      parsed))))
+
+(defn validate [c :- Any] :- Any
+  (let [required ["name" "binaryName" "appId" "vendor" "displayVersion"
+                  "license" "github" "firefox" "branding" "urls"]]
+    (doseq [k required]
+      (if (= (get c k) js/undefined)
+        (throw (Error. (str "gjoa.json missing required field: " k)))))
+    (if (not (.-version (.-firefox c)))
+      (throw (Error. "gjoa.json: firefox.version is required")))
+    (if (not (.match (.-binaryName c) (RegExp. "^[a-z0-9-]+$")))
+      (throw (Error. (str "gjoa.json: binaryName \"" (.-binaryName c) "\" must be lowercase alphanumeric+hyphen"))))))

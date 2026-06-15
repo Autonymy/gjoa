@@ -1,0 +1,98 @@
+#lang beagle/js
+;; Regression test for tools/prep/branding.ts.
+;;
+;; Ensures Zen-browser-isms (and other upstream-template artifacts that
+;; would leak proprietary URLs into our build) never appear in the
+;; generated branding tree. This is the test that would have caught the
+;; surfer leak we discovered.
+;;
+;; Runs only if `engine/browser/branding/gjoa/` exists — i.e. only after
+;; `bun run init`. CI can either run init first OR skip these tests in
+;; environments without network/disk for a full mozilla-central download.
+(ns gjoa.tests.branding.test
+  (:require [fs :refer [existsSync readdirSync readFileSync statSync]]
+            [path :refer [join]]
+            [gjoa.tools.prep.config :refer [loadConfig]]
+            [gjoa.tools.prep.paths :refer [ENGINE-BRANDING-DIR]]))
+(define-mode strict)
+
+;; bun:test's specifier contains a ':', which beagle rejects as a require
+;; namespace (module paths must match ^[a-zA-Z0-9._/-]+$). Bun's test runner
+;; does NOT auto-globalize describe/test/expect, so the generated JS needs this
+;; import prepended manually (same pattern as test/harness.bjs's happy-dom):
+;;   import { describe, expect, test } from "bun:test";
+(declare-extern [describe expect test] Any)
+
+(def cfg :- Any (loadConfig))
+(def BRANDING-OUT :- String (join ENGINE-BRANDING-DIR (.-binaryName cfg)))
+(def HAS-ENGINE :- Any (existsSync BRANDING-OUT))
+
+(defn walk [dir :- String] :- Any
+  (let [out []]
+    (doseq [name (readdirSync dir)]
+      (let [path (join dir name)]
+        ;; Both branches must be plain expressions so the ternary emits cleanly:
+        ;; concat the recursive result rather than looping a push (a doseq in a
+        ;; branch emits a statement-block that breaks the surrounding `? :`).
+        (if (.isDirectory (statSync path))
+          (set! out (.concat out (walk path)))
+          (.push out path))))
+    out))
+
+(def TEXT-EXT :- Any (RegExp. "\\.(js|dtd|ftl|properties|sh|nsi|xml|css|json|mn|svg|html|txt|md)$" "i"))
+
+(defn isText [path :- String] :- Any
+  (let [parts (.split path "/")
+        base (or (.pop parts) "")]
+    (if (.includes ["moz.build" "configure.sh" "branding.nsi" "jar.mn"] base)
+      true
+      (.test TEXT-EXT path))))
+
+(let [suite (.skipIf describe (not HAS-ENGINE))]
+  (suite "branding regression"
+    (fn []
+      (let [all-text (if HAS-ENGINE
+                       (.map (.filter (walk BRANDING-OUT) isText)
+                             ;; let-wrap forces a block body so the map literal
+                             ;; emits as `return {...}`; a bare concise-arrow
+                             ;; object body emits invalid `=> {path: p, ...}`.
+                             (fn [p] (let [path p] {:path path :text (readFileSync path "utf8")})))
+                       [])]
+
+        (test "no zen-browser.app references anywhere in generated branding"
+          (fn []
+            (let [hits (.filter all-text (fn [e] (.includes (.-text e) "zen-browser.app")))]
+              (.toEqual (expect (.map hits (fn [h] (.-path h)))) []))))
+
+        (test "no nightly.mozilla.org references (we replaced these in gjoa.json)"
+          (fn []
+            (let [hits (.filter all-text (fn [e] (.includes (.-text e) "nightly.mozilla.org")))]
+              (.toEqual (expect (.map hits (fn [h] (.-path h)))) []))))
+
+        (test "no Nightly brand string left over"
+          (fn []
+            ;; Brand short/shorter/full names should all be substituted out.
+            (let [ftl (.find all-text (fn [f] (.endsWith (.-path f) "brand.ftl")))]
+              (.toBeDefined (expect ftl))
+              (.not.toMatch (expect (.-text ftl)) (RegExp. "= Nightly"))
+              (.toMatch (expect (.-text ftl)) (RegExp. (str "= " (.-shortName (.-branding cfg))))))))
+
+        (test "welcome URL pref is empty (no auto-opened first-run tabs)"
+          (fn []
+            (let [branding (.find all-text (fn [f] (.endsWith (.-path f) "firefox-branding.js")))]
+              (.toBeDefined (expect branding))
+              (.toMatch (expect (.-text branding))
+                        (RegExp. "pref\\(\"startup\\.homepage_welcome_url\",\\s*\"\"\\);")))))
+
+        (test "update URLs point to gjoa.json's configured target"
+          (fn []
+            (let [branding (.find all-text (fn [f] (.endsWith (.-path f) "firefox-branding.js")))]
+              (.toBeDefined (expect branding))
+              (.toContain (expect (.-text branding)) (.-updateManual (.-urls cfg))))))
+
+        (test "configure.sh display name matches gjoa.json"
+          (fn []
+            (let [cfgsh (.find all-text (fn [f] (.endsWith (.-path f) "configure.sh")))]
+              (.toBeDefined (expect cfgsh))
+              (.toContain (expect (.-text cfgsh))
+                          (str "MOZ_APP_DISPLAYNAME=" (.-displayName (.-branding cfg)))))))))))

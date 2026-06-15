@@ -1,0 +1,179 @@
+#lang beagle/js
+;; tools/bench/memory.bjs — Memory usage benchmark.
+;;
+;; Launches browser, opens N tabs, waits for settle, then sums PSS
+;; (proportional set size) from /proc/<pid>/smaps_rollup across the full
+;; process tree. PSS attributes each shared page proportionally to the
+;; processes mapping it, so summing across the tree does not double-count
+;; shared memory the way summing VmRSS would.
+(ns gjoa.tools.bench.memory
+  (:require [util :refer [parseArgs]]
+            [path :refer [join]]
+            [gjoa.tools.bench.stats :refer [formatResult]]))
+(define-mode strict)
+(declare-extern [Bun process console Date Error Array RegExp parseInt isNaN setTimeout clearTimeout] Any)
+
+(def parsed :- Any
+  (parseArgs {:args (.slice (.-argv Bun) 2)
+              :strict false
+              :options {:tabs {:type "string" :default "50"}
+                        :gjoa-bin {:type "string"}
+                        :firefox-bin {:type "string"}
+                        :settle-time {:type "string" :default "10000"}}}))
+
+(def values :- Any (.-values parsed))
+
+(def NUM-TABS :- Any (parseInt (get values "tabs") 10))
+(def SETTLE-MS :- Any (parseInt (get values "settle-time") 10))
+
+(defn findBinary [name :- String] :- String
+  (let [local-result
+        (when (= name "gjoa")
+          (let [local (str (.cwd process) "/result/bin/gjoa")]
+            (try
+              (let [stat (.file Bun local)]
+                (when (> (.-size stat) 0)
+                  local))
+              (catch Error e nil))))]
+    (if local-result
+      local-result
+      (let [result (.spawnSync Bun ["which" name])
+            path (.trim (.toString (.-stdout result)))]
+        (if (and (= (.-exitCode result) 0) path)
+          path
+          (do
+            (.error console (str "ERROR: cannot find " name " binary. Use --" name "-bin=<path>"))
+            (.exit process 1)))))))
+
+(def GJOA-BIN :- Any (or (get values "gjoa-bin") (findBinary "gjoa")))
+(def FIREFOX-BIN :- Any (or (get values "firefox-bin") (findBinary "firefox")))
+
+;; Get all PIDs in the process tree rooted at the given PID.
+(defn getProcessTree [rootPid :- Any] :- Any
+  (let [pids (atom [rootPid])
+        result (.spawnSync Bun ["pgrep" "-P" (String rootPid)])]
+    (when (= (.-exitCode result) 0)
+      (let [children (.filter (.split (.trim (.toString (.-stdout result))) "\n") Boolean)]
+        (doseq [child children]
+          (let [childPid (parseInt child 10)]
+            (when (not (isNaN childPid))
+              (reset! pids (.concat @pids (getProcessTree childPid))))))))
+    @pids))
+
+;; Sum PSS (in KB) from /proc/<pid>/smaps_rollup across all processes in the
+;; tree. PSS divides each shared page among the processes that map it, so the
+;; tree-wide sum reflects unique physical memory without double-counting
+;; shared pages (unlike VmRSS).
+(defn getTreePssKB [rootPid :- Any] :- Any
+  (let [pids (getProcessTree rootPid)
+        totalKB (atom 0)
+        re (RegExp. "^Pss:\\s+(\\d+)\\s+kB" "m")]
+    (doseq [pid pids]
+      (try
+        (let [rollup (.spawnSync Bun ["cat" (str "/proc/" pid "/smaps_rollup")])
+              text (.toString (.-stdout rollup))
+              match (.match text re)]
+          (when match
+            (reset! totalKB (+ @totalKB (parseInt (get match 1) 10)))))
+        ;; Process may have exited, or smaps_rollup is unreadable (permissions).
+        (catch Error e nil)))
+    @totalKB))
+
+(defn measureMemory [binary :- String label :- String windowPattern :- String] :- Any
+  (let [profileDir (str (join (.cwd process) "tools" "bench") "/.bench-profile-mem-" (.now Date))]
+    (.spawnSync Bun ["mkdir" "-p" profileDir])
+    (try
+      (.log console (str "\n  Launching " label "..."))
+      (.log console (str "  Binary: " binary))
+      (.log console (str "  Tabs to open: " NUM-TABS))
+
+      ;; Build list of URLs — use about:blank for consistent measurement
+      (let [urls (.from Array {:length NUM-TABS} (fn [] "about:blank"))
+            ;; Launch with all tabs specified as arguments
+            browser (.spawn Bun (.concat [binary
+                                          "--no-remote"
+                                          "--profile" profileDir]
+                                         urls)
+                            {:stdout "ignore"
+                             :stderr "ignore"})
+            pid (.-pid browser)]
+        (.log console (str "  PID: " pid))
+
+        ;; Wait for window to appear
+        (let [xdotool (.spawn Bun ["xdotool" "search" "--sync" "--onlyvisible" "--name" windowPattern]
+                              {:stdout "ignore"
+                               :stderr "ignore"})
+              ;; Timeout after 30 seconds — kill xdotool (and the browser) so we don't
+              ;; hang or measure a process that never showed a window.
+              state (atom false)
+              windowTimeout (setTimeout (fn []
+                                          (reset! state true)
+                                          (.kill xdotool)
+                                          (.kill browser))
+                                        30000)
+              windowExit (js/await (.-exited xdotool))]
+          (clearTimeout windowTimeout)
+
+          (when @state
+            (throw (Error. (str "xdotool timed out after 30s waiting for a window matching /" windowPattern "/. "
+                                "Binary may have failed to launch, or the title pattern is wrong."))))
+          (when (not= windowExit 0)
+            (throw (Error. (str "xdotool exited with code " windowExit " (no window matched /" windowPattern "/). "
+                                "Refusing to record a bogus measurement."))))
+
+          ;; Let the browser settle — tabs load, GC runs, etc.
+          (.log console (str "  Waiting " (/ SETTLE-MS 1000) "s for settle..."))
+          (js/await (.sleep Bun SETTLE-MS))
+
+          ;; Measure PSS (proportional set size) across the process tree.
+          (let [pssKB (getTreePssKB pid)
+                totalMB (/ pssKB 1024)
+                perTabMB (/ totalMB NUM-TABS)]
+            (.log console (str "  Total RSS: " (.toFixed totalMB 1) " MB"))
+            (.log console (str "  Per-tab:   " (.toFixed perTabMB 2) " MB"))
+
+            ;; Kill browser
+            (.kill browser)
+            (js/await (.-exited browser))
+
+            {:totalMB totalMB :perTabMB perTabMB :tabCount NUM-TABS})))
+      (finally
+        (.spawnSync Bun ["rm" "-rf" profileDir])))))
+
+;; Multiple samples for statistical significance
+(defn runBenchmark [binary :- String label :- String windowPattern :- String runs :- Any] :- Any
+  (let [results (atom [])]
+    (doseq [i (range runs)]
+      (.log console (str "\n  --- " label " run " (+ i 1) "/" runs " ---"))
+      (let [res (js/await (measureMemory binary label windowPattern))]
+        (swap! results conj (.-totalMB res))
+        ;; Pause between runs
+        (js/await (.sleep Bun 2000))))
+    @results))
+
+;; --- Main ---
+
+;; Preflight: xdotool is required to detect window visibility.
+(when (= (.which Bun "xdotool") nil)
+  (.error console "ERROR: xdotool not found on PATH. Install it (e.g. `apt install xdotool`).")
+  (.exit process 1))
+
+(.log console "=== Memory Benchmark ===")
+(.log console (str "  Tabs: " NUM-TABS))
+(.log console (str "  Settle time: " (/ SETTLE-MS 1000) "s"))
+(.log console (str "  Gjoa:    " GJOA-BIN))
+(.log console (str "  Firefox: " FIREFOX-BIN))
+
+(def RUNS :- Any 3)
+(def gjoaResults :- Any (js/await (runBenchmark GJOA-BIN "Gjoa" "Gjoa|gjoa" RUNS)))
+(def firefoxResults :- Any (js/await (runBenchmark FIREFOX-BIN "Firefox" "Mozilla Firefox|Firefox" RUNS)))
+
+(.log console "\n=== Comparison ===\n")
+(.log console (formatResult (str "Memory (" NUM-TABS " tabs, total PSS MB)") gjoaResults firefoxResults "MB"))
+
+;; Per-tab summary
+(def gjoaPerTab :- Any (.map gjoaResults (fn [v] (/ v NUM-TABS))))
+(def firefoxPerTab :- Any (.map firefoxResults (fn [v] (/ v NUM-TABS))))
+(.log console "")
+(.log console (formatResult "Memory (per-tab MB)" gjoaPerTab firefoxPerTab "MB"))
+(.log console "")

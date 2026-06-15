@@ -1,0 +1,91 @@
+#lang beagle/js
+(ns gjoa.tools.chrome-bundle.build-config)
+(define-mode strict)
+
+(defrecord Entry [out :- String
+                  files :- (Vec String)
+                  banner :- String])
+
+(def B :- String ".beagle-out")
+
+(js/export (def entries :- (Vec Entry)
+  [{:out "gjoa-hello.uc.js"
+    :files [(str B "/hello/index.js")]
+    :banner (.join ["// ==UserScript=="
+                    "// @name           Gjoa Hello"
+                    "// @description    Confirms the chrome loader is working"
+                    "// @include        main"
+                    "// @onlyonce"
+                    "// ==/UserScript=="]
+                   "\n")}
+   {:out "gjoa-security.uc.js"
+    :files [(str B "/security/index.js")]
+    :banner (.join ["// ==UserScript=="
+                    "// @name           Gjoa Security Gate"
+                    "// @description    Refuses to keep running if Firefox pin is stale"
+                    "// @include        main"
+                    "// ==/UserScript=="]
+                   "\n")}
+   {:out "gjoa-drawer.uc.js"
+    :files [(str B "/tabs/log.js")
+            (str B "/drawer/timing.js")
+            (str B "/drawer/banner.js")
+            (str B "/drawer/compact.js")
+            (str B "/drawer/drag-overlay.js")
+            (str B "/drawer/layout.js")
+            (str B "/drawer/sidebar-button.js")
+            (str B "/drawer/urlbar.js")
+            (str B "/drawer/index.js")]
+    :banner (.join ["// ==UserScript=="
+                    "// @name           Gjoa Drawer"
+                    "// @description    Manages sidebar layout, compact mode, and toolbar positioning"
+                    "// @include        main"
+                    "// ==/UserScript=="]
+                   "\n")}
+   {:out "gjoa-tabs.uc.js"
+    :files [(str B "/tabs/log.js")
+            (str B "/tabs/types.js")
+            (str B "/tabs/constants.js")
+            (str B "/tabs/state.js")
+            (str B "/firefox/dom.js")
+            (str B "/firefox/files.js")
+            (str B "/firefox/observers.js")
+            (str B "/firefox/prefs.js")
+            (str B "/firefox/tabs.js")
+            (str B "/firefox/window.js")
+            (str B "/tabs/helpers.js")
+            (str B "/tabs/snapshot.js")
+            (str B "/tabs/history.js")
+            (str B "/spaces/types.js")
+            (str B "/spaces/visibility.js")
+            (str B "/spaces/manager.js")
+            (str B "/platform/scheduler.js")
+            (str B "/platform/window-tabs.js")
+            (str B "/platform/window.js")
+            (str B "/platform/history.js")
+            (str B "/platform/tabs-reconciler.js")
+            (str B "/platform/cross-window-tabs.js")
+            (str B "/platform/index.js")
+            (str B "/tabs/layout.js")
+            (str B "/tabs/rows.js")
+            (str B "/tabs/drag.js")
+            (str B "/tabs/menu.js")
+            (str B "/tabs/events.js")
+            (str B "/tabs/picker.js")
+            (str B "/tabs/content-focus.js")
+            (str B "/tabs/vim.js")
+            (str B "/tabs/index.js")]
+    :banner (.join ["// ==UserScript=="
+                    "// @name           Gjoa Tabs"
+                    "// @description    Tree-style tab panel with vim keybindings"
+                    "// @include        main"
+                    "// ==/UserScript=="]
+                   "\n")}
+   {:out "gjoa-dark-mode.uc.js"
+    :files [(str B "/dark-mode/index.js")]
+    :banner (.join ["// ==UserScript=="
+                    "// @name           Gjoa Dark Mode"
+                    "// @description    Chrome-level dark mode: native color-scheme override + optional CSS inversion filter"
+                    "// @include        main"
+                    "// ==/UserScript=="]
+                   "\n")}]))

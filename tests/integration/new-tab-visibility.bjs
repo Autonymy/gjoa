@@ -1,0 +1,133 @@
+#lang beagle/js
+;; Regression: new tabs must appear in the gjoa sidebar.
+;;
+;; User-reported: "when i switch tabs i don't see new tabs created in the
+;; sidebar". This test exercises three paths a user can hit to open a new
+;; tab and verifies a row appears in the sidebar for each.
+;;
+;; NOTE: the runner consumes `mod.default ?? mod.tests`. Beagle has no
+;; `export default` form, so this module exports `tests` as a NAMED export
+;; (the runner loader accepts the `tests` fallback).
+(ns gjoa.tests.integration.new-tab-visibility)
+(define-mode strict)
+
+;; Ambient globals: Date / setTimeout / Promise / Error.
+;; IntegrationTest / MarionetteClient were type-only imports in the .ts —
+;; they carry no runtime binding, so they become Any here.
+(declare-extern [Date setTimeout Promise Error] Any)
+
+(defn waitFor [mn :- Any scriptReturningBool :- String timeoutMs :- Any] :- Any
+  (let [timeout (or timeoutMs 1500)
+        deadline (+ (.now Date) timeout)]
+    ;; while (Date.now() < deadline) { try { ok = await ...; if (ok) return } ... }
+    ;; loop/recur carries the most-recent error so we can include it on timeout.
+    (loop [lastErr nil]
+      (if (< (.now Date) deadline)
+        (let [ok-or-err
+              (try
+                (let [ok (js/await (.executeScript mn scriptReturningBool))]
+                  (if ok :ok nil))
+                (catch Any e e))]
+          (if (= ok-or-err :ok)
+            nil ;; success — return
+            (do
+              (js/await (Promise. (fn [r] (setTimeout r 20))))
+              (recur (or ok-or-err lastErr)))))
+        (throw (Error.
+                 (str "timed out waiting for: " (.slice scriptReturningBool 0 200)
+                      (if lastErr (str " (last error: " (.-message lastErr) ")") ""))))))))
+
+(def visibleTabRows :- String
+  "
+  return [...document.querySelectorAll(\"#gjoa-tab-panel .gjoa-tab-row, #gjoa-tab-panel-pinned .gjoa-tab-row\")]
+    .filter(r => !r.hidden).length;
+")
+
+(js/export (def tests :- Any
+  [{:name "New tab — gBrowser.addTab() row appears in sidebar"
+    :run (fn [mn]
+           (js/await (waitFor mn "return !!document.querySelector(\"#gjoa-tab-panel\");" nil))
+           (let [before (js/await (.executeScript mn visibleTabRows))]
+             (js/await (.executeScript mn "
+        gBrowser.addTab(\"https://example.com/addtab\", {
+          triggeringPrincipal: Services.scriptSecurityManager.getSystemPrincipal(),
+        });
+      "))
+             (js/await (waitFor mn
+                         (str (.replace visibleTabRows "return " "const c = ")
+                              "; return c === " (+ before 1) ";")
+                         5000))))}
+
+   {:name "New tab — BrowserCommands.openTab() (the + button / Ctrl+T path) row appears"
+    :run (fn [mn]
+           (js/await (waitFor mn "return !!document.querySelector(\"#gjoa-tab-panel\");" nil))
+           (let [before (js/await (.executeScript mn visibleTabRows))
+                 ;; BrowserCommands.openTab() is what the native UI + button binds.
+                 reachable (js/await (.executeScript mn "
+        return typeof BrowserCommands !== \"undefined\" && typeof BrowserCommands.openTab === \"function\";
+      "))]
+             (if (not reachable)
+               ;; Older Firefox builds bind elsewhere; fall back to the equivalent
+               ;; gBrowser call so this test still reflects the user-facing path.
+               (js/await (.executeScript mn "
+          gBrowser.addTab(\"about:newtab\", {
+            triggeringPrincipal: Services.scriptSecurityManager.getSystemPrincipal(),
+            inBackground: false,
+          });
+        "))
+               (js/await (.executeScript mn "BrowserCommands.openTab();")))
+             (js/await (waitFor mn
+                         (str (.replace visibleTabRows "return " "const c = ")
+                              "; return c === " (+ before 1) ";")
+                         5000))))}
+
+   {:name "New tab in non-default space — appears in that space, hides on switch"
+    :run (fn [mn]
+           (js/await (waitFor mn "return !!window.Spaces;" nil))
+           ;; Clean slate.
+           (js/await (.executeScript mn "
+        const main = window.Spaces.list().find(s => s.name === \"Main\") || window.Spaces.list()[0];
+        window.Spaces.setActive(main.id);
+        for (const s of [...window.Spaces.list()]) {
+          if (s.id !== main.id) window.Spaces.delete(s.id);
+        }
+      "))
+           ;; Create + switch to a fresh space.
+           (js/await (.executeScript mn "
+        const s = window.Spaces.create(\"NewTabSpace\");
+        window.Spaces.setActive(s.id);
+      "))
+           ;; Pre-existing tabs (in Main) should be hidden now.
+           (js/await (waitFor mn
+                       (str (.replace visibleTabRows "return " "const c = ") "; return c === 0;")
+                       nil))
+
+           ;; Open a tab via the user-facing flow, and stash a marker attribute
+           ;; on it so we can identify it without depending on URL resolution
+           ;; (which can rewrite to about:neterror for unresolvable hosts).
+           (js/await (.executeScript mn "
+        const t = gBrowser.addTab(\"https://example.com/in-new-space\", {
+          triggeringPrincipal: Services.scriptSecurityManager.getSystemPrincipal(),
+        });
+        t.setAttribute(\"gjoa-test-marker\", \"in-new-space\");
+      "))
+           ;; Tab should appear in this space (visible count goes from 0 → 1).
+           (js/await (waitFor mn
+                       (str (.replace visibleTabRows "return " "const c = ") "; return c === 1;")
+                       nil))
+
+           ;; Switching back to Main: this tab disappears.
+           (js/await (.executeScript mn "
+        const main = window.Spaces.list().find(s => s.name === \"Main\");
+        window.Spaces.setActive(main.id);
+      "))
+           ;; Invariant: the marked tab is NOT in the visible row set.
+           (let [inNewSpaceVisible (js/await (.executeScript mn "
+        return [...document.querySelectorAll(\"#gjoa-tab-panel .gjoa-tab-row\")]
+          .filter(r => !r.hidden)
+          .some(r => r._tab && r._tab.getAttribute(\"gjoa-test-marker\") === \"in-new-space\");
+      "))]
+             (when inNewSpaceVisible
+               (throw (Error. "marked tab still visible after switching to Main")))))}]))
+
+(js/export-default tests)

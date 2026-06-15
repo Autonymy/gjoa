@@ -1,0 +1,282 @@
+#lang beagle/js
+;; Minimal Marionette TCP client.
+;;
+;; Marionette is Firefox's privileged-context remote-control protocol. Wire
+;; format (from ~/code/firefox/remote/marionette/packets.sys.mjs):
+;;
+;;   <utf8-byte-length>:<json-payload>
+;;
+;; Where each JSON payload is one of:
+;;   Command:  [0, msgId, name, params]
+;;   Response: [1, msgId, error|null, result|null]
+;;
+;; Server defaults to TCP port 2828. First packet from server is an info
+;; banner (`{ applicationType, marionetteProtocol }`) — we read and discard
+;; it before sending any commands.
+;;
+;; We deliberately avoid geckodriver — it adds a wrapper layer for
+;; WebDriver-protocol consumers but we just need privileged eval.
+(ns gjoa.tools.test-driver.marionette
+  (:require [net :refer [connect]]))
+(define-mode strict)
+(declare-extern [Buffer JSON Array String Date Error setTimeout] Any)
+
+;; MarionetteError carries an optional `remote` payload (the raw server error).
+(js/export
+  (js/class MarionetteError extends Error
+    (constructor [message :- String remote :- Any]
+      (super message)
+      (set! (.-name this) "MarionetteError")
+      (set! (.-remote this) remote))))
+
+;; Connect to a running Marionette server. Polls until the port accepts a
+;; connection or the timeout elapses.
+(js/export (defn connectMarionette [opts :- Any] :- Any
+  (let [o (or opts {})
+        host (or (.-host o) "127.0.0.1")
+        port (or (.-port o) 2828)
+        deadline (+ (.now Date) (or (.-connectTimeoutMs o) 30000))
+        ;; Mutable scan state — `socket`/`lastErr` accumulate across poll attempts.
+        scan {:socket nil :lastErr nil}]
+    (loop []
+      (if (and (< (.now Date) deadline) (not (.-socket scan)))
+        (do
+          (try
+            (set! (.-socket scan) (js/await (openSocket host port)))
+            (catch Error e
+              (do
+                (set! (.-lastErr scan) e)
+                (js/await (sleep 150)))))
+          ;; Re-check: keep polling until a socket connects or the deadline passes.
+          (if (.-socket scan) nil (recur)))
+        nil))
+    (if (not (.-socket scan))
+      (throw (MarionetteError. (str "could not connect to Marionette at " host ":" port " within timeout")
+                               (.-lastErr scan)))
+      nil)
+    (js/await (initClient (.-socket scan))))))
+
+(defn openSocket [host :- String port :- Any] :- Any
+  (Promise. (fn [resolve reject]
+              (let [s (connect {:host host :port port})]
+                (.once s "connect" (fn [] (resolve s)))
+                (.once s "error" (fn [e] (reject e)))))))
+
+(defn initClient [socket :- Any] :- Any
+  (let [;; nextId is a monotonically increasing message-id counter; inflight maps
+        ;; pending msgIds to their { resolve, reject }.
+        idState {:nextId 1}
+        inflight (Map.)
+        ;; Incoming buffer — accumulates until we have a complete <length>:<json>.
+        recv {:buf (.alloc Buffer 0)
+              :initialBannerSeen false}
+        bannerSeen (createDeferred)]
+
+    (.on socket "data"
+      (fn [chunk]
+        ;; `_grow` lifts the `set!` into a binding so it stays a statement (a
+        ;; bare leading `set!` before `loop` mis-emits as an early return).
+        (let [_grow (set! (.-buf recv) (.concat Buffer [(.-buf recv) chunk]))]
+          (loop []
+            (let [buf (.-buf recv)
+                  colonIdx (.indexOf buf 0x3a)] ;; ':'
+              (if (< colonIdx 0)
+                nil ;; need more data for header
+                (let [lenStr (.toString (.subarray buf 0 colonIdx) "utf8")
+                      len (.parseInt Number lenStr 10)]
+                  (if (or (not (.isFinite Number len)) (< len 0))
+                    (do
+                      (.destroy socket (MarionetteError. (str "invalid framing header: " (.stringify JSON lenStr)) nil))
+                      nil)
+                    (let [totalNeeded (+ colonIdx 1 len)]
+                      (if (< (.-length buf) totalNeeded)
+                        nil ;; need more bytes for body
+                        ;; Have a full frame: extract payload, advance buf, dispatch,
+                        ;; then loop for the next frame. The `set!`/work all live in
+                        ;; let-bindings so none become a stray tail `return`.
+                        (let [payload (.toString (.subarray buf (+ colonIdx 1) totalNeeded) "utf8")
+                              _adv (set! (.-buf recv) (.subarray buf totalNeeded))
+                              parseState {:parsed nil :failed false}
+                              _parse (try
+                                       (set! (.-parsed parseState) (.parse JSON payload))
+                                       (catch Error e
+                                         (do
+                                           (.destroy socket (MarionetteError. (str "malformed JSON from server: " payload) e))
+                                           (set! (.-failed parseState) true))))
+                              _dispatch (if (.-failed parseState)
+                                          nil ;; socket destroyed; stop processing this chunk
+                                          (let [parsed (.-parsed parseState)]
+                                            (if (not (.-initialBannerSeen recv))
+                                              ;; Banner — discard. Shape: { applicationType, marionetteProtocol }
+                                              (let [_b (set! (.-initialBannerSeen recv) true)
+                                                    r (.-resolve bannerSeen)]
+                                                (r))
+                                              ;; Response: [1, msgId, error|null, result|null]
+                                              (if (and (.isArray Array parsed) (= (.-length parsed) 4) (= (aget parsed 0) 1))
+                                                (let [msgId (aget parsed 1)
+                                                      err (aget parsed 2)
+                                                      result (aget parsed 3)
+                                                      w (.get inflight msgId)]
+                                                  (if (not w)
+                                                    nil ;; late or unknown
+                                                    (let [_d (.delete inflight msgId)]
+                                                      (if err
+                                                        (let [rej (.-reject w)] (rej (MarionetteError. (formatRemoteError err) err)))
+                                                        (let [res (.-resolve w)] (res result))))))
+                                                nil))))]
+                          (if (.-failed parseState)
+                            nil ;; stop: framing aborted
+                            (recur)))))))))))))
+
+    (.on socket "error"
+      (fn [e]
+        (doseq [pair (.from Array (.entries inflight))]
+          (let [id (aget pair 0)
+                w (aget pair 1)
+                rej (.-reject w)]
+            (rej (MarionetteError. "socket error" e))
+            (.delete inflight id)))))
+    (.on socket "close"
+      (fn []
+        (doseq [pair (.from Array (.entries inflight))]
+          (let [id (aget pair 0)
+                w (aget pair 1)
+                rej (.-reject w)]
+            (rej (MarionetteError. "socket closed before response" nil))
+            (.delete inflight id)))))
+
+    ;; Wait for the banner before allowing commands. (Marionette won't process
+    ;; commands sent before its session-init handshake.)
+    (js/await (.-promise bannerSeen))
+
+    (let [send (fn [name :- String params :- Any] :- Any
+                 (let [p (or params {})
+                       id (.-nextId idState)]
+                   (set! (.-nextId idState) (+ id 1))
+                   (let [cmd (.stringify JSON [0 id name p])
+                         framed (str (.byteLength Buffer cmd "utf8") ":" cmd)]
+                     (Promise. (fn [resolve reject]
+                                 (.set inflight id {:resolve resolve :reject reject})
+                                 (.write socket framed "utf8"
+                                         (fn [err]
+                                           (if err
+                                             (do
+                                               (.delete inflight id)
+                                               (reject (MarionetteError. "write failed" err)))
+                                             nil))))))))]
+
+      {:newSession
+       (fn [] :- Any
+         (let [r (js/await (send "WebDriver:NewSession"
+                                 {:capabilities {:alwaysMatch {} :firstMatch [{}]}}))]
+           (.-sessionId r)))
+
+       :setContext
+       (fn [context :- String] :- Any
+         (js/await (send "Marionette:SetContext" {:value context}))
+         nil)
+
+       :executeScript
+       (fn [script :- String args :- Any] :- Any
+         (let [a (or args [])
+               r (js/await (send "WebDriver:ExecuteScript"
+                                 {:script script
+                                  :args a
+                                  ;; Some Firefox versions require these to be present.
+                                  :scriptTimeout 30000
+                                  :newSandbox false}))]
+           (.-value r)))
+
+       :executeAsyncScript
+       (fn [script :- String args :- Any] :- Any
+         (let [a (or args [])
+               r (js/await (send "WebDriver:ExecuteAsyncScript"
+                                 {:script script
+                                  :args a
+                                  :scriptTimeout 30000
+                                  :newSandbox false}))]
+           (.-value r)))
+
+       :getWindowHandle
+       (fn [] :- Any
+         ;; Marionette wraps single-value returns in { value: ... } here, just
+         ;; like ExecuteScript. Unwrap.
+         (let [r (js/await (send "WebDriver:GetWindowHandle" {}))]
+           (if (= (js/typeof r) "string") r (.-value r))))
+
+       :getWindowHandles
+       (fn [] :- Any
+         (let [r (js/await (send "WebDriver:GetWindowHandles" {}))]
+           (if (.isArray Array r) r (.-value r))))
+
+       :switchToWindow
+       (fn [handle :- String] :- Any
+         (js/await (send "WebDriver:SwitchToWindow" {:handle handle}))
+         nil)
+
+       :closeWindow
+       (fn [] :- Any
+         ;; WebDriver:CloseWindow closes the active *tab*, not the chrome window.
+         ;; For our case (gjoa runs as a chrome-window-level extension) we
+         ;; want to close the entire window, hence Marionette:CloseChromeWindow.
+         (let [r (js/await (send "WebDriver:CloseChromeWindow" {}))]
+           (if (.isArray Array r) r (.-value r))))
+
+       :performActions
+       (fn [actions :- Any] :- Any
+         (js/await (send "WebDriver:PerformActions" {:actions actions}))
+         nil)
+
+       :takeScreenshot
+       (fn [] :- Any
+         (let [r (js/await (send "WebDriver:TakeScreenshot" {:full true :hash false}))]
+           (if (= (js/typeof r) "string") r (.-value r))))
+
+       :releaseActions
+       (fn [] :- Any
+         (js/await (send "WebDriver:ReleaseActions" {}))
+         nil)
+
+       :quit
+       (fn [flags :- Any] :- Any
+         ;; Marionette:Quit gracefully shuts Firefox down and writes
+         ;; sessionstore.jsonlz4. Returns { cause, in_app }.
+         (try
+           (js/await (send "Marionette:Quit" {:flags (or flags ["eAttemptQuit"])}))
+           (catch Error e
+             ;; Connection may close mid-shutdown; treat that as success.
+             {})))
+
+       :deleteSession
+       (fn [] :- Any
+         (try
+           (do
+             (js/await (send "WebDriver:DeleteSession" {}))
+             nil)
+           (catch Error e
+             ;; Already gone — fine. We're tearing down anyway.
+             nil)))
+
+       :disconnect
+       (fn [] :- Any
+         (try (.end socket) (catch Error e nil))
+         (try (.destroy socket) (catch Error e nil)))})))
+
+(defn formatRemoteError [err :- Any] :- String
+  (if (and err (= (js/typeof err) "object") (js/in "message" err))
+    (str (or (.-error err) "error") ": " (or (.-message err) "(no message)"))
+    (String err)))
+
+(defn sleep [ms :- Any] :- Any
+  (Promise. (fn [r] (setTimeout (fn [] (r nil)) ms))))
+
+;; A Deferred is a Promise plus its externalized resolve/reject. createDeferred
+;; assigns them out of the executor so callers can settle the promise later.
+(defn createDeferred [] :- Any
+  (let [slot {:resolve nil :reject nil}
+        promise (Promise. (fn [res rej]
+                            (set! (.-resolve slot) res)
+                            (set! (.-reject slot) rej)))]
+    {:promise promise
+     :resolve (.-resolve slot)
+     :reject (.-reject slot)}))

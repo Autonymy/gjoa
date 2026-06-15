@@ -1,0 +1,77 @@
+#lang beagle/js
+;; Locate the gjoa binary inside engine/obj-*/dist/bin/.
+;;
+;; gjoa is its own Firefox build, so we don't need palefox's "test rig"
+;; (a separate stock-Firefox install + autoconfig bootstrap). The binary
+;; produced by `mach build` lives under engine/obj-*/dist/bin/gjoa-bin
+;; (or `gjoa` for the wrapper). The chrome JS gets loaded by gjoa's
+;; built-in loader when <install_root>/gjoa-dev/ exists, which
+;; `bun run chrome:install` sets up.
+;;
+;; Resolution flow:
+;;   1. $GJOA_BIN env var (explicit override)
+;;   2. engine/obj-*/dist/bin/gjoa-bin
+;;   3. engine/obj-*/dist/bin/gjoa
+;;   4. throw with setup hint
+(ns gjoa.tools.test-driver.gjoa-locator
+  (:require [fs :refer [existsSync readdirSync statSync]]
+            [path :refer [join]]))
+(define-mode strict)
+
+(def ENGINE-DIR :- String "engine")
+
+;; GjoaBinaryInfo: { path, installRoot }
+;;   path        — Absolute path to the binary to spawn.
+;;   installRoot — Absolute path to the install root (where gjoa-dev/ lives).
+
+;; Tiny dirname helper: no node:path dirname import needed for this single use.
+(defn dirname [p :- String] :- String
+  (let [i (.lastIndexOf p "/")]
+    (if (< i 0) "." (.slice p 0 i))))
+
+;; Find the gjoa binary. Throws with a setup hint if not present.
+(js/export (defn locateGjoa
+  ([] :- Any (locateGjoa (.cwd process)))
+  ([cwd :- String] :- Any
+    (let [gjoa-bin (aget (.-env process) "GJOA_BIN")]
+      (if gjoa-bin
+        (do
+          (when (not (existsSync gjoa-bin))
+            (throw (Error. (str "$GJOA_BIN points at " gjoa-bin " but no such file exists"))))
+          {:path gjoa-bin :installRoot (dirname gjoa-bin)})
+
+        (let [engineDir (join cwd ENGINE-DIR)]
+          (when (not (existsSync engineDir))
+            (throw (Error.
+              (str "gjoa-locator: " engineDir " not found.\n"
+                   "Run from the gjoa repo root, or set $GJOA_BIN."))))
+
+          (let [objDir
+                (loop [names (readdirSync engineDir)]
+                  (if (empty? names)
+                    nil
+                    (let [name (first names)]
+                      (if (and (.startsWith name "obj-")
+                               (.isDirectory (statSync (join engineDir name))))
+                        (join engineDir name)
+                        (recur (rest names))))))]
+            (when (not objDir)
+              (throw (Error.
+                (str "gjoa-locator: no engine/obj-* build dir found.\n"
+                     "Run `mach build faster` (Lane 2) inside engine/ first."))))
+
+            (let [binDir (join objDir "dist" "bin")
+                  result
+                  (loop [candidates ["gjoa-bin" "gjoa" "firefox-bin" "firefox"]]
+                    (if (empty? candidates)
+                      nil
+                      (let [candidate (first candidates)
+                            p (join binDir candidate)]
+                        (if (existsSync p)
+                          {:path p :installRoot binDir}
+                          (recur (rest candidates))))))]
+              (if result
+                result
+                (throw (Error.
+                  (str "gjoa-locator: no gjoa-bin / gjoa / firefox-bin / firefox under " binDir ".\n"
+                       "The build dir exists but no binary — did the build complete?"))))))))))))

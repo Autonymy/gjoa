@@ -1,0 +1,105 @@
+#lang beagle/js
+;; Apply *.patch files from patches/ in alphabetical order. Idempotency:
+;; engine/ has its own .git initialized inside it (see ensureEngineGit), and
+;; we record applied patches in engine/.gjoa-applied-patches so re-runs skip.
+;;
+;; We use git apply rather than git am because mozilla-central's tree isn't
+;; commit-aware in the way we'd need — we just want a plain patch application.
+(ns gjoa.tools.prep.patches
+  (:require [fs :refer [existsSync readdirSync]]
+            [path :refer [join]]
+            [gjoa.tools.prep.paths :refer [ENGINE-DIR PATCHES-DIR]]
+            [gjoa.tools.prep.patch-header :refer [checkAll]]
+            [gjoa.tools.prep.log :refer [log]]))
+(define-mode strict)
+(declare-extern [Bun Array] Any)
+
+(def APPLIED-LOG :- String ".gjoa-applied-patches")
+
+;; Run a command in `cwd`, inheriting stdio. Returns the exit code.
+(defn run-git [args :- Any cwd :- String] :- Any
+  (let [proc (.spawn Bun {:cmd args
+                          :cwd cwd
+                          :stdout "inherit"
+                          :stderr "inherit"})]
+    (js/await (.-exited proc))))
+
+(defn ensureEngineGit [] :- Any
+  (if (existsSync (join ENGINE-DIR ".git"))
+    nil
+    ;; mach detects .git/ and queries it for build metadata. If we don't init it,
+    ;; mach falls back, but having the repo lets us use git apply cleanly.
+    (do
+      (js/await (run-git ["git" "init" "-q"] ENGINE-DIR))
+      (js/await (run-git ["git" "add" "-A"] ENGINE-DIR))
+      (js/await (run-git ["git" "-c" "user.email=prep@gjoa" "-c" "user.name=prep"
+                          "commit" "-q" "-m" "vanilla mozilla-central"] ENGINE-DIR)))))
+
+(defn readApplied [] :- Any
+  (let [path (join ENGINE-DIR APPLIED-LOG)]
+    (if (not (existsSync path))
+      (Set.)
+      (let [text (js/await (.text (.file Bun path)))
+            entries (.filter (.map (.split text "\n") (fn [s] (.trim s)))
+                             (fn [s] (.-length s)))]
+        (Set. entries)))))
+
+(defn recordApplied [applied :- Any] :- Any
+  (let [path (join ENGINE-DIR APPLIED-LOG)
+        sorted (.sort (.from Array applied))]
+    (js/await (.write Bun path (str (.join sorted "\n") "\n")))))
+
+;; Patch-header lint. Non-fatal — we always apply patches regardless, but a
+;; missing header surfaces immediately so future maintainers (read: the user,
+;; post-Firefox-bump) get a clear signal that the 3-way-merge metadata is
+;; incomplete.
+(defn runLint [] :- Any
+  (try
+    (let [problems (js/await (checkAll))]
+      (if (> problems 0)
+        (.warn log (str problems " patch(es) missing the gjoa-patch header"))
+        nil))
+    (catch Error e
+      (.warn log (str "patch-header lint failed (non-fatal): " (.-message e))))))
+
+;; Apply a single patch by name. Throws (with the patch name) on failure so
+;; the caller surfaces exactly which patch broke.
+(defn applyOne [name :- String] :- Any
+  (.step log (str "applying patch " name))
+  (let [path (join PATCHES-DIR name)
+        code (js/await (run-git ["git" "apply" "--whitespace=nowarn" path] ENGINE-DIR))]
+    (if (not= code 0)
+      (throw (Error. (str "failed to apply patch " name ": git apply exited " code)))
+      nil)))
+
+(js/export (defn patches [] :- Any
+  (if (not (existsSync PATCHES-DIR))
+    (do
+      (.info log "no patches/ directory, skipping")
+      nil)
+    (let [allPatches (.sort (.filter (readdirSync PATCHES-DIR)
+                                     (fn [f] (.endsWith f ".patch"))))]
+      (if (= (.-length allPatches) 0)
+        (do
+          (.info log "patches/ is empty, skipping")
+          nil)
+        (do
+          (js/await (runLint))
+          (js/await (ensureEngineGit))
+          (let [applied (js/await (readApplied))]
+            (loop [i 0
+                   newCount 0]
+              (if (>= i (.-length allPatches))
+                ;; Done iterating — report + persist.
+                (if (= newCount 0)
+                  (.info log (str "all " (.-length allPatches) " patches already applied"))
+                  (do
+                    (js/await (recordApplied applied))
+                    (.ok log (str "applied " newCount " new patch" (if (= newCount 1) "" "es")))))
+                (let [name (aget allPatches i)]
+                  (if (.has applied name)
+                    (recur (+ i 1) newCount)
+                    (do
+                      (js/await (applyOne name))
+                      (.add applied name)
+                      (recur (+ i 1) (+ newCount 1))))))))))))))

@@ -1,0 +1,97 @@
+#lang beagle/js
+;; Compile all .bjs source files to JS in .beagle-out/ via beagle-build.
+;; Skips macros.bjs (compile-time only) and test files.
+(ns gjoa.tools.chrome-bundle.compile
+  (:require [fs/promises :refer [readdir mkdir]]
+            [path :refer [join resolve relative]]))
+(define-mode strict)
+(declare-extern [process Bun Promise Response console RegExp] Any)
+
+;; REPO_ROOT was resolve(import.meta.dir, "..", ".."); tools run via `bun run`
+;; from repo root, so import.meta.dir has no beagle equivalent — use cwd.
+(def REPO-ROOT :- String (.cwd process))
+(def BJS-ROOT :- String (join REPO-ROOT "src" "gjoa" "chrome" "bjs"))
+(def OUT-ROOT :- String (join REPO-ROOT ".beagle-out"))
+(def BEAGLE-BUILD :- String (resolve REPO-ROOT ".." "beagle" "bin" "beagle-build"))
+
+(defn find-bjs-files [dir :- String] :- (Promise Any)
+  (let [results []
+        entries (js/await (readdir dir {:withFileTypes true}))
+        n (.-length entries)
+        ;; await the walk loop so all recursive readdir/await complete before
+        ;; `results` is returned (the loop emits an async IIFE that must be awaited)
+        _ (js/await
+            (loop [i 0]
+              (when (< i n)
+                (let [entry (aget entries i)
+                      full (join dir (.-name entry))]
+                  (do
+                    ;; await the conditional so the recursive directory walk
+                    ;; finishes pushing into `results` before we recur
+                    (js/await
+                      (if (.isDirectory entry)
+                        (let [sub (js/await (find-bjs-files full))
+                              m (.-length sub)]
+                          ;; spread sub-results into results
+                          (loop [j 0]
+                            (when (< j m)
+                              (do
+                                (.push results (aget sub j))
+                                (recur (+ j 1))))))
+                        (when (.endsWith (.-name entry) ".bjs")
+                          (.push results full))))
+                    (recur (+ i 1)))))))]
+    results))
+
+(defn should-skip [rel :- String] :- Bool
+  (cond
+    (= rel "macros.bjs") true
+    (.startsWith rel "test/") true
+    (.endsWith rel ".test.bjs") true
+    :else false))
+
+(defn run-compile [] :- (Promise Any)
+  (let [all-files (js/await (find-bjs-files BJS-ROOT))
+        sorted (.sort all-files)
+        n (.-length sorted)]
+    (loop [i 0
+           failed 0]
+      (if (< i n)
+        (let [src (aget sorted i)
+              rel (relative BJS-ROOT src)]
+          (if (should-skip rel)
+            (recur (+ i 1) failed)
+            (let [out-rel (.replace rel (RegExp. "\\.bjs$") ".js")
+                  out-path (join OUT-ROOT out-rel)
+                  _ (js/await (mkdir (join out-path "..") {:recursive true}))
+                  proc (.spawn Bun {:cmd [BEAGLE-BUILD src out-path]
+                                    :cwd REPO-ROOT
+                                    :stdout "pipe"
+                                    :stderr "pipe"})
+                  ;; Drain both pipes concurrently with awaiting exit. Otherwise a
+                  ;; chatty build (e.g. beagle's `unused declare-extern` lint
+                  ;; warnings) fills the pipe buffer, the child blocks/SIGPIPEs
+                  ;; (exit 141), and it looks like a spurious compile failure. Only
+                  ;; the captured stderr/stdout is surfaced, and only on failure.
+                  results (js/await (.all Promise [(.text (Response. (.-stdout proc)))
+                                                   (.text (Response. (.-stderr proc)))
+                                                   (.-exited proc)]))
+                  stdout (aget results 0)
+                  stderr (aget results 1)
+                  code (aget results 2)]
+              (if (not= code 0)
+                (do
+                  (.error console (str "✗ " rel ": " (or (.trim stderr) (.trim stdout))))
+                  (recur (+ i 1) (+ failed 1)))
+                (do
+                  (.log console (str "  " rel))
+                  (recur (+ i 1) failed))))))
+        ;; loop done — report and return total count
+        (do
+          (when (> failed 0)
+            (.error console (str "\n✗ " failed " file(s) failed to compile"))
+            (.exit process 1))
+          (.log console (str "\n✓ " (- n failed) " files compiled to .beagle-out/"))
+          failed)))))
+
+(js/await (run-compile))

@@ -97,7 +97,7 @@
       ;; equivalent is a loop/recur that returns the latest probe result
       ;; on either convergence or deadline.
       (let [deadline (+ (.now Date) 3000)
-            r (loop [acc {}]
+            r (js/await (loop [acc {}]
                 (if (>= (.now Date) deadline)
                   acc
                   (let [_ (js/await (Promise. (fn [res] (setTimeout res 200))))
@@ -107,7 +107,7 @@
                                    bg (- (.-bottom (.-sidebar nr)) (.-bottom (.-bottomIcon nr)))]
                                (<= (.abs Math (- tg bg)) TOLERANCE-PX)))
                       nr
-                      (recur nr)))))]
+                      (recur nr))))))]
         (do
             (when (.-error r)
               (throw (Error. (str "probe error: " (.-error r)))))

@@ -1479,14 +1479,14 @@
                               (when (not handled)
                                 (.preventDefault e)
                                 (.stopImmediatePropagation e)))))
-                        (try-dispatch-binding e))))))
+                        (try-dispatch-binding e))))))))
           (onc! document "keyup"
             (fn [e]
               (when (or (key= e "j") (key= e "k"))
                 (try
                   (some-> gBrowser .-selectedBrowser .-messageManager
                     (.sendAsyncMessage "Gjoa:ScrollStop"))
-                  (catch Any _e nil)))))))
+                  (catch Any _e nil))))))
 
 
         setup-vim-keys (fn []
@@ -1515,7 +1515,7 @@
                           (when (= (.-length (.-key e)) 1)
                             (blur-panel)
                             (when (and (not (.-ctrlKey e)) (not (.-altKey e)) (not (.-metaKey e)))
-                              (.focus (.-selectedBrowser gBrowser))))))))))))
+                              (.focus (.-selectedBrowser gBrowser)))))))))))
           (on! (.-tabpanels gBrowser) "mousedown"
             #(when (.-panel-active vs) (blur-panel))))
 

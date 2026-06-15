@@ -5,7 +5,7 @@
 
 (declare-extern [gBrowser Services Ci Cc TabContextMenu PlacesCommandHook BrowserCommands undoCloseTab row-of state data-of has-children level-of-row subtree-rows tree-data] Any)
 
-(js/export (defn buildContextMenu [deps :- Any] :- Any
+(js/export (defn build-context-menu [deps :- Any] :- Any
   (let [{:keys [startRename toggleCollapse createGroupRow setCursor updateVisibility scheduleTreeResync scheduleSave]} deps
 
         menu (xul-id "menupopup" "gjoa-tab-menu")]
@@ -111,7 +111,7 @@
 
       (.appendChild (by-id "mainPopupSet") menu)
       menu))))
-(js/export (defn buildGroupContextMenu [deps :- Any] :- Any
+(js/export (defn build-group-context-menu [deps :- Any] :- Any
   (let [{:keys [startRename toggleCollapse syncGroupRow updateVisibility scheduleSave]} deps
 
         menu (xul-id "menupopup" "gjoa-group-menu")]
@@ -188,7 +188,7 @@
 
       (.appendChild (by-id "mainPopupSet") menu)
       menu))))
-(js/export (defn buildPanelContextMenu [deps :- Any] :- Any
+(js/export (defn build-panel-context-menu [deps :- Any] :- Any
   (let [{:keys [createGroupRow startRename setCursor updateVisibility scheduleSave]} deps
 
         menu (xul-id "menupopup" "gjoa-panel-menu")]

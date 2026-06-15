@@ -65,4 +65,4 @@
         (.push lines (str (.now Date) " [" tag "] " event " " (.stringify JSON (or data {}))))
         (when (not (.-flush-pending state))
           (set! (.-flush-pending state) true)
-          (.then (.resolve Promise) flush-lines)))))))
+          (.then (.resolve Promise) flush-lines!)))))))

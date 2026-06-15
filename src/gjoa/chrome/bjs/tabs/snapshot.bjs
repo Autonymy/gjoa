@@ -72,7 +72,7 @@
         onErr (or onError fallback)
         flags :- Any {:inFlight false :pending false}]
     #(do-save! flags getSnapshot history onErr))))
-(js/export (defn popSavedByUrl [queue :- Any url :- Any] :- Any
+(js/export (defn pop-saved-by-url [queue :- Any url :- Any] :- Any
   (when url
     (let [i (.findIndex queue #(= (.-url %) url))]
       (when (>= i 0) (aget (.splice queue i 1) 0))))))
@@ -84,7 +84,7 @@
 
 ;; popSavedForTab — combined helper for session-restore reconciliation
 ;; Priority: 1) gjoa-id, 2) URL match, 3) FIFO (session-restore only)
-(js/export (defn popSavedForTab [queue :- Any ctx :- Any] :- Any
+(js/export (defn pop-saved-for-tab [queue :- Any ctx :- Any] :- Any
   (let [currentIdx (.-currentIdx ctx)
         pinnedId (.-pinnedId ctx)
         url (.-url ctx)
@@ -92,7 +92,7 @@
         log (.-log ctx)
         try-url-fifo (fn []
           (if (and url (not= url "about:blank"))
-            (let [node (popSavedByUrl queue url)]
+            (let [node (pop-saved-by-url queue url)]
               (when log (log "popSavedForTab:url"
                              {:idx currentIdx :url url :found (bool node)}))
               node)

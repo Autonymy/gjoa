@@ -487,7 +487,7 @@
                                       :sourceParentInTree
                                       (some-> src-row .-_tab tree-data .-parentId)})
                                 (schedule-tree-resync)
-                                (schedule-save)))))))))))))
+                                (schedule-save))))))))))))))
 
         ;; --- [gjoa-dragging] safety net ---
         _ (onc! document "mousedown"
@@ -637,7 +637,7 @@
                     (log "drop/row:abort"
                          {:reason "no-or-empty-zone-position"
                           :dropPosition (.-dropPosition ds)}))))
-              (clear-drop-indicator)))))
+              (clear-drop-indicator))))
 
         ;; --- setupPinnedContainerDrop ---
         setup-pinned-container-drop (fn [container]

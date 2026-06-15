@@ -35,14 +35,19 @@
   `(.createElement document ,tag))
 (defmacro attr! [el name value]
   `(.setAttribute ,el ,name ,value))
+;; NOTE: mi/sep expand to primitives (not the xul-new/attr! macros) so any
+;; consumer of mi/sep need not also :refer those macros. beagle's syntax-quote
+;; is non-hygienic (does not namespace-qualify symbols), so a macro that expands
+;; to another macro only resolves if the *use site* imports the inner macro too.
+;; Keeping these self-contained avoids that footgun. See task #13.
 (defmacro mi [label handler]
-  `(let [_item (xul-new "menuitem")]
-     (attr! _item "label" ,label)
+  `(let [_item (.createXULElement document "menuitem")]
+     (.setAttribute _item "label" ,label)
      (.addEventListener _item "command" ,handler)
      _item))
 
 (defmacro sep []
-  `(xul-new "menuseparator"))
+  `(.createXULElement document "menuseparator"))
 (defmacro dispatch-key [e guard-name action]
   `(if (not (key-enabled ,guard-name)) false
      (do (.preventDefault ,e) (.stopImmediatePropagation ,e)

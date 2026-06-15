@@ -1068,8 +1068,9 @@
               (modeline-msg "Only one space -- :space new <name> to add" 2500)
               (let [cur (.activeId spaces)
                     idx (.findIndex list #(= (.-id %) cur))
-                    next-idx (% (+ (% (+ idx dir) (.-length list)) (.-length list))
-                               (.-length list))
+                    ;; `%` is beagle's anon-fn arg, NOT modulo — use `rem`.
+                    next-idx (rem (+ (rem (+ idx dir) (.-length list)) (.-length list))
+                                  (.-length list))
                     next (aget list next-idx)]
                 (.setActive spaces (.-id next))
                 (modeline-msg (str ":space -> \"" (.-name next) "\"") 1500)))))

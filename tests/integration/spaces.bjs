@@ -24,10 +24,11 @@
     (loop [lastErr nil]
       (if (< (.now Date) deadline)
         (let [outcome
-              (try
-                (let [ok (js/await (.executeScript mn scriptReturningBool))]
-                  (if ok {:done true :err lastErr} {:done false :err lastErr}))
-                (catch Error e {:done false :err e}))]
+              (js/await
+                (try
+                  (let [ok (js/await (.executeScript mn scriptReturningBool))]
+                    (if ok {:done true :err lastErr} {:done false :err lastErr}))
+                  (catch Error e {:done false :err e})))]
           (if (:done outcome)
             nil
             (do

@@ -168,7 +168,8 @@
                                              (do
                                                (.delete inflight id)
                                                (reject (MarionetteError. "write failed" err)))
-                                             nil))))))))]
+                                             nil))))))))
+          ctxState {:desired nil}]
 
       {:newSession
        (fn [] :- Any
@@ -178,11 +179,18 @@
 
        :setContext
        (fn [context :- String] :- Any
+         (set! (.-desired ctxState) context)
          (js/await (send "Marionette:SetContext" {:value context}))
          nil)
 
        :executeScript
        (fn [script :- String args :- Any] :- Any
+         ;; Marionette drifts the active context back to "content" when a test
+         ;; opens a content tab (gBrowser.addTab to an http URL). Re-assert the
+         ;; desired context before each script so chrome tests keep hitting the
+         ;; browser window — and the one content test keeps hitting content.
+         (when (.-desired ctxState)
+           (js/await (send "Marionette:SetContext" {:value (.-desired ctxState)})))
          (let [a (or args [])
                r (js/await (send "WebDriver:ExecuteScript"
                                  {:script script
@@ -194,6 +202,8 @@
 
        :executeAsyncScript
        (fn [script :- String args :- Any] :- Any
+         (when (.-desired ctxState)
+           (js/await (send "Marionette:SetContext" {:value (.-desired ctxState)})))
          (let [a (or args [])
                r (js/await (send "WebDriver:ExecuteAsyncScript"
                                  {:script script

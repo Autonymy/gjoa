@@ -196,6 +196,20 @@
                                  (deref mn))}]
                       (try
                         (do
+                          ;; Marionette's context drifts back to "content" when a
+                          ;; test opens a content tab (e.g. gBrowser.addTab to an
+                          ;; http URL). Re-assert chrome before every test so each
+                          ;; one runs against the browser window (window.Spaces,
+                          ;; #gjoa-tab-panel, Services) rather than a stale page.
+                          (try (js/await (.setContext (deref mn) "chrome"))
+                               (catch Any _ nil))
+                          ;; Reset Spaces + tabs to a clean baseline before each
+                          ;; test so tests stay order-independent (earlier tests
+                          ;; leave extra spaces/tabs behind). Best-effort: no-op
+                          ;; when the chrome APIs aren't present (e.g. sqlite probe).
+                          (try (js/await (.executeScript (deref mn)
+                                 "try{if(window.Spaces&&window.Spaces.list){var L=window.Spaces.list();var m=L.find(s=>s.name===\"Main\")||L[0];if(m){window.Spaces.setActive(m.id);L.forEach(s=>{if(s.id!==m.id){try{window.Spaces.delete(s.id)}catch(e){}}})}}if(window.gBrowser){Array.from(gBrowser.tabs).forEach(t=>{if(t!==gBrowser.selectedTab&&!t.pinned){try{gBrowser.removeTab(t)}catch(e){}}})}}catch(e){}"))
+                               (catch Any _ nil))
                           (js/await (.run t (deref mn) ctx))
                           (emit {:type "test:pass" :name (.-name t) :file file
                                  :durationMs (- (.now Date) tStart)})

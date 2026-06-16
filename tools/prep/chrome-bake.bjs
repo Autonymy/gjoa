@@ -70,7 +70,7 @@
             (recur (+ i 1))))
         nil))))
 
-(js/export (defn chromeBake [] :- Any
+(js/export (defn chrome-bake [] :- Any
   (js/await (ensureChromeDist))
   (.step log (str "baking " (.-length SCRIPTS) " scripts + "
                   (.-length STYLES) " stylesheets into engine"))

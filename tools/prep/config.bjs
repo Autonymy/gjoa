@@ -25,7 +25,7 @@
 ;; `const` in JS; the original `let cached` mutation becomes atom reset!/deref.
 (def cached :- Any (atom nil))
 
-(js/export (defn loadConfig [] :- Any
+(js/export (defn load-config [] :- Any
   (if (deref cached)
     (deref cached)
     (let [path (join REPO-ROOT "gjoa.json")

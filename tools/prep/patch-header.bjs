@@ -83,7 +83,7 @@
 ;; that differs from gjoa.json.firefox.version. Returns the count of
 ;; problems found (0 = clean). Non-fatal: prints to stderr; caller
 ;; decides whether to bail.
-(js/export (defn checkAll [] :- Any
+(js/export (defn check-all [] :- Any
   (let [current (js/await (loadCurrentBaseline))
         names (js/await (listPatches))]
     (loop [i 0 problems 0]
@@ -116,7 +116,7 @@
 ;; current gjoa.json firefox.version as the baseline label. Only run
 ;; AFTER you've just regenerated the patch against the current source,
 ;; otherwise the baseline label will lie.
-(js/export (defn retrofitAll [] :- Any
+(js/export (defn retrofit-all [] :- Any
   (let [current (js/await (loadCurrentBaseline))
         names (js/await (listPatches))]
     (loop [i 0 changed 0]
@@ -139,11 +139,11 @@
   (let [cmd (aget (.-argv process) 2)]
     (cond
       (= cmd "check")
-      (let [problems (js/await (checkAll))]
+      (let [problems (js/await (check-all))]
         (.exit process (if (= problems 0) 0 2)))
 
       (= cmd "retrofit")
-      (js/await (retrofitAll))
+      (js/await (retrofit-all))
 
       :else
       (do

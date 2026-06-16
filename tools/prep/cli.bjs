@@ -3,7 +3,7 @@
   (:require [fs :refer [existsSync]]
             [fs/promises :refer [rm]]
             [gjoa.tools.prep.download :refer [download]]
-            [gjoa.tools.prep.import :refer [importSources]]
+            [gjoa.tools.prep.import :refer [import-sources]]
             [gjoa.tools.prep.paths :refer [ENGINE-DIR]]
             [gjoa.tools.prep.log :refer [log]]
             [gjoa.tools.security.check :refer [check]]))
@@ -83,7 +83,7 @@ After editing src/gjoa/ or gjoa.json: `bun run import`.
             (err "engine/ does not exist — run `bun run download` first"))
           (.exit process 1))
         (js/await (printSecurityBanner))
-        (js/await (importSources)))
+        (js/await (import-sources)))
 
       (= cmd "clean")
       (if (existsSync ENGINE-DIR)

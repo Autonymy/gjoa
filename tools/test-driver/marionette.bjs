@@ -31,7 +31,7 @@
 
 ;; Connect to a running Marionette server. Polls until the port accepts a
 ;; connection or the timeout elapses.
-(js/export (defn connectMarionette [opts :- Any] :- Any
+(js/export (defn connect-marionette [opts :- Any] :- Any
   (let [o (or opts {})
         host (or (.-host o) "127.0.0.1")
         port (or (.-port o) 2828)

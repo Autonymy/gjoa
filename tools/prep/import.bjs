@@ -1,7 +1,7 @@
 #lang beagle/js
 (ns gjoa.tools.prep.import
   (:require [gjoa.tools.prep.branding :refer [branding]]
-            [gjoa.tools.prep.chrome-bake :refer [chromeBake]]
+            [gjoa.tools.prep.chrome-bake :refer [chrome-bake]]
             [gjoa.tools.prep.locales :refer [locales]]
             [gjoa.tools.prep.mozconfig :refer [mozconfig]]
             [gjoa.tools.prep.overlay :refer [overlay]]
@@ -11,7 +11,7 @@
 
 ;; Six sequential phases. Each is idempotent, so re-running `bun run import`
 ;; after editing src/gjoa/ or gjoa.json picks up the changes correctly.
-(js/export (defn importSources [] :- Any
+(js/export (defn import-sources [] :- Any
   (.step log "phase 1/6 — overlaying src/gjoa/")
   (js/await (overlay))
 
@@ -19,7 +19,7 @@
   (js/await (patches))
 
   (.step log "phase 3/6 — baking chrome bundles into engine/")
-  (js/await (chromeBake))
+  (js/await (chrome-bake))
 
   (.step log "phase 4/6 — generating branding")
   (js/await (branding))

@@ -6,7 +6,7 @@
 (ns gjoa.tools.prep.download
   (:require [fs :refer [existsSync mkdirSync statSync]]
             [path :refer [join]]
-            [gjoa.tools.prep.config :refer [loadConfig]]
+            [gjoa.tools.prep.config :refer [load-config]]
             [gjoa.tools.prep.paths :refer [ENGINE-DIR REPO-ROOT SOURCES-CACHE]]
             [gjoa.tools.prep.log :refer [log]]))
 (define-mode strict)
@@ -65,7 +65,7 @@
       (js/await (.write Bun dest res)))))
 
 (js/export (defn download [] :- Any
-  (let [cfg (loadConfig)]
+  (let [cfg (load-config)]
     (mkdirSync SOURCES-CACHE {:recursive true})
     (let [version (.-version (.-firefox cfg))
           tarball (join SOURCES-CACHE (tarballName version))

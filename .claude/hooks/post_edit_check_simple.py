@@ -104,36 +104,55 @@ def syntax_check(file_path):
         data = _syntax_json(file_path)
         if data is None:
             return None
+        filename = os.path.basename(file_path)
 
-        # Deterministic auto-balance: paren/bracket imbalance is a SOLVED
-        # problem (parinfer indent-mode in beagle-syntax). The model must never
-        # hand-count parens. --repair --write applies the fix ONLY when it is
-        # high-confidence AND re-verifies balanced, so this can't write a guess.
+        # Capture what the repair WOULD do (the indentation-reading) BEFORE any
+        # write, so the change is never invisible.
+        diff = subprocess.run(
+            [SYNTAX_BIN, "--repair", "--diff", file_path],
+            capture_output=True, text=True, timeout=5,
+        ).stdout.strip()
+
+        # Auto-apply ONLY a high-confidence APPEND (forgot trailing closers).
+        # A RELOCATION — closers moved to match indentation, which may produce a
+        # balanced-but-WRONG tree — is now 'medium and REFUSES, leaving the file
+        # unchanged so the disagreement is surfaced, not silently committed.
         subprocess.run(
             [SYNTAX_BIN, "--repair", "--write", file_path],
             capture_output=True, text=True, timeout=5,
         )
         after = _syntax_json(file_path)
 
-        filename = os.path.basename(file_path)
-        if after is None:
-            # The imbalance was deterministically fixable and is now resolved.
-            return (f"beagle-syntax: {filename} — auto-balanced delimiters "
-                    f"(deterministic, re-verified). File updated on disk — "
-                    f"re-read it before further edits.")
+        # diff line 0 is "FILE: N edit(s), confidence: X"; the rest are edits.
+        diff_edits = [ln.strip() for ln in diff.splitlines()[1:]] if diff else []
 
-        # Still broken => genuinely ambiguous (multiple valid closes / unclosed
-        # string). This is the only case the agent should touch by hand.
-        lines = [f"beagle-syntax: {filename} — STRUCTURAL ERROR (not auto-fixable; ambiguous)"]
+        if after is None:
+            # A safe append was applied — SHOW it (never silent). Re-read to be sure.
+            lines = [f"beagle-syntax: {filename} — auto-closed missing trailing "
+                     f"delimiter(s) (high-confidence, re-verified). File updated — "
+                     f"RE-READ before further edits. What was added:"]
+            lines += ["    " + e for e in (diff_edits or ["(closers appended at end)"])]
+            return "\n".join(lines)
+
+        # Not auto-applied. Your explicit parens and your indentation imply
+        # DIFFERENT trees (or there's an unclosed string). The file was NOT
+        # changed. FAIL LOUD — do not trust either reading blindly.
+        lines = [f"beagle-syntax: {filename} — AMBIGUOUS STRUCTURE — file NOT changed.",
+                 "  Your explicit parens and your indentation disagree on the tree;",
+                 "  the close-paren cannot be placed without guessing your intent."]
+        if diff_edits:
+            lines.append("  Indentation-reading would do (NOT necessarily what you meant):")
+            lines += ["    " + e for e in diff_edits]
         for e in after.get("errors", []):
-            lines.append(f"  {e.get('line', 0)}:{e.get('col', 0)} {e.get('detail', '')}")
+            lines.append(f"  error {e.get('line', 0)}:{e.get('col', 0)} {e.get('detail', '')}")
         counts = after.get("counts", {})
         for name, key in [("()", "parens"), ("[]", "brackets"), ("{}", "braces")]:
             c = counts.get(key, {})
             bal = c.get("balance", 0)
             if bal != 0:
                 lines.append(f"  {name} open:{c.get('open',0)} close:{c.get('close',0)} balance:{bal:+d}")
-        lines.append(f"  review the candidates: beagle-syntax --repair --emit-patch {file_path}")
+        lines.append("  FIX: re-place the closer where your INTENT requires (extract a "
+                     "named binding if the form is deep), then re-read. Do not hand-count.")
         return "\n".join(lines)
     except Exception:
         return None

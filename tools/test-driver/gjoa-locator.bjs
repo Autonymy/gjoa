@@ -30,8 +30,8 @@
     (if (< i 0) "." (.slice p 0 i))))
 
 ;; Find the gjoa binary. Throws with a setup hint if not present.
-(js/export (defn locateGjoa
-  ([] :- Any (locateGjoa (.cwd process)))
+(js/export (defn locate-gjoa
+  ([] :- Any (locate-gjoa (.cwd process)))
   ([cwd :- String] :- Any
     (let [gjoa-bin (aget (.-env process) "GJOA_BIN")]
       (if gjoa-bin

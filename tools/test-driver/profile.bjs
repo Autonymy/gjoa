@@ -53,8 +53,8 @@
     "// tests can drive the chrome layer past public surfaces.\n"
     "user_pref(\"gjoa.test.exposeAPI\", true);\n"))
 
-(js/export (defn createProfile [opts :- Any] :- Any
-  ;; opts defaults to {} (TS `opts = {}`); callers invoke createProfile() with
+(js/export (defn create-profile [opts :- Any] :- Any
+  ;; opts defaults to {} (TS `opts = {}`); callers invoke create-profile() with
   ;; no args, so guard against an undefined opts before reading .extraPrefs.
   (let [o (or opts {})
         path (js/await (mkdtemp (join (tmpdir) "gjoa-test-")))

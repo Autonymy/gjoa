@@ -29,9 +29,9 @@
   (:require [child_process :refer [spawn]]
             [fs/promises :refer [readdir]]
             [path :refer [join basename]]
-            [gjoa.tools.test-driver.marionette :refer [connectMarionette]]
-            [gjoa.tools.test-driver.profile :refer [createProfile]]
-            [gjoa.tools.test-driver.gjoa-locator :refer [locateGjoa]]))
+            [gjoa.tools.test-driver.marionette :refer [connect-marionette]]
+            [gjoa.tools.test-driver.profile :refer [create-profile]]
+            [gjoa.tools.test-driver.gjoa-locator :refer [locate-gjoa]]))
 (define-mode strict)
 
 (declare-extern [process JSON Date setTimeout clearTimeout] Any)
@@ -113,9 +113,9 @@
     (.once child "error" (fn [e] (logErr (str "gjoa spawn error: " (.-message e)))))
     child))
 
-(js/export (defn runAll [opts0 :- Any] :- Any
+(js/export (defn run-all [opts0 :- Any] :- Any
   (let [opts (or opts0 {})
-        gjoaBin (or (.-gjoaBin opts) (.-path (locateGjoa)))
+        gjoaBin (or (.-gjoaBin opts) (.-path (locate-gjoa)))
         ;; Compiled test suites live under .beagle-tools/ (the source is .bjs).
         testDir (or (.-testDir opts) (join (.cwd process) ".beagle-tools" "gjoa" "tests" "integration"))
         marionettePort (or (.-marionettePort opts) 2828)]
@@ -171,7 +171,7 @@
                                         :verbose (.-verbose opts)
                                         :headed (.-headed opts)}))]
                     (reset! gjoa g))
-                    (let [client (js/await (connectMarionette {:port marionettePort}))]
+                    (let [client (js/await (connect-marionette {:port marionettePort}))]
                       (js/await (.newSession client))
                       (js/await (.setContext client "chrome"))
                       client))
@@ -243,7 +243,7 @@
               (js/await
                (try
                 (do
-                  (let [p (js/await (createProfile))] (reset! profile p))
+                  (let [p (js/await (create-profile))] (reset! profile p))
                   (when (.-verbose opts) (logErr (str "profile: " (.-path (deref profile)))))
                   (when (.-verbose opts) (logErr (str "binary:  " gjoaBin)))
                   (let [m (js/await (bootGjoa (.-path (deref profile))))] (reset! mn m))
@@ -272,7 +272,7 @@
             {:pass (deref pass) :fail (deref fail) :skip (deref skip)})))))))
 
 ;; CLI entrypoint. The original guarded this with `import.meta.main`; beagle
-;; has no import.meta, and no module imports `runAll` at runtime (the integration
+;; has no import.meta, and no module imports `run-all` at runtime (the integration
 ;; tests import only the type-only `IntegrationTest`), so the block runs
 ;; unconditionally — equivalent to running the file as a script.
 (def cliArgs :- Any (.slice (.-argv process) 2))
@@ -294,7 +294,7 @@
 ;; Run the suite only when invoked directly (tests import this module for types).
 (when (.-main (js/import-meta))
   (.catch
-    (.then (runAll {:verbose cliVerbose :grep cliGrep :headed cliHeaded})
+    (.then (run-all {:verbose cliVerbose :grep cliGrep :headed cliHeaded})
            (fn [res] (.exit process (if (> (.-fail res) 0) 1 0))))
     (fn [e]
       (logErr (str "fatal: " (or (.-stack e) e)))

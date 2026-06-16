@@ -36,9 +36,15 @@ pref("browser.discovery.enabled", false);
 pref("app.normandy.enabled", false);
 pref("app.shield.optoutstudies.enabled", false);
 pref("browser.safebrowsing.downloads.remote.enabled", false);
-pref("network.prefetch-next", false);
-pref("network.dns.disablePrefetch", true);
-pref("network.http.speculative-parallel-limit", 0);
+
+// --- Networking: SPEED-positive ---
+// Firefox ships prefetch / DNS-prefetch / speculative-connect ON. They were
+// being DISABLED here (lumped in with telemetry as if a privacy nicety), which
+// directly HURTS page-load — the opposite of gjoa's speed thesis. Restored to
+// Firefox defaults. Minor privacy cost (leaks likely-next hosts); speed wins.
+pref("network.prefetch-next", true);
+pref("network.dns.disablePrefetch", false);
+pref("network.http.speculative-parallel-limit", 6);
 
 // --- Rendering performance ---
 pref("gfx.webrender.all", true);

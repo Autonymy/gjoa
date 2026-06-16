@@ -9,7 +9,7 @@
 (ns gjoa.tools.bench.memory
   (:require [util :refer [parseArgs]]
             [path :refer [join]]
-            [gjoa.tools.bench.stats :refer [formatResult]]))
+            [gjoa.tools.bench.stats :refer [format-result]]))
 (define-mode strict)
 (declare-extern [Bun process console Date Error Array RegExp parseInt isNaN setTimeout clearTimeout] Any)
 
@@ -169,11 +169,11 @@
 (def firefoxResults :- Any (js/await (runBenchmark! FIREFOX-BIN "Firefox" "Mozilla Firefox|Firefox" RUNS)))
 
 (.log console "\n=== Comparison ===\n")
-(.log console (formatResult (str "Memory (" NUM-TABS " tabs, total PSS MB)") gjoaResults firefoxResults "MB"))
+(.log console (format-result (str "Memory (" NUM-TABS " tabs, total PSS MB)") gjoaResults firefoxResults "MB"))
 
 ;; Per-tab summary
 (def gjoaPerTab :- Any (.map gjoaResults (fn [v] (/ v NUM-TABS))))
 (def firefoxPerTab :- Any (.map firefoxResults (fn [v] (/ v NUM-TABS))))
 (.log console "")
-(.log console (formatResult "Memory (per-tab MB)" gjoaPerTab firefoxPerTab "MB"))
+(.log console (format-result "Memory (per-tab MB)" gjoaPerTab firefoxPerTab "MB"))
 (.log console "")

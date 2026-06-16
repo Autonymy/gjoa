@@ -4,10 +4,9 @@
 ;; overlay gjoa icons + content, append gjoa default prefs, and assert no
 ;; zen-browser.app substring leaked through.
 (ns gjoa.tools.prep.branding
-  (:require [fs :refer [existsSync readdirSync statSync]]
+  (:require [fs :refer [existsSync readdirSync statSync mkdirSync readFileSync rmSync writeFileSync]]
             [path :refer [dirname extname join relative]]
-            [fs/promises :refer [mkdir readFile rm writeFile]]
-            [gjoa.tools.prep.config :refer [loadConfig]]
+            [gjoa.tools.prep.config :refer [load-config]]
             [gjoa.tools.prep.paths :refer [BRANDING-SRC
                                            ENGINE-BRANDING-DIR
                                            ENGINE-UNOFFICIAL-BRANDING
@@ -120,7 +119,7 @@
 ;; Copy mozilla's unofficial branding tree to engine/browser/branding/<binaryName>/,
 ;; applying string substitutions to text files and overwriting our PNG icons.
 (js/export (defn branding [] :- Any
-  (let [cfg (loadConfig)
+  (let [cfg (load-config)
         target (join ENGINE-BRANDING-DIR (.-binaryName cfg))]
 
     (when (not (existsSync ENGINE-UNOFFICIAL-BRANDING))
@@ -128,8 +127,8 @@
                           "did you run `bun run download` first?"))))
 
     (.step log (str "generating branding tree at engine/browser/branding/" (.-binaryName cfg) "/"))
-    (when (existsSync target) (js/await (rm target {:recursive true})))
-    (js/await (mkdir target {:recursive true}))
+    (when (existsSync target) (rmSync target {:recursive true}))
+    (mkdirSync target {:recursive true})
 
     ;; 1. Walk mozilla's unofficial tree and copy each file, with substitution
     ;;    on text files.
@@ -139,10 +138,10 @@
       (doseq [src all-files]
         (let [rel (relative ENGINE-UNOFFICIAL-BRANDING src)
               dst (join target rel)]
-          (js/await (mkdir (dirname dst) {:recursive true}))
+          (mkdirSync (dirname dst) {:recursive true})
           (if (is-text-file src)
-            (let [text (js/await (readFile src "utf8"))]
-              (js/await (writeFile dst (apply-substitutions! text cfg)))
+            (let [text (readFileSync src "utf8")]
+              (writeFileSync dst (apply-substitutions! text cfg))
               (reset! text-count (+ @text-count 1)))
             ;; Binary copy — preserves icon bytes etc.
             (do
@@ -170,10 +169,10 @@
         (doseq [name gjoa-pref-files]
           (let [src (join SRC-DIR "defaults" "pref" name)]
             (when (not (existsSync src)) (throw (Error. (str "gjoa pref source missing: " src))))
-            (let [contents (js/await (readFile src "utf8"))]
+            (let [contents (readFileSync src "utf8")]
               (reset! pref-blocks (str @pref-blocks "\n// ---- " name " ----\n" (.trimEnd contents) "\n")))))
-        (let [existing (js/await (readFile branding-pref-file "utf8"))]
-          (js/await (writeFile branding-pref-file (str existing @pref-blocks))))
+        (let [existing (readFileSync branding-pref-file "utf8")]
+          (writeFileSync branding-pref-file (str existing @pref-blocks)))
         (.info log (str "appended " (.-length gjoa-pref-files) " gjoa pref files to branding/" (.-binaryName cfg) "/pref/firefox-branding.js"))))
 
     ;; 2. Overlay our own logo PNGs from configs/branding/gjoa/. Mozilla's
@@ -213,7 +212,7 @@
     (let [written (walk-files target)]
       (doseq [f written]
         (when (is-text-file f)
-          (let [text (js/await (readFile f "utf8"))]
+          (let [text (readFileSync f "utf8")]
             (when (.includes text "zen-browser.app")
               (throw (Error. (str "zen-browser.app leaked into " f " — extend substitutions in branding.bjs"))))))))
 

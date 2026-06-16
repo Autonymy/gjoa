@@ -4,7 +4,7 @@
 (define-mode strict)
 
 (declare-extern [CLOSED-MEMORY console Map] Any)
-(js/export (defn buildEnvelope [snapshot :- Any] :- Any
+(js/export (defn build-envelope [snapshot :- Any] :- Any
   (let [tab-space-map (Map.)]
     (when (and (.-spaces snapshot) (.-tabSpaces (.-spaces snapshot)))
       (.forEach (.-tabSpaces (.-spaces snapshot))
@@ -59,7 +59,7 @@
     (set! (.-pending flags) true)
     (do
       (set! (.-inFlight flags) true)
-      (-> (.appendEvent history (buildEnvelope (getSnapshot)))
+      (-> (.appendEvent history (build-envelope (getSnapshot)))
           (.catch #(onErr %))
           (.then (fn []
             (set! (.-inFlight flags) false)
@@ -77,7 +77,7 @@
     (let [i (.findIndex queue #(= (.-url %) url))]
       (when (>= i 0) (aget (.splice queue i 1) 0))))))
 
-(js/export (defn popSavedByIndex [queue :- Any idx :- Int] :- Any
+(js/export (defn pop-saved-by-index [queue :- Any idx :- Int] :- Any
   (when (>= idx 0)
     (let [i (.findIndex queue #(= (.-_origIdx %) idx))]
       (when (>= i 0) (aget (.splice queue i 1) 0))))))

@@ -12,9 +12,9 @@
 (ns gjoa.tools.scripts.probe-nav-bar
   (:require [child_process :refer [spawn]]
             [fs/promises :refer [writeFile]]
-            [gjoa.tools.test-driver.marionette :refer [connectMarionette]]
-            [gjoa.tools.test-driver.profile :refer [createProfile]]
-            [gjoa.tools.test-driver.gjoa-locator :refer [locateGjoa]]))
+            [gjoa.tools.test-driver.marionette :refer [connect-marionette]]
+            [gjoa.tools.test-driver.profile :refer [create-profile]]
+            [gjoa.tools.test-driver.gjoa-locator :refer [locate-gjoa]]))
 (define-mode strict)
 (declare-extern [process console setTimeout Buffer Object JSON String] Any)
 
@@ -95,8 +95,8 @@
                            (.padStart (String (.-width c)) 4) " order=" (.padStart (.-order c) 3) " mIS="
                            (.padStart (.-marginInlineStart c) 6) "  " (or (.-id c) (.-tag c))))))))
 
-(def profile :- Any (js/await (createProfile)))
-(def gjoaBin :- String (.-path (locateGjoa)))
+(def profile :- Any (js/await (create-profile)))
+(def gjoaBin :- String (.-path (locate-gjoa)))
 (.log console (str "profile: " (.-path profile)))
 (.log console (str "binary:  " gjoaBin))
 
@@ -113,7 +113,7 @@
 (some-> (.-stdout child) .resume)
 (some-> (.-stderr child) .resume)
 
-(def mn :- Any (js/await (connectMarionette {:port 2828})))
+(def mn :- Any (js/await (connect-marionette {:port 2828})))
 (js/await (.newSession mn))
 (js/await (.setContext mn "chrome"))
 

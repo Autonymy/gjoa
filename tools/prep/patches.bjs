@@ -9,7 +9,7 @@
   (:require [fs :refer [existsSync readdirSync]]
             [path :refer [join]]
             [gjoa.tools.prep.paths :refer [ENGINE-DIR PATCHES-DIR]]
-            [gjoa.tools.prep.patch-header :refer [checkAll]]
+            [gjoa.tools.prep.patch-header :refer [check-all]]
             [gjoa.tools.prep.log :refer [log]]))
 (define-mode strict)
 (declare-extern [Bun Array] Any)
@@ -55,7 +55,7 @@
 ;; incomplete.
 (defn runLint [] :- Any
   (try
-    (let [problems (js/await (checkAll))]
+    (let [problems (js/await (check-all))]
       (if (> problems 0)
         (.warn log (str problems " patch(es) missing the gjoa-patch header"))
         nil))

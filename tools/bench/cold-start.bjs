@@ -6,7 +6,7 @@
 (ns gjoa.tools.bench.cold-start
   (:require [util :refer [parseArgs]]
             [path :refer [join]]
-            [gjoa.tools.bench.stats :refer [confidenceInterval95 median formatResult]]))
+            [gjoa.tools.bench.stats :refer [confidence-interval95 median format-result]]))
 (define-mode strict)
 (declare-extern [Bun process console performance Date Number setTimeout clearTimeout parseInt] Any)
 
@@ -122,7 +122,7 @@
 
     ;; Drop first run as warm-up
     (let [results (.slice @times 1)
-          ci (confidenceInterval95 results)
+          ci (confidence-interval95 results)
           med (median results)]
       (.log console (str "\n  " label " results (excluding warm-up run):"))
       (.log console (str "    Median: " (.toFixed med 1) " ms"))
@@ -146,5 +146,5 @@
 (def firefoxTimes :- Any (js/await (runBenchmark! FIREFOX-BIN "Firefox" "Mozilla Firefox|Firefox")))
 
 (.log console "\n=== Comparison ===\n")
-(.log console (formatResult "Cold Start (time to window visible)" gjoaTimes firefoxTimes))
+(.log console (format-result "Cold Start (time to window visible)" gjoaTimes firefoxTimes))
 (.log console "")

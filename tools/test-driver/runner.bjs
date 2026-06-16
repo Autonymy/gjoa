@@ -40,7 +40,7 @@
 ;; Beagle has no JS-class form, so this is a factory that builds an Error and
 ;; stamps `name`. Detection downstream is by `(.-name e)` rather than
 ;; `instanceof` (which beagle also has no form for).
-(js/export (defn SkipError [reason :- String] :- Any
+(js/export (defn SkipError! [reason :- String] :- Any
   (let [e (Error. reason)]
     (set! (.-name e) "SkipError")
     e)))
@@ -113,7 +113,7 @@
     (.once child "error" (fn [e] (logErr (str "gjoa spawn error: " (.-message e)))))
     child))
 
-(js/export (defn run-all [opts0 :- Any] :- Any
+(js/export (defn run-all! [opts0 :- Any] :- Any
   (let [opts (or opts0 {})
         gjoaBin (or (.-gjoaBin opts) (.-path (locate-gjoa)))
         ;; Compiled test suites live under .beagle-tools/ (the source is .bjs).
@@ -185,7 +185,7 @@
                     (let [tStart (.now Date)
                           ctx {:profilePath (.-path (deref profile))
                                :headed (boolean (.-headed opts))
-                               :skip (fn [reason] (throw (SkipError reason)))
+                               :skip (fn [reason] (throw (SkipError! reason)))
                                :restartGjoa
                                (fn [] :- Any
                                  (try (js/await (.quit (deref mn))) (catch Any _ nil))
@@ -294,7 +294,7 @@
 ;; Run the suite only when invoked directly (tests import this module for types).
 (when (.-main (js/import-meta))
   (.catch
-    (.then (run-all {:verbose cliVerbose :grep cliGrep :headed cliHeaded})
+    (.then (run-all! {:verbose cliVerbose :grep cliGrep :headed cliHeaded})
            (fn [res] (.exit process (if (> (.-fail res) 0) 1 0))))
     (fn [e]
       (logErr (str "fatal: " (or (.-stack e) e)))

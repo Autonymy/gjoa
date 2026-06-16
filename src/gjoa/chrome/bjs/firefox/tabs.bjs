@@ -10,7 +10,7 @@
 (js/export (defn selected-tab [] :- Any
   (.-selectedTab gBrowser)))
 
-(js/export (defn select-tab [tab :- Any] :- Any
+(js/export (defn select-tab! [tab :- Any] :- Any
   (set! (.-selectedTab gBrowser) tab)))
 
 (js/export (defn tab-container [] :- Any
@@ -41,7 +41,7 @@
 (js/export (defn move-tab-to [tab :- Any index :- Any] :- Any
   (.moveTabTo gBrowser tab index)))
 
-(js/export (defn open-tab [url :- Any] :- Any
+(js/export (defn open-tab! [url :- Any] :- Any
   (let [opts {}]
     (set! (.-triggeringPrincipal opts)
           (.getSystemPrincipal (.-scriptSecurityManager Services)))

@@ -23,7 +23,7 @@
 
 (def state :- Any {:cached-principal js/undefined})
 
-(js/export (defn system-principal [] :- Any
+(js/export (defn system-principal! [] :- Any
   (if (= (.-cached-principal state) js/undefined)
     (let [p (.getSystemPrincipal (.-scriptSecurityManager Services))]
       (set! (.-cached-principal state) p)

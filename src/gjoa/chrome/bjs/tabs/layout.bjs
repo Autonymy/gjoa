@@ -3,12 +3,12 @@
   (:require [gjoa.macros :refer [by-id xul-new attr! pref-bool has? rmattr! toggle! on!]]))
 (define-mode strict)
 
-(declare-extern [gBrowser ResizeObserver create-logger all-rows data-of level-of-row row-of state] Any)
+(declare-extern [gBrowser ResizeObserver create-logger! all-rows data-of! level-of-row row-of state] Any)
 
-(js/export (defn make-layout [deps :- Any] :- Any
+(js/export (defn make-layout! [deps :- Any] :- Any
   (let [sidebar-main (.-sidebarMain deps)
         rows (.-rows deps)
-        log (create-logger "tabs/layout")
+        log (create-logger! "tabs/layout")
 
         ;; Module-private mutable state
         priv :- Any {:toolboxResizeObs nil
@@ -32,7 +32,7 @@
             (let [mutated :- Any {:v false}]
               (.forEach all (fn [row]
                 (when (= (level-of-row row) 0)
-                  (let [d (data-of row)
+                  (let [d (data-of! row)
                         is-active-tree (= row (.-root found))]
                     (if is-active-tree
                       (when (and d (.-collapsed d))

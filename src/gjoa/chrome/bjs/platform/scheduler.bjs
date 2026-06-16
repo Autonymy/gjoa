@@ -2,12 +2,12 @@
 (ns gjoa.platform.scheduler)
 (define-mode strict)
 
-(declare-extern [create-logger performance String] Any)
+(declare-extern [create-logger! performance String] Any)
 
 (js/export (def DOMAIN-ORDER :- Any ["prefs" "windows" "tabs" "snapshots" "sidebar" "command"]))
 
-(js/export (defn make-scheduler [] :- Any
-  (let [log (create-logger "scheduler")
+(js/export (defn make-scheduler! [] :- Any
+  (let [log (create-logger! "scheduler")
         reconcilers (Map.)
         pending (Map.)
         state :- Any {:pendingFlush nil

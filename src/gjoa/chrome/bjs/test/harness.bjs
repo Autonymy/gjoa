@@ -29,7 +29,7 @@
    "requestAnimationFrame" "cancelAnimationFrame"
    "getComputedStyle" "MutationObserver"])
 
-(js/export (defn setup-harness [] :- Any
+(js/export (defn setup-harness! [] :- Any
   (let [happy-window (Window.)
         happy-doc (.-document happy-window)
 

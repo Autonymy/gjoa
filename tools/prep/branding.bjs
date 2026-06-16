@@ -6,7 +6,7 @@
 (ns gjoa.tools.prep.branding
   (:require [fs :refer [existsSync readdirSync statSync mkdirSync readFileSync rmSync writeFileSync]]
             [path :refer [dirname extname join relative resolve]]
-            [gjoa.tools.prep.config :refer [load-config]]
+            [gjoa.tools.prep.config :refer [load-config!]]
             [gjoa.tools.prep.paths :refer [BRANDING-SRC
                                            ENGINE-BRANDING-DIR
                                            ENGINE-UNOFFICIAL-BRANDING
@@ -124,8 +124,8 @@
 
 ;; Copy mozilla's unofficial branding tree to engine/browser/branding/<binaryName>/,
 ;; applying string substitutions to text files and overwriting our PNG icons.
-(js/export (defn branding [] :- Any
-  (let [cfg (load-config)
+(js/export (defn branding! [] :- Any
+  (let [cfg (load-config!)
         target (join ENGINE-BRANDING-DIR (.-binaryName cfg))]
 
     (when (not (existsSync ENGINE-UNOFFICIAL-BRANDING))

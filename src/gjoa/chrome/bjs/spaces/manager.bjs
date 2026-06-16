@@ -10,7 +10,7 @@
 (defn uuid [] :- String
   (.randomUUID crypto))
 
-(js/export (defn make-spaces [deps] :- Any
+(js/export (defn make-spaces! [deps] :- Any
   (let [on-change (.-onChange deps)
         on-activated (.-onActivated deps)
         spaces (Map.)

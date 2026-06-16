@@ -4,10 +4,10 @@
 (define-mode strict)
 
 ;; Browser globals
-(declare-extern [window document gBrowser gBrowserInit Services requestAnimationFrame setTimeout setInterval clearInterval console Promise Array Set Math MutationObserver RegExp build-context-menu build-group-context-menu build-panel-context-menu make-drag make-events make-layout make-rows make-vim all-rows all-tabs pin-tab-id tab-url tree-data try-register-pin-attr create-logger make-history make-content-focus ensure-vertical-tabs-default migrate-legacy-prefs migrate-toolbar-defaults apply-menubar-default make-spaces make-gjoa make-saver closed-tabs row-of saved-tab-queue selection state tree-of] Any)
+(declare-extern [window document gBrowser gBrowserInit Services requestAnimationFrame setTimeout setInterval clearInterval console Promise Array Set Math MutationObserver RegExp build-context-menu! build-group-context-menu! build-panel-context-menu! make-drag! make-events! make-layout! make-rows! make-vim! all-rows all-tabs pin-tab-id tab-url tree-data! try-register-pin-attr! create-logger! make-history! make-content-focus! ensure-vertical-tabs-default migrate-legacy-prefs migrate-toolbar-defaults apply-menubar-default make-spaces! make-gjoa! make-saver! closed-tabs row-of saved-tab-queue selection state tree-of] Any)
 
 ;; Module deps — no import, declared extern
-(def pfx-log :- Any (create-logger "tabs"))
+(def pfx-log :- Any (create-logger! "tabs"))
 
 ;; sidebar-main is looked up once; the boot function exits if nil.
 (def sidebar-main :- Any (by-id "sidebar-main"))
@@ -63,10 +63,10 @@
 
 ;; --- Persistence ---
 
-(def history :- Any (make-history))
-(def content-focus :- Any (make-content-focus))
+(def history :- Any (make-history!))
+(def content-focus :- Any (make-content-focus!))
 
-(def gjoa-api :- Any (make-gjoa {:history history}))
+(def gjoa-api :- Any (make-gjoa! {:history history}))
 (set! (.-Gjoa window) gjoa-api)
 
 ;; Forward refs for cyclic deps
@@ -82,7 +82,7 @@
 
 ;; Spaces (workspaces)
 (def spaces :- Any
-  (make-spaces
+  (make-spaces!
     {:onChange (fn []
        (when (.-v rows-ref) (.scheduleTreeResync (.-v rows-ref)))
        (when schedule-save (schedule-save))
@@ -99,7 +99,7 @@
 
 ;; Write-on-every-change saver
 (def schedule-save :- Any
-  (make-saver
+  (make-saver!
     (fn []
       (let [snap {:tabs (tabs!)
                   :rows #(all-rows)
@@ -107,12 +107,12 @@
                   :closedTabs closed-tabs
                   :nextTabId (.-nextTabId state)
                   :tabUrl tab-url
-                  :treeData tree-data
+                  :treeData tree-data!
                   :spaces {:spaces (.list spaces)
                            :activeId (.activeId spaces)
                            :tabSpaces (.map (tabs!)
                                         (fn [t]
-                                          (let [id (.-id (tree-data t))
+                                          (let [id (.-id (tree-data! t))
                                                 sp (.spaceOf spaces t)]
                                             [id sp])))}}]
         snap))
@@ -121,13 +121,13 @@
 ;; --- Factory wiring (drag <-> rows <-> vim cycle) ---
 
 (def drag :- Any
-  (make-drag
+  (make-drag!
     {:clearSelection clear-selection
      :scheduleTreeResync #(.scheduleTreeResync (.-v rows-ref))
      :scheduleSave schedule-save}))
 
 (set! (.-v rows-ref)
-  (make-rows
+  (make-rows!
     {:setupDrag (.-setupDrag drag)
      :activateVim #(.activateVim (.-v vim-ref) %)
      :selectRange select-range
@@ -140,12 +140,12 @@
      :isGroupInActiveSpace #(.isSpaceActive spaces (.-spaceId %))}))
 
 (def layout :- Any
-  (make-layout
+  (make-layout!
     {:sidebarMain sidebar-main
      :rows (.-v rows-ref)}))
 
 (set! (.-v vim-ref)
-  (make-vim
+  (make-vim!
     {:rows (.-v rows-ref)
      :layout layout
      :scheduleSave schedule-save
@@ -157,7 +157,7 @@
      :spaces spaces}))
 
 (def events :- Any
-  (make-events
+  (make-events!
     {:rows (.-v rows-ref)
      :vim (.-v vim-ref)
      :scheduleSave schedule-save
@@ -315,7 +315,7 @@
                   (.appendChild (.-pinnedContainer state) row)
                   (do
                     (.insertBefore (.-panel state) row (.-spacer state))
-                    (let [tid (.-id (tree-data tab))
+                    (let [tid (.-id (tree-data! tab))
                           entry (.find (.-entries gafter) #(= (aget % 0) tid))]
                       (when entry
                         (.forEach (aget entry 1)
@@ -343,7 +343,7 @@
 
 ;; --- init — the bootstrap, converted from async to promise chains ---
 
-(defn init [] :- Any
+(defn init! [] :- Any
   ;; Defensive: pre-panel steps wrapped in try/catch
   (try (ensure-vertical-tabs-default)
     (catch Any e (.error console "gjoa-tabs: ensureVerticalTabsDefault threw — continuing" e)))
@@ -353,7 +353,7 @@
     (catch Any e (.error console "gjoa-tabs: migrateToolbarDefaults threw — continuing" e)))
   (try (apply-menubar-default document)
     (catch Any e (.error console "gjoa-tabs: applyMenubarDefault threw — continuing" e)))
-  (try (try-register-pin-attr)
+  (try (try-register-pin-attr!)
     (catch Any e (.error console "gjoa-tabs: tryRegisterPinAttr threw — continuing" e)))
 
   (-> (-> (load-from-history)
@@ -408,7 +408,7 @@
                   (build-panel! rows-api))
 
                 ;; Context menus
-                (build-context-menu
+                (build-context-menu!
                   {:startRename (.-startRename vim-api)
                    :toggleCollapse (.-toggleCollapse rows-api)
                    :createGroupRow (.-createGroupRow rows-api)
@@ -416,13 +416,13 @@
                    :updateVisibility (.-updateVisibility rows-api)
                    :scheduleTreeResync (.-scheduleTreeResync rows-api)
                    :scheduleSave schedule-save})
-                (build-group-context-menu
+                (build-group-context-menu!
                   {:startRename (.-startRename vim-api)
                    :toggleCollapse (.-toggleCollapse rows-api)
                    :syncGroupRow (.-syncGroupRow rows-api)
                    :updateVisibility (.-updateVisibility rows-api)
                    :scheduleSave schedule-save})
-                (let [panel-menu (build-panel-context-menu
+                (let [panel-menu (build-panel-context-menu!
                                   {:createGroupRow (.-createGroupRow rows-api)
                                    :startRename (.-startRename vim-api)
                                    :setCursor (.-setCursor vim-api)
@@ -577,7 +577,7 @@
 ;; --- safeInit — wraps init in catch-all ---
 
 (defn safe-init [] :- Any
-  (-> (init)
+  (-> (init!)
       (.catch #(.error console "gjoa-tabs: init() threw — sidebar may be empty" %))))
 
 ;; --- clone-node-fields: copy the 6 persistence fields into a fresh object ---

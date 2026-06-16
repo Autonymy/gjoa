@@ -3,12 +3,12 @@
   (:require [gjoa.macros :refer [q html-new attr! on! onc! offc! off! bool has? rmattr!]]))
 (define-mode strict)
 
-(declare-extern [document window setTimeout String KeyboardEvent create-logger] Any)
+(declare-extern [document window setTimeout String KeyboardEvent create-logger!] Any)
 
-(js/export (defn make-urlbar [deps] :- Any
+(js/export (defn make-urlbar! [deps] :- Any
   (let [urlbar (.-urlbar deps)
         root (.-documentElement document)
-        log (create-logger "urlbar")
+        log (create-logger! "urlbar")
         state :- Any {:activated false :intent "current" :backdrop nil}
 
         intent-attr #(if (= % "newTab") "new-tab" "current")

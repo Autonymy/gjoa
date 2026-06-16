@@ -3,7 +3,7 @@
   (:require [gjoa.macros :refer [q qa xul-new attr! on! onc! bool has? rmattr! css! tabs! toggle! undef-or]]))
 (define-mode strict)
 
-(declare-extern [document gBrowser Math Set Array requestAnimationFrame INDENT create-logger state row-of selection moving-tabs all-rows data-of is-horizontal level-of level-of-row subtree-rows tab-by-id tree-data] Any)
+(declare-extern [document gBrowser Math Set Array requestAnimationFrame INDENT create-logger! state row-of selection moving-tabs all-rows data-of! is-horizontal level-of level-of-row subtree-rows tab-by-id tree-data!] Any)
 
 ;; Walk siblings from `start` using `dir` (e.g. .-nextElementSibling),
 ;; return the first node satisfying `pred`, or nil.
@@ -41,11 +41,11 @@
 
     (.-_tab row)
     {:kind "tab"
-     :id (.-id (tree-data (.-_tab row)))
+     :id (.-id (tree-data! (.-_tab row)))
      :label (.-label (.-_tab row))
      :level (level-of (.-_tab row))
      :pinned (bool (.-pinned (.-_tab row)))
-     :parentId (.-parentId (tree-data (.-_tab row)))}
+     :parentId (.-parentId (tree-data! (.-_tab row)))}
 
     (.-_group row)
     {:kind "group"
@@ -77,11 +77,11 @@
     (if (.-length subtree-tabs)
       (aget subtree-tabs (- (.-length subtree-tabs) 1))
       (find-closest-tab-before! group))))
-(js/export (defn make-drag [deps :- Any] :- Any
+(js/export (defn make-drag! [deps :- Any] :- Any
   (let [clear-selection (.-clearSelection deps)
         schedule-tree-resync (.-scheduleTreeResync deps)
         schedule-save (.-scheduleSave deps)
-        log (create-logger "tabs/drag")
+        log (create-logger! "tabs/drag")
 
         ;; Closure-private drag/drop cycle state
         ds :- Any {:dragSource nil
@@ -173,7 +173,7 @@
         execute-drop (fn [src-row tgt-row position]
           (clear-drop-indicator)
           (let [tgt-level (level-of-row tgt-row)]
-            (if (not (data-of tgt-row))
+            (if (not (data-of! tgt-row))
               (log "executeDrop:abort"
                    {:reason "no-tgt-data" :target (row-desc tgt-row)})
               (let [src-pinned (or (row-pinned? src-row)
@@ -235,8 +235,8 @@
                                     "tab/sibling->tgtParentId"))
                             (set! (.-value parent-result)
                                   (if (= position "child")
-                                    (.-id (tree-data (.-_tab tgt-row)))
-                                    (.-parentId (tree-data (.-_tab tgt-row))))))
+                                    (.-id (tree-data! (.-_tab tgt-row)))
+                                    (.-parentId (tree-data! (.-_tab tgt-row))))))
 
                           (.-_group tgt-row)
                           (if (= position "child")
@@ -275,7 +275,7 @@
                             (fn [r]
                               (cond
                                 (.-_tab r)
-                                (let [td (tree-data (.-_tab r))
+                                (let [td (tree-data! (.-_tab r))
                                       parent (tab-by-id
                                                (undef-or (.-parentId td) 0))]
                                   (when (or (not parent)
@@ -485,7 +485,7 @@
                                 (log "executeDrop:settled"
                                      {:sourceFinal (row-desc src-row)
                                       :sourceParentInTree
-                                      (some-> src-row .-_tab tree-data .-parentId)})
+                                      (some-> src-row .-_tab tree-data! .-parentId)})
                                 (schedule-tree-resync)
                                 (schedule-save))))))))))))))
 

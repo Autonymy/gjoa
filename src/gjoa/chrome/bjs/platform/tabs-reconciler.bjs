@@ -3,10 +3,10 @@
   (:require [gjoa.macros :refer [on! off!]]))
 (define-mode strict)
 
-(declare-extern [gBrowser create-logger] Any)
+(declare-extern [gBrowser create-logger!] Any)
 
-(js/export (defn make-tabs-reconciler [deps :- Any] :- Any
-  (let [log (create-logger "reconciler/tabs")
+(js/export (defn make-tabs-reconciler! [deps :- Any] :- Any
+  (let [log (create-logger! "reconciler/tabs")
         scheduler (.-scheduler deps)
 
         unregister (.register scheduler

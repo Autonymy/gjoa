@@ -3,9 +3,9 @@
   (:require [gjoa.macros :refer [by-id mi sep xul-id with-ctx on! has? attr! tabs! bool]]))
 (define-mode strict)
 
-(declare-extern [gBrowser Services Ci Cc TabContextMenu PlacesCommandHook BrowserCommands undoCloseTab row-of state data-of has-children level-of-row subtree-rows tree-data] Any)
+(declare-extern [gBrowser Services Ci Cc TabContextMenu PlacesCommandHook BrowserCommands undoCloseTab row-of state data-of! has-children level-of-row subtree-rows tree-data!] Any)
 
-(js/export (defn build-context-menu [deps :- Any] :- Any
+(js/export (defn build-context-menu! [deps :- Any] :- Any
   (let [{:keys [startRename toggleCollapse createGroupRow setCursor updateVisibility scheduleTreeResync scheduleSave]} deps
 
         menu (xul-id "menupopup" "gjoa-tab-menu")]
@@ -24,7 +24,7 @@
                                       (let [tab-level (level-of-row row)
                                             grp (createGroupRow "New Group" tab-level)]
                                         (.before row grp)
-                                        (let [td (tree-data (.-contextTab state))]
+                                        (let [td (tree-data! (.-contextTab state))]
                                           (set! (.-parentId td) (.-id (.-_group grp))))
                                         (scheduleTreeResync)
                                         (setCursor grp)
@@ -99,7 +99,7 @@
               (set! (.-hidden collapse-item) (not has))
               (set! (.-hidden close-kids-item) (not has))
               (when (and has row)
-                (let [d (data-of row)]
+                (let [d (data-of! row)]
                   (when d
                     (attr! collapse-item "label"
                       (if (.-collapsed d) "Expand" "Collapse")))))
@@ -111,7 +111,7 @@
 
       (.appendChild (by-id "mainPopupSet") menu)
       menu))))
-(js/export (defn build-group-context-menu [deps :- Any] :- Any
+(js/export (defn build-group-context-menu! [deps :- Any] :- Any
   (let [{:keys [startRename toggleCollapse syncGroupRow updateVisibility scheduleSave]} deps
 
         menu (xul-id "menupopup" "gjoa-group-menu")]
@@ -129,7 +129,7 @@
                                    (let [my-level (or (.-level (.-_group row)) 0)
                                          group-id (.-id (.-_group row))]
                                      (.forEach (tabs!)
-                                       #(let [td (tree-data %)]
+                                       #(let [td (tree-data! %)]
                                           (when (= (.-parentId td) group-id)
                                             (set! (.-parentId td) nil))))
                                      (let [walk (fn [nxt]
@@ -188,7 +188,7 @@
 
       (.appendChild (by-id "mainPopupSet") menu)
       menu))))
-(js/export (defn build-panel-context-menu [deps :- Any] :- Any
+(js/export (defn build-panel-context-menu! [deps :- Any] :- Any
   (let [{:keys [createGroupRow startRename setCursor updateVisibility scheduleSave]} deps
 
         menu (xul-id "menupopup" "gjoa-panel-menu")]

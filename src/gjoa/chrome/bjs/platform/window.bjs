@@ -2,8 +2,8 @@
 (ns gjoa.platform.window)
 (define-mode strict)
 
-(declare-extern [crypto make-window-tabs] Any)
+(declare-extern [crypto make-window-tabs!] Any)
 
-(js/export (defn make-gjoa-window [scheduler] :- Any
+(js/export (defn make-gjoa-window! [scheduler] :- Any
   (let [window-id (.randomUUID crypto)]
-    {:windowId window-id :tabs (make-window-tabs scheduler)})))
+    {:windowId window-id :tabs (make-window-tabs! scheduler)})))

@@ -132,6 +132,37 @@ TS owns the first row. Beagle owns all six — with the same inline types, the s
 not a line-count argument; it's a "one mental model for the entire system" argument,
 and it is not available in TS at any price.
 
+### 4. Effect discipline — the one bug class beagle catches that `tsc` cannot
+
+This is the genuine "`tsc` would never catch this," and it's now *executable*. Beagle
+enforces a naming invariant: a function whose name does **not** end in `!` must have a
+**pure body** — no `set!`, no call to a `!`-named (effectful) function. Break it and
+the build fails with `E019 purity leak`.
+
+```clojure
+;; beagle — COMPILE ERROR (E019): "compute-total has no '!' suffix but its body
+;; uses record! — rename to 'compute-total!' or remove the effect"
+(defn compute-total [items :- Any] :- Int
+  (record! items)                       ; a hidden side effect
+  (.reduce items (fn [a b] (+ a b)) 0))
+```
+
+```typescript
+// tsc --strict — PASSES CLEAN. The mutation is invisible to the type system.
+function computeTotal(items: number[]): number {
+  globalCache.lastCall = items;         // same hidden side effect
+  return items.reduce((a, b) => a + b, 0);
+}
+```
+
+`tsc` has no concept of purity at any setting — a function that reads like a
+calculation but silently mutates shared state type-checks perfectly, and ships as a
+heisenbug (it breaks the moment someone memoizes it, reorders it, or runs it twice).
+Beagle makes "no `!` means pure" a *machine-checked promise*. gjoa now enforces it
+across the whole corpus (`bun run check`, gated in `test`): every effectful function
+— all the `make-*` factories, every mutator — is marked `!`, so the *absence* of `!`
+is a guarantee you can reason on. That guarantee does not exist in TypeScript.
+
 ---
 
 ## The scorecard, honestly
@@ -143,7 +174,8 @@ and it is not available in TS at any price.
 | performance | **wash** (same engine) + zero-cost macros + bloat-free emit |
 | readability | taste-dependent; the macro DSL reads at the domain level |
 | **stack uniformity** | **decisive** — one typed, macro-enabled language for the whole stack |
+| **effect discipline** | **decisive** — `!`-purity is enforced (the one bug class `tsc` cannot catch) |
 | **correctness tooling** | macros + a repair loop with pointed, structured compile errors |
 
-The case for Beagle is **macros + uniformity + correctness**, demonstrated, not
+The case for Beagle is **macros + uniformity + effect discipline**, demonstrated, not
 **"fewer lines"** or **"faster,"** asserted. Lead with what's true and it holds up.

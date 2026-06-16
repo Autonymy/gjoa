@@ -3,7 +3,7 @@
   (:require [gjoa.macros :refer [qa by-id xul-new pref-bool]]))
 (define-mode strict)
 
-(declare-extern [Math create-logger ResizeObserver MutationObserver] Any)
+(declare-extern [Math create-logger! ResizeObserver MutationObserver] Any)
 
 (def PREF :- String "gjoa.view.draggable-sidebar")
 
@@ -71,8 +71,8 @@
     (catch Any e nil))
   (disable!))
 
-(js/export (defn make-drag-overlay [deps] :- Any
-  (set! (.-log st) (create-logger "drawer/drag-overlay"))
+(js/export (defn make-drag-overlay! [deps] :- Any
+  (set! (.-log st) (create-logger! "drawer/drag-overlay"))
   (set! (.-sidebar-main st) (.-sidebarMain deps))
   (set! (.-arrowscrollbox st) (by-id "tabbrowser-arrowscrollbox"))
 

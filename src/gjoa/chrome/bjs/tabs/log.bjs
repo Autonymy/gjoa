@@ -56,7 +56,7 @@
             (.write IOUtils (log-path!) (Uint8Array. 0) {:mode "overwrite"}))))
         (.catch (fn [] nil)))))
 
-(js/export (defn create-logger [tag :- String] :- Any
+(js/export (defn create-logger! [tag :- String] :- Any
   (let [prefix (str "[GJOA:" tag "]")]
     (fn [event data]
       (when (.getBoolPref (.-prefs Services) "gjoa.debug" false)

@@ -67,7 +67,7 @@
               (set! (.-pending flags) false)
               (do-save! flags getSnapshot history onErr))))))))
 
-(js/export (defn make-saver [getSnapshot :- Any history :- Any onError :- Any] :- Any
+(js/export (defn make-saver! [getSnapshot :- Any history :- Any onError :- Any] :- Any
   (let [fallback #(.error console "gjoa-tabs: save chain" %)
         onErr (or onError fallback)
         flags :- Any {:inFlight false :pending false}]

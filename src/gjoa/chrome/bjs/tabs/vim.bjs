@@ -4,7 +4,7 @@
 (define-mode strict)
 
 ;; Browser globals
-(declare-extern [document window gBrowser Services console setTimeout clearTimeout Event CustomEvent URL Map Set Math Array Date MutationObserver RegExp CHORD-TIMEOUT all-rows data-of has-children is-horizontal level-of level-of-row subtree-rows tab-by-id tree-data create-logger hz-display row-of saved-tab-queue selection state tree-of make-picker] Any)
+(declare-extern [document window gBrowser Services console setTimeout clearTimeout Event CustomEvent URL Map Set Math Array Date MutationObserver RegExp CHORD-TIMEOUT all-rows data-of! has-children is-horizontal level-of level-of-row subtree-rows tab-by-id tree-data! create-logger! hz-display row-of saved-tab-queue selection state tree-of make-picker!] Any)
 
 ;; Sibling module externs (no import)
 (defn insert-after-each [anchor :- Any rows-arr :- Any] :- Any
@@ -50,13 +50,13 @@
    {:name "space"      :description "Workspaces: new / rename / delete / switch"            :takesArgs true}
    {:name "tabpos"     :description "Where new tabs open: sibling | root | child"       :takesArgs true}
    {:name "help"       :description "Show the keymap cheatsheet"                         :takesArgs false}])
-(js/export (defn make-vim [deps :- Any] :- Any
+(js/export (defn make-vim! [deps :- Any] :- Any
   (let [{:keys [rows layout scheduleSave clearSelection selectRange sidebarMain history contentFocus spaces]} deps
 
-        log (create-logger "tabs/vim")
+        log (create-logger! "tabs/vim")
 
         ;; Spotlight picker
-        picker (make-picker
+        picker (make-picker!
                  {:restoreFocus #(when (.-panel state) (.focus (.-panel state)))
                   :modelineMsg  #(modeline-msg %1 %2)})
 
@@ -115,7 +115,7 @@
             (when (is-horizontal) (update-horizontal-expansion))))
 
         collapse-hz-tree (fn [root]
-          (let [d (data-of root)]
+          (let [d (data-of! root)]
             (when (and d (has-children root))
               (when (and (some-> state .-cursor .-_tab)
                          (not= (.-cursor state) root))
@@ -127,7 +127,7 @@
               (when (is-horizontal) (.setUrlbarTopLayer layout true)))))
 
         expand-hz-tree (fn [root]
-          (let [d (data-of root)]
+          (let [d (data-of! root)]
             (when (and d (has-children root))
               (.delete hz-display root)
               (set! (.-collapsed d) false)
@@ -195,7 +195,7 @@
 
         prev-sibling-tab (fn [row]
           (when (and row (.-_tab row))
-            (let [my-td (tree-data (.-_tab row))
+            (let [my-td (tree-data! (.-_tab row))
                   my-level (level-of (.-_tab row))
                   my-parent-id (.-parentId my-td)]
               (loop [r (.-previousElementSibling row)]
@@ -204,7 +204,7 @@
                   (not (.-_tab r)) (recur (.-previousElementSibling r))
                   (< (level-of (.-_tab r)) my-level) nil
                   (and (= (level-of (.-_tab r)) my-level)
-                       (= (.-parentId (tree-data (.-_tab r))) my-parent-id))
+                       (= (.-parentId (tree-data! (.-_tab r))) my-parent-id))
                     (.-_tab r)
                   :else (recur (.-previousElementSibling r)))))))
 
@@ -221,13 +221,13 @@
             (when (.-_tab row)
               (let [prev (.-previousElementSibling row)]
                 (if (and prev (.-_group prev))
-                  (do (set! (.-parentId (tree-data (.-_tab row)))
+                  (do (set! (.-parentId (tree-data! (.-_tab row)))
                             (.-id (.-_group prev)))
                       (.forEach (subtree-rows row) #(.syncAnyRow rows %)))
                   (let [sibling (prev-sibling-tab row)]
                     (when sibling
-                      (set! (.-parentId (tree-data (.-_tab row)))
-                            (.-id (tree-data sibling)))
+                      (set! (.-parentId (tree-data! (.-_tab row)))
+                            (.-id (tree-data! sibling)))
                       (.forEach (subtree-rows row) #(.syncAnyRow rows %))))))))
           (.updateVisibility rows)
           (scheduleSave))
@@ -239,20 +239,20 @@
                 (set! (.-level d) (.max Math 0 (- (.-level d) 1)))
                 (.syncAnyRow rows row)))
             (when (.-_tab row)
-              (let [td (tree-data (.-_tab row))]
+              (let [td (tree-data! (.-_tab row))]
                 (when (not= (.-parentId td) nil)
                   (if (= (js/typeof (.-parentId td)) "string")
                     (set! (.-parentId td) nil)
                     (let [parent (tab-by-id (.-parentId td))]
                       (set! (.-parentId td)
-                            (and parent (.-parentId (tree-data parent))))))
+                            (and parent (.-parentId (tree-data! parent))))))
                   (.forEach (subtree-rows row) #(.syncAnyRow rows %))))))
           (.updateVisibility rows)
           (scheduleSave))
 
         move-to-root (fn [row]
           (when (and row (.-_tab row))
-            (let [td (tree-data (.-_tab row))]
+            (let [td (tree-data! (.-_tab row))]
               (when (.-parentId td)
                 (set! (.-parentId td) nil)
                 (commit-tree (subtree-rows row))))))
@@ -262,15 +262,15 @@
             (let [prev (.-previousElementSibling row)]
               (when prev
                 (if (.-_group prev)
-                  (set! (.-parentId (tree-data (.-_tab row)))
+                  (set! (.-parentId (tree-data! (.-_tab row)))
                         (.-id (.-_group prev)))
                   (when (.-_tab prev)
-                    (set! (.-parentId (tree-data (.-_tab row)))
-                          (.-id (tree-data (.-_tab prev))))))
+                    (set! (.-parentId (tree-data! (.-_tab row)))
+                          (.-id (tree-data! (.-_tab prev))))))
                 (commit-tree (subtree-rows row))))))
 
         swap-down (fn [row]
-          (when (data-of row)
+          (when (data-of! row)
             (let [my-level (level-of-row row)
                   sub (subtree-rows row)
                   last-row (aget sub (- (.-length sub) 1))
@@ -284,7 +284,7 @@
                 (scheduleSave)))))
 
         swap-up (fn [row]
-          (when (data-of row)
+          (when (data-of! row)
             (let [my-level (level-of-row row)
                   prev (loop [el (.-previousElementSibling row)]
                          (cond
@@ -602,7 +602,7 @@
                         group-id (.-id d)]
                     (.forEach (tabs!)
                       (fn [tab]
-                        (let [td (tree-data tab)]
+                        (let [td (tree-data! tab)]
                           (when (= (.-parentId td) group-id)
                             (set! (.-parentId td) nil)))))
                     (let [dec-groups (fn [nxt]
@@ -625,7 +625,7 @@
         clone-as-sibling (fn [tab]
           (let [source-row (.get row-of tab)]
             (when source-row
-              (let [sibling-parent-id (.-parentId (tree-data tab))]
+              (let [sibling-parent-id (.-parentId (tree-data! tab))]
                 (set! (.-pending-cursor-move vs) true)
                 (let [clone (.duplicateTab gBrowser tab)
                       obs (MutationObserver.
@@ -633,7 +633,7 @@
                               (let [clone-row (.get row-of clone)]
                                 (when clone-row
                                   (.disconnect obs)
-                                  (set! (.-parentId (tree-data clone)) sibling-parent-id)
+                                  (set! (.-parentId (tree-data! clone)) sibling-parent-id)
                                   (let [st (subtree-rows source-row)]
                                     (.after (aget st (- (.-length st) 1)) clone-row))
                                   (.syncTabRow rows clone)
@@ -856,12 +856,12 @@
             (let [src-rows (subtree-rows (.-refile-source vs))]
               (if (.includes src-rows target)
                 (modeline-msg "Can't refile under own subtree" 3000)
-                (let [src-data (data-of (.-refile-source vs))
-                      tgt-data (data-of target)]
+                (let [src-data (data-of! (.-refile-source vs))
+                      tgt-data (data-of! target)]
                   (when (and src-data tgt-data)
                     (if (and (.-_tab (.-refile-source vs)) (.-_tab target))
-                      (set! (.-parentId (tree-data (.-_tab (.-refile-source vs))))
-                            (.-id (tree-data (.-_tab target))))
+                      (set! (.-parentId (tree-data! (.-_tab (.-refile-source vs))))
+                            (.-id (tree-data! (.-_tab target))))
                       (let [tgt-level (level-of-row target)
                             src-level (level-of-row (.-refile-source vs))
                             delta (- (+ tgt-level 1) src-level)]
@@ -904,7 +904,7 @@
               (let [all-r (all-rows)
                     matched (Set.)]
                 (.forEach all-r (fn [row]
-                  (let [d (data-of row)]
+                  (let [d (data-of! row)]
                     (when d
                       (let [label (.toLowerCase
                                     (or (.-name d)
@@ -972,7 +972,7 @@
                 (when q
                   (.forEach (all-rows) (fn [row]
                     (when (not (and excluded (.has excluded row)))
-                      (let [d (data-of row)]
+                      (let [d (data-of! row)]
                         (when d
                           (let [label (.toLowerCase
                                         (or (.-name d)
@@ -1018,7 +1018,7 @@
           (when row
             (let [label (q row ".gjoa-tab-label")]
               (when label
-                (let [d (data-of row)]
+                (let [d (data-of! row)]
                   (when d
                     (let [original (or (.-name d)
                                        (if (.-_tab row) (.-label (.-_tab row)) "") "")]
@@ -1103,7 +1103,7 @@
                 (if (not (.-cursor state))
                   (modeline-msg "No cursor -- place cursor on tab to refile" 3000)
                   (do (set! (.-refile-source vs) (.-cursor state))
-                      (let [src-label (or (some-> (.-cursor state) data-of .-name)
+                      (let [src-label (or (some-> (.-cursor state) data-of! .-name)
                                           (some-> state .-cursor .-_tab .-label)
                                           "tab")]
                         (modeline-msg (str "Refile: \"" src-label "\" -> search for target...")))

@@ -152,7 +152,7 @@
                              (str "; " (.-length advisories) " advisor" (if (= (.-length advisories) 1) "y" "ies"))
                              ""))}))))))
 
-(js/export (defn check [] :- Any
+(js/export (defn check! [] :- Any
   (let [gjoaJsonPath (join REPO-ROOT "gjoa.json")
         gjoaJson (.parse JSON (js/await (readFile gjoaJsonPath "utf8")))
         pinned (.-version (.-firefox gjoaJson))
@@ -253,7 +253,7 @@
 (defn main! [] :- Any
   (let [jsonMode (.includes (.-argv process) "--json")
         quietMode (.includes (.-argv process) "--quiet")
-        r (js/await (check))]
+        r (js/await (check!))]
     (cond
       jsonMode
       (.log console (.stringify JSON r nil 2))

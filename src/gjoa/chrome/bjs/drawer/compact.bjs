@@ -3,9 +3,9 @@
   (:require [gjoa.macros :refer [q xul-new pref-bool pref-int set-pref-bool! on! off! has? attr! rmattr! bool]]))
 (define-mode strict)
 
-(declare-extern [document window Services Math setTimeout clearTimeout requestAnimationFrame parseInt getComputedStyle MutationObserver Object create-logger collapse-protection-duration-ms] Any)
+(declare-extern [document window Services Math setTimeout clearTimeout requestAnimationFrame parseInt getComputedStyle MutationObserver Object create-logger! collapse-protection-duration-ms] Any)
 
-(js/import create-logger "../tabs/log.js" create_logger)
+(js/import create-logger! "../tabs/log.js" create_logger)
 (js/import collapse-protection-duration-ms "./timing.js" collapse_protection_duration_ms)
 
 (defn make-mode-ops! [cfg :- Any] :- Any
@@ -109,7 +109,7 @@
      :schedule-watchdog schedule-watchdog :clear-flash clear-flash
      :cancel-watchdog cancel-watchdog}))
 
-(js/export (defn make-compact [deps :- Any] :- Any
+(js/export (defn make-compact! [deps :- Any] :- Any
   (let [sidebar-main (.-sidebarMain deps)
         navigator-toolbox (.-navigatorToolbox deps)
         urlbar (.-urlbar deps)
@@ -123,7 +123,7 @@
 
         hover-hack-delay #(pref-int "gjoa.compact.hoverHackDelay" 0)
 
-        log (create-logger "compact")
+        log (create-logger! "compact")
 
         vstate :- Any {:strip nil :flash-timer nil :urlbar-obs nil
                        :collapse-until 0 :retry-timer nil :watchdog nil}

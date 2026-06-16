@@ -4,5 +4,5 @@
             [gjoa.spaces.visibility :as vis]))
 (define-mode strict)
 
-(js/export (def make-spaces :- Any (.-make-spaces mgr)))
+(js/export (def make-spaces! :- Any (.-make-spaces mgr)))
 (js/export (def is-in-active-space :- Any (.-is-in-active-space vis)))

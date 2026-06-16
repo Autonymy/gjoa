@@ -2,12 +2,12 @@
 (ns gjoa.platform.index)
 (define-mode strict)
 
-(declare-extern [make-scheduler make-tabs-reconciler make-gjoa-window make-persisted make-cross-window-tabs] Any)
+(declare-extern [make-scheduler! make-tabs-reconciler! make-gjoa-window! make-persisted make-cross-window-tabs] Any)
 
-(js/export (defn make-gjoa [deps :- Any] :- Any
-  (let [scheduler (make-scheduler)
-        tabs-reconciler (make-tabs-reconciler {:scheduler scheduler})
-        win (make-gjoa-window scheduler)
+(js/export (defn make-gjoa! [deps :- Any] :- Any
+  (let [scheduler (make-scheduler!)
+        tabs-reconciler (make-tabs-reconciler! {:scheduler scheduler})
+        win (make-gjoa-window! scheduler)
         persisted (make-persisted (.-history deps))
         cross-window-tabs (make-cross-window-tabs)]
 

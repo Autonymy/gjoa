@@ -47,7 +47,7 @@
 
 ;; --- factory ---
 
-(js/export (defn make-picker [deps :- Any] :- Any
+(js/export (defn make-picker! [deps :- Any] :- Any
   (let [st :- Any {:pickerEl nil
                     :pickerInput nil
                     :pickerList nil

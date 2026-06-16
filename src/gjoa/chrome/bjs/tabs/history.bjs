@@ -14,7 +14,7 @@
 ;; last successful commit is durable. Hash dedupe runs in-memory before
 ;; touching the DB so we don't pay a write cost for no-op saves.
 
-(declare-extern [Services Ci PathUtils IOUtils ChromeUtils console JSON Date crypto TextEncoder Uint8Array String Object Array Error RegExp create-logger] Any)
+(declare-extern [Services Ci PathUtils IOUtils ChromeUtils console JSON Date crypto TextEncoder Uint8Array String Object Array Error RegExp create-logger!] Any)
 (def SCHEMA-VERSION :- Int 3)
 
 (def INSTANCE-ID-PREF :- String "gjoa.instance.id")
@@ -57,7 +57,7 @@
    ;; v2 -> v3: FTS5 (handled in JS, not SQL — see apply-migration-step)
    "SELECT 1"])
 
-(def log :- Any (create-logger "history"))
+(def log :- Any (create-logger! "history"))
 (def state :- Any {:conn nil :lastHash nil :instanceId nil})
 (defn load-instance-id! [] :- String
   (or (.-instanceId state)
@@ -257,7 +257,7 @@
   (if (and rows (.-length rows) (aget rows 0))
     (or (.getResultByName (aget rows 0) "c") 0)
     0))
-(js/export (defn make-history [] :- Any
+(js/export (defn make-history! [] :- Any
   {:appendEvent
    (fn [snapshot]
      (with-conn #(let [canon (canonicalize snapshot)]

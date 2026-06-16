@@ -3,7 +3,7 @@
   (:require [gjoa.macros :refer [by-id q xul-id attr! mi sep pref-bool set-pref-bool! on! off! has?]]))
 (define-mode strict)
 
-(declare-extern [console window getComputedStyle create-logger] Any)
+(declare-extern [console window getComputedStyle create-logger!] Any)
 
 (defn install! [sidebar-button :- Any sidebar-main :- Any compact :- Any] :- Any
   (let [og-icon (q sidebar-button ".toolbarbutton-icon")
@@ -128,9 +128,9 @@
                 (.remove button)
                 (set! (.-display (.-style sidebar-button)) ""))})))))))
 
-(js/export (defn make-sidebar-button [deps :- Any] :- Any
+(js/export (defn make-sidebar-button! [deps :- Any] :- Any
   (let [{:keys [sidebarMain compact]} deps
-        log (create-logger "drawer/sidebar-button")
+        log (create-logger! "drawer/sidebar-button")
         sidebar-main sidebarMain
         native (by-id "sidebar-button")]
     (if native

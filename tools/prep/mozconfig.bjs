@@ -3,7 +3,7 @@
   (:require [fs :refer [existsSync]]
             [fs/promises :refer [writeFile]]
             [path :refer [join]]
-            [gjoa.tools.prep.config :refer [load-config]]
+            [gjoa.tools.prep.config :refer [load-config!]]
             [gjoa.tools.prep.paths :refer [ENGINE-DIR]]
             [gjoa.tools.prep.log :refer [log]]))
 (define-mode strict)
@@ -19,8 +19,8 @@
 ;; We expand $LIBCLANG_PATH at file-write time rather than relying on mach
 ;; to pick up the env var, because mach's configure subprocess doesn't
 ;; always inherit env vars cleanly through its virtualenv layers.
-(js/export (defn mozconfig [] :- Any
-  (let [cfg (load-config)
+(js/export (defn mozconfig! [] :- Any
+  (let [cfg (load-config!)
         libclang (.-LIBCLANG_PATH (.-env process))]
     (when (not libclang)
       (.warn log

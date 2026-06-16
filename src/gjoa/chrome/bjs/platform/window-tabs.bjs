@@ -3,7 +3,7 @@
   (:require [gjoa.macros :refer [bool]]))
 (define-mode strict)
 
-(declare-extern [create-logger tab-by-id tree-of adapter-all-tabs adapter-selected-tab adapter-pin-tab adapter-unpin-tab adapter-toggle-pinned adapter-remove-tab adapter-duplicate-tab adapter-reload-tab adapter-select-tab adapter-open-tab window] Any)
+(declare-extern [create-logger! tab-by-id tree-of adapter-all-tabs adapter-selected-tab adapter-pin-tab adapter-unpin-tab adapter-toggle-pinned adapter-remove-tab adapter-duplicate-tab adapter-reload-tab adapter-select-tab adapter-open-tab window] Any)
 
 (defn resolve-tab [ref :- Any] :- Any
   (if (= (js/typeof ref) "number")
@@ -56,8 +56,8 @@
         (op t)
         (.markDirty scheduler "tabs" reason)))))
 
-(js/export (defn make-window-tabs [scheduler :- Any] :- Any
-  (let [log (create-logger "platform/tabs")]
+(js/export (defn make-window-tabs! [scheduler :- Any] :- Any
+  (let [log (create-logger! "platform/tabs")]
     {:list #(list-tabs)
      :selected #(selected-tab)
      :get #(get-tab %)

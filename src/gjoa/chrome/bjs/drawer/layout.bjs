@@ -3,15 +3,15 @@
   (:require [gjoa.macros :refer [by-id q xul-new xul-id pref-int set-pref-int! on! off! has?]]))
 (define-mode strict)
 
-(declare-extern [window Math setTimeout parseFloat getComputedStyle Array create-logger] Any)
+(declare-extern [window Math setTimeout parseFloat getComputedStyle Array create-logger!] Any)
 
-(js/import create-logger "../tabs/log.js" create_logger)
+(js/import create-logger! "../tabs/log.js" create_logger)
 
 (def WIDTH-PREF :- String "gjoa.sidebar.width")
 
-(js/export (defn make-layout [deps] :- Any
+(js/export (defn make-layout! [deps] :- Any
   (let [{:keys [sidebarMain navigatorToolbox urlbarContainer navBar urlbar]} deps
-        log (create-logger "drawer/layout")
+        log (create-logger! "drawer/layout")
         sidebar-main sidebarMain
         navigator-toolbox navigatorToolbox
         urlbar-container urlbarContainer

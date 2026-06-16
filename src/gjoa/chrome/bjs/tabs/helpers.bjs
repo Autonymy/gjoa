@@ -3,9 +3,9 @@
   (:require [gjoa.macros :refer [qa attr! has? tabs! bool]]))
 (define-mode strict)
 
-(declare-extern [create-logger PIN-ATTR tree-of state gBrowser console ChromeUtils String Number Set Array JSON Math SessionStore] Any)
+(declare-extern [create-logger! PIN-ATTR tree-of state gBrowser console ChromeUtils String Number Set Array JSON Math SessionStore] Any)
 
-(def log :- Any (create-logger "tabs"))
+(def log :- Any (create-logger! "tabs"))
 
 ;; SessionStore resolution — may not exist at import time
 (js/export (def SS :- Any
@@ -26,7 +26,7 @@
 ;; mutable flag for pin-attr registration
 (def pin-reg :- Any {:done false})
 
-(js/export (defn try-register-pin-attr [] :- Any
+(js/export (defn try-register-pin-attr! [] :- Any
   (when (and (not (.-done pin-reg)) SS (.-persistTabAttribute SS))
     (try
       (.persistTabAttribute SS PIN-ATTR)
@@ -53,7 +53,7 @@
       (or (and raw (Number raw)) (try-legacy) 0))
     (catch Any _e 0))))
 
-(js/export (defn tree-data [tab :- Any] :- Any
+(js/export (defn tree-data! [tab :- Any] :- Any
   (if (.has tree-of tab)
     (.get tree-of tab)
     (let [pinned-id (read-pinned-id tab)
@@ -93,7 +93,7 @@
               (and g (= (.-id g) id)))))))
 
 (js/export (defn parent-of-tab [tab :- Any] :- Any
-  (tab-by-id (.-parentId (tree-data tab)))))
+  (tab-by-id (.-parentId (tree-data! tab)))))
 
 (js/export (defn level-of [tab :- Any] :- Int
   (let [seen (Set.)]
@@ -102,7 +102,7 @@
         lv
         (do
           (.add seen t)
-          (let [pid (.-parentId (tree-data t))]
+          (let [pid (.-parentId (tree-data! t))]
             (cond
               (or (= pid nil) (= pid js/undefined)) lv
               (= (js/typeof pid) "string")
@@ -121,10 +121,10 @@
     (.-_tab row) (level-of (.-_tab row))
     :else 0)))
 
-(js/export (defn data-of [row :- Any] :- Any
+(js/export (defn data-of! [row :- Any] :- Any
   (cond
     (.-_group row) (.-_group row)
-    (.-_tab row) (tree-data (.-_tab row))
+    (.-_tab row) (tree-data! (.-_tab row))
     :else nil)))
 
 (js/export (defn all-tabs [] :- (Vec Any)

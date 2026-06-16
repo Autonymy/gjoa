@@ -3,12 +3,12 @@
   (:require [gjoa.macros :refer [by-id xul-new xul-id attr! on! off! has?]]))
 (define-mode strict)
 
-(declare-extern [document gBrowser js/clearTimeout create-logger] Any)
+(declare-extern [document gBrowser js/clearTimeout create-logger!] Any)
 
 (def SHOW-DELAY-MS :- Int 2000)
 
-(js/export (defn make-banner [] :- Any
-  (let [log (create-logger "drawer/banner")
+(js/export (defn make-banner! [] :- Any
+  (let [log (create-logger! "drawer/banner")
         identity-box (by-id "identity-box")]
     (if (not identity-box)
       (do (log "init:no-identity-box")
@@ -38,7 +38,7 @@
                 (set! (.-banner state) nil)
                 (log "hide")))
 
-            check (fn []
+            check! (fn []
               (let [browser (.-selectedBrowser gBrowser)
                     uri (if (and browser
                                  (.-currentURI browser)
@@ -61,14 +61,14 @@
                   (when (not is-insecure)
                     (hide)))))
 
-            class-observer (MutationObserver. check)
+            class-observer (MutationObserver. check!)
             opts :- Any {:attributes true}]
 
         (set! (.-attributeFilter opts) ["class"])
         (.observe class-observer identity-box opts)
-        (on! (.-tabContainer gBrowser) "TabSelect" check)
+        (on! (.-tabContainer gBrowser) "TabSelect" check!)
 
         {:destroy (fn []
           (.disconnect class-observer)
-          (off! (.-tabContainer gBrowser) "TabSelect" check)
+          (off! (.-tabContainer gBrowser) "TabSelect" check!)
           (hide))})))))

@@ -8,12 +8,16 @@
 ;; later want true "tree-replace" semantics we can switch to rsync --delete
 ;; scoped to specific subtrees.
 (ns gjoa.tools.prep.overlay
-  (:require [fs :refer [existsSync readdirSync statSync]]
-            [path :refer [join]]
-            [gjoa.tools.prep.paths :refer [ENGINE-DIR SRC-DIR]]
+  (:require [fs :refer [existsSync readdirSync statSync rmSync]]
+            [path :refer [join resolve]]
+            [gjoa.tools.prep.paths :refer [ENGINE-DIR REPO-ROOT SRC-DIR]]
             [gjoa.tools.prep.log :refer [log]]))
 (define-mode strict)
 (declare-extern [Bun] Any)
+
+;; beagle-build compiles the chrome loader (.bjs) to the .sys.mjs that jar.mn
+;; packages into omni.ja. Same resolution as tools/build-tools.bjs.
+(def BEAGLE-BUILD :- String (resolve REPO-ROOT ".." "beagle" "bin" "beagle-build"))
 
 (defn count-files [dir :- String] :- Any
   (reduce
@@ -40,5 +44,20 @@
           ;; -a preserves perms/timestamps; trailing slash on source so contents
           ;; merge into engine/ rather than creating engine/gjoa/.
           (.spawnSync Bun ["cp" "-a" (str SRC-DIR "/.") (str ENGINE-DIR "/")])
+          ;; The chrome loader is authored in beagle. cp -a above copied the
+          ;; .bjs source verbatim; compile it to the .sys.mjs ESM that jar.mn
+          ;; packages, then drop the stray source so only the module ships.
+          (let [loader-src (join SRC-DIR "browser" "components" "gjoa" "GjoaLoader.bjs")
+                loader-out (join ENGINE-DIR "browser" "components" "gjoa" "GjoaLoader.sys.mjs")
+                stray (join ENGINE-DIR "browser" "components" "gjoa" "GjoaLoader.bjs")]
+            (when (existsSync loader-src)
+              (let [proc (.spawnSync Bun {:cmd [BEAGLE-BUILD loader-src loader-out]
+                                          :cwd REPO-ROOT
+                                          :stdout "pipe"
+                                          :stderr "pipe"})]
+                (when (not= (.-exitCode proc) 0)
+                  (throw (Error. (str "beagle-build failed compiling GjoaLoader.bjs:\n"
+                                      (.toString (.-stderr proc))))))
+                (when (existsSync stray) (rmSync stray)))))
           (let [file-count (count-files SRC-DIR)]
             (.ok log (str "overlaid " file-count " file" (if (= file-count 1) "" "s"))))))))))

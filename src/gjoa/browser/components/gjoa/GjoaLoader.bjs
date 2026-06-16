@@ -1,0 +1,173 @@
+#lang beagle/js
+;; Gjoa chrome JS/CSS loader.
+;;
+;; Replaces fx-autoconfig with a Firefox-native loader that lives inside
+;; omni.ja (install-root-owned) instead of bouncing through profile-side
+;; chrome/ directories.
+;;
+;; This .bjs compiles to GjoaLoader.sys.mjs (an ESM) during `bun run import`
+;; (see tools/prep/import.bjs). `;;` comments do not survive the beagle→js emit,
+;; so the SECURITY MODEL notes below live in source only.
+;;
+;; =============================================================================
+;; SECURITY MODEL
+;; =============================================================================
+;;
+;; PRODUCTION (no <install_root>/gjoa-dev/ directory present):
+;;   Scripts and styles load from omni.ja via chrome:// URLs. Same trust
+;;   boundary as Firefox itself — if you trust the install, you trust the
+;;   chrome JS. No user-writable script directory exists; no hash-pinning
+;;   needed because there's nothing to tamper with.
+;;
+;; DEV MODE (<install_root>/gjoa-dev/ directory present):
+;;   The loader reads .uc.js / .uc.css files from <install_root>/gjoa-dev/
+;;   directly at startup. Used for sub-second iteration on chrome JS without
+;;   re-running mach build. Trust boundary: anyone who can write to the
+;;   install root (typically root, or the dev who owns the build tree) can
+;;   inject scripts. This is identical to "anyone who can write to the install
+;;   root can replace the binary" — same threat boundary, no new attack
+;;   surface.
+;;
+;; PRODUCTION HARDENING (deferred — see Stretch goal):
+;;   For shipped release builds, dev mode should be compiled out via a
+;;   build flag (e.g. MOZ_GJOA_DEV_LOADER=0). Even though the dev path
+;;   only triggers when <install_root>/gjoa-dev/ exists, defense-in-depth
+;;   says don't compile in code paths your release doesn't need.
+;;
+;; =============================================================================
+;; IMPLEMENTATION
+;; =============================================================================
+(ns gjoa.browser.components.gjoa.loader)
+(define-mode strict)
+(declare-extern [ChromeUtils Cc Ci Services console] Any)
+
+(def lazy :- Any {})
+
+(.defineESModuleGetters ChromeUtils lazy {})
+
+(def STYLE-SHEET-SERVICE :- Any
+  (let [cid "@mozilla.org/content/style-sheet-service;1"]
+    ;; `get` is the string-keyed member-access form (emits Cc[cid]); `aget` is
+    ;; Int-only array indexing and is rejected in strict position.
+    (.getService (get Cc cid) (.-nsIStyleSheetService Ci))))
+
+;; browser.xhtml is the only chrome document we want to inject into for now.
+;; Restricting by document URL avoids accidentally double-loading into popup
+;; windows, sidebar inner frames, etc.
+(def TARGET-BROWSER-URL :- String "chrome://browser/content/browser.xhtml")
+
+;; Module-level mutable state. `loaded-sheets` guards against double-registering
+;; a stylesheet; `observer-registered` guards against double-registering the
+;; chrome-document-loaded observer if the loader is re-imported.
+(def st :- Any {:loaded-sheets (Set.) :observer-registered false})
+
+;; Production-mode bundle list. These are the chrome bundles baked into omni.ja
+;; by `bun run chrome:dist` + tools/prep/chrome-bake.bjs. Keep in sync with
+;; tools/chrome-bundle/build.config entries (minus the gjoa-hello.uc.js
+;; smoke-test bundle, which we don't ship).
+(def PROD-SCRIPTS :- Any
+  ["gjoa-security.uc.js" "gjoa-drawer.uc.js" "gjoa-tabs.uc.js" "gjoa-dark-mode.uc.js"])
+(def PROD-STYLES :- Any
+  ["gjoa.uc.css" "gjoa-tabs.uc.css" "gjoa-which-key.uc.css"])
+
+;; --- Source resolution -------------------------------------------------------
+
+;; Returns the dev-mode source directory if it exists, else nil.
+;; Convention: <install_root>/gjoa-dev/{JS,CSS}/*.uc.{js,css}
+(defn dev-mode-dir [] :- Any
+  ;; GreD = Gecko runtime directory = the install root containing the binary.
+  (let [dir (.get (.-dirsvc Services) "GreD" (.-nsIFile Ci))]
+    (.append dir "gjoa-dev")
+    (if (and (.exists dir) (.isDirectory dir)) dir nil)))
+
+(defn list-files [dir :- Any suffix :- String] :- Any
+  (let [out []]
+    (if (or (not (.exists dir)) (not (.isDirectory dir)))
+      out
+      (let [entries (.-directoryEntries dir)]
+        (loop []
+          (when (.hasMoreElements entries)
+            (let [f (.QueryInterface (.getNext entries) (.-nsIFile Ci))]
+              (when (and (.isFile f) (.endsWith (.-leafName f) suffix))
+                (.push out f)))
+            (recur)))
+        out))))
+
+;; --- Loading -----------------------------------------------------------------
+
+(defn load-script-url-into [window :- Any url :- String label :- String] :- Any
+  (try
+    (do
+      (.loadSubScriptWithOptions (.-scriptloader Services) url {:target window :ignoreCache true})
+      (.log console (str "gjoa-loader: loaded script " label)))
+    (catch Any e
+      (.error console (str "gjoa-loader: script " label " threw at load time") e))))
+
+(defn register-style-sheet-url [url :- String label :- String] :- Any
+  (when (not (.has (.-loaded-sheets st) url))
+    (try
+      (let [uri (.newURI (.-io Services) url)]
+        (.loadAndRegisterSheet STYLE-SHEET-SERVICE uri (.-AGENT_SHEET STYLE-SHEET-SERVICE))
+        (.add (.-loaded-sheets st) url)
+        (.log console (str "gjoa-loader: registered stylesheet " label)))
+      (catch Any e
+        (.error console (str "gjoa-loader: stylesheet " label " threw at register time") e)))))
+
+(defn load-script-into [window :- Any file :- Any] :- Any
+  (load-script-url-into window (.-spec (.newFileURI (.-io Services) file)) (.-leafName file)))
+
+(defn register-style-sheet [file :- Any] :- Any
+  (register-style-sheet-url (.-spec (.newFileURI (.-io Services) file)) (.-leafName file)))
+
+(defn load-into-chrome-window [window :- Any] :- Any
+  (let [dev (dev-mode-dir)]
+    (if dev
+      (let [js-dir (.clone dev)
+            css-dir (.clone dev)]
+        (.append js-dir "JS")
+        (.append css-dir "CSS")
+        (doseq [css (list-files css-dir ".uc.css")]
+          (register-style-sheet css))
+        (doseq [js (list-files js-dir ".uc.js")]
+          (load-script-into window js)))
+      ;; Production: load from chrome://gjoa/content/{scripts,styles}/, baked
+      ;; into omni.ja by `bun run chrome:dist` + tools/prep/chrome-bake.bjs.
+      (do
+        (doseq [css PROD-STYLES]
+          (register-style-sheet-url (str "chrome://gjoa/content/styles/" css) css))
+        (doseq [js PROD-SCRIPTS]
+          (load-script-url-into window (str "chrome://gjoa/content/scripts/" js) js))))))
+
+;; --- Observer registration (called from BrowserGlue at app-startup) ----------
+
+(def observer :- Any
+  {:observe (fn [subject :- Any topic :- Any] :- Any
+    (when (= topic "chrome-document-loaded")
+      ;; subject IS the Document directly (chrome-document-loaded contract);
+      ;; no QueryInterface dance — nsIDOMDocument was removed years ago.
+      (let [doc subject
+            window (some-> doc .-defaultView)]
+        (when window
+          (when (= (some-> window .-location .-href) TARGET-BROWSER-URL)
+            (load-into-chrome-window window))))))})
+
+(defn set-defaults [] :- Any
+  (try
+    (let [d (.getDefaultBranch (.-prefs Services) "")]
+      (.setCharPref d "browser.toolbars.bookmarks.visibility" "never")
+      (.setBoolPref d "sidebar.verticalTabs" true)
+      (.setBoolPref d "gjoa.sidebar.menuBar" false)
+      (.setBoolPref d "gjoa.toolbar.newTabButton" false))
+    (catch Any e
+      (.error console "gjoa-loader: setDefaults failed" e))))
+
+(js/export (def GjoaLoader :- Any
+  {:start (fn [] :- Any
+    (when (not (.-observer-registered st))
+      (set! (.-observer-registered st) true)
+      (set-defaults)
+      (.addObserver (.-obs Services) observer "chrome-document-loaded")
+      (let [dev (dev-mode-dir)]
+        (if dev
+          (.log console (str "gjoa-loader: dev mode active — sourcing chrome from " (.-path dev)))
+          (.log console "gjoa-loader: production mode — loading chrome bundles from chrome://gjoa/content/")))))}))

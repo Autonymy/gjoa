@@ -5,15 +5,21 @@
 ;; zen-browser.app substring leaked through.
 (ns gjoa.tools.prep.branding
   (:require [fs :refer [existsSync readdirSync statSync mkdirSync readFileSync rmSync writeFileSync]]
-            [path :refer [dirname extname join relative]]
+            [path :refer [dirname extname join relative resolve]]
             [gjoa.tools.prep.config :refer [load-config]]
             [gjoa.tools.prep.paths :refer [BRANDING-SRC
                                            ENGINE-BRANDING-DIR
                                            ENGINE-UNOFFICIAL-BRANDING
+                                           REPO-ROOT
                                            SRC-DIR]]
             [gjoa.tools.prep.log :refer [log]]))
 (define-mode strict)
 (declare-extern [Bun] Any)
+
+;; beagle-build compiles the pref .bjs sources to pref() JS at import time (same
+;; resolution as tools/build-tools.bjs). The pref files are the one source-tree
+;; artifact that must reach the engine as emitted JS rather than running under Bun.
+(def BEAGLE-BUILD :- String (resolve REPO-ROOT ".." "beagle" "bin" "beagle-build"))
 
 ;; Files we string-substitute. Anything else (binary icons, archive formats,
 ;; platform-specific blobs) is copied as-is from the unofficial template.
@@ -164,16 +170,29 @@
         (throw (Error. (str "branding pref file missing at " branding-pref-file " — Mozilla's unofficial "
                             "template no longer ships pref/firefox-branding.js, so gjoa default prefs "
                             "would not be packaged. Register a pref file explicitly before relying on this."))))
-      (let [gjoa-pref-files ["perf-prefs.js" "dark-mode-prefs.js"]
-            pref-blocks (atom "\n\n// ===== gjoa default prefs (appended by tools/prep/branding.ts) =====\n")]
+      (let [gjoa-pref-files ["perf-prefs" "dark-mode-prefs"]
+            tmp-dir (join REPO-ROOT ".beagle-tools" ".pref-build")
+            _ (mkdirSync tmp-dir {:recursive true})
+            pref-blocks (atom "\n\n// ===== gjoa default prefs (appended by tools/prep/branding.bjs) =====\n")]
         (doseq [name gjoa-pref-files]
-          (let [src (join SRC-DIR "defaults" "pref" name)]
+          (let [src (join SRC-DIR "defaults" "pref" (str name ".bjs"))
+                out (join tmp-dir (str name ".js"))]
             (when (not (existsSync src)) (throw (Error. (str "gjoa pref source missing: " src))))
-            (let [contents (readFileSync src "utf8")]
-              (reset! pref-blocks (str @pref-blocks "\n// ---- " name " ----\n" (.trimEnd contents) "\n")))))
+            ;; Compile the pref .bjs → pref() JS. Sync spawn keeps this in the
+            ;; (now sync) branding pipeline; a nonzero exit is fatal so a broken
+            ;; pref source can't silently ship empty defaults.
+            (let [proc (.spawnSync Bun {:cmd [BEAGLE-BUILD src out]
+                                        :cwd REPO-ROOT
+                                        :stdout "pipe"
+                                        :stderr "pipe"})]
+              (when (not= (.-exitCode proc) 0)
+                (throw (Error. (str "beagle-build failed compiling pref source " src ":\n"
+                                    (.toString (.-stderr proc)))))))
+            (let [contents (readFileSync out "utf8")]
+              (reset! pref-blocks (str @pref-blocks "\n// ---- " name ".bjs ----\n" (.trimEnd contents) "\n")))))
         (let [existing (readFileSync branding-pref-file "utf8")]
           (writeFileSync branding-pref-file (str existing @pref-blocks)))
-        (.info log (str "appended " (.-length gjoa-pref-files) " gjoa pref files to branding/" (.-binaryName cfg) "/pref/firefox-branding.js"))))
+        (.info log (str "compiled + appended " (.-length gjoa-pref-files) " gjoa pref files to branding/" (.-binaryName cfg) "/pref/firefox-branding.js"))))
 
     ;; 2. Overlay our own logo PNGs from configs/branding/gjoa/. Mozilla's
     ;;    convention: defaultNN.png at the branding root for sizes the desktop

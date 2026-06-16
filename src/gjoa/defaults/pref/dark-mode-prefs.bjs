@@ -1,0 +1,22 @@
+#lang beagle/js
+;; gjoa dark mode prefs — chrome-level dark mode defaults.
+;; Shipped as DEFAULTS by appending the COMPILED output of this file onto the
+;; branding pref file in tools/prep/branding.bjs at import time (the only pref
+;; channel packaged into omni.ja without a Mozilla-source patch). `;;` comments
+;; don't survive the beagle→js emit, so the packaged pref file carries only the
+;; pref() statements; the rationale lives here in source.
+(ns gjoa.defaults.pref.dark-mode)
+(define-mode strict)
+(declare-extern [pref] Any)
+
+;; Master toggle: enables/disables dark mode entirely.
+(pref "gjoa.darkmode.enabled" false)
+
+;; Mode selector:
+;;   "auto"   — forces prefers-color-scheme: dark; sites with native dark
+;;              support automatically use it. No visual filter.
+;;   "filter" — applies SVG inversion filter at the browser compositor level
+;;              for sites without native dark mode. Counter-inverts images/video.
+;;   "off"    — dark mode disabled (same as enabled=false; exists so the mode
+;;              pref can be cycled without touching the enabled toggle).
+(pref "gjoa.darkmode.mode" "auto")

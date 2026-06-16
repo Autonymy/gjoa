@@ -1,42 +1,16 @@
 #lang beagle/js
 ;; Integration tests for Spaces (workspaces).
 ;;
-;; Drives the live `window.Spaces` API exposed by tabs/index.ts. Validates:
+;; Drives the live `window.Spaces` API exposed by tabs/index. Validates:
 ;;   - default space exists at startup
 ;;   - new tabs land in the active space
 ;;   - switching spaces hides tabs of other spaces
 ;;   - assignTab moves a tab between spaces
 ;;   - delete + orphan reparenting
-;;
-;; NOTE: the runner loads test files via `mod.default`. Beagle has no
-;; `export default` form, so this module exports a NAMED `tests` binding
-;; instead. The runner must be taught to read the named export (or a
-;; default-export shim added) once the test suite is .bjs. See 'issues'.
-(ns gjoa.tests.integration.spaces)
+(ns gjoa.tests.integration.spaces
+  (:require [gjoa.tests.dsl :refer [deftest chrome-eval await-true expect expect-eq wait-for]]))
 (define-mode strict)
-
-(declare-extern [Date JSON] Any)
-
-;; mn is a MarionetteClient (type-only import in the .ts; runtime is duck-typed).
-(defn wait-for [mn :- Any scriptReturningBool :- String timeoutMs :- Any] :- Any
-  (let [tmo      (or timeoutMs 1500)
-        deadline (+ (.now Date) tmo)]
-    (loop [lastErr nil]
-      (if (< (.now Date) deadline)
-        (let [outcome
-              (js/await
-                (try
-                  (let [ok (js/await (.executeScript mn scriptReturningBool))]
-                    (if ok {:done true :err lastErr} {:done false :err lastErr}))
-                  (catch Error e {:done false :err e})))]
-          (if (:done outcome)
-            nil
-            (do
-              (js/await (Promise. (fn [r] (setTimeout r 20))))
-              (recur (:err outcome)))))
-        (throw (Error.
-                 (str "timed out waiting for: " (.slice scriptReturningBool 0 160)
-                      (if lastErr (str " (last error: " (.-message lastErr) ")") ""))))))))
+(declare-extern [JSON] Any)
 
 ;; Count tab rows actually visible (not [hidden]) in the sidebar.
 (defn visible-tab-rows [] :- String
@@ -46,119 +20,87 @@
   ")
 
 (js/export (def tests :- Any
-  [{:name "Spaces — window.Spaces is exposed with a default 'Main' space"
-    :run (fn [mn]
-           (js/await (wait-for mn "return !!window.Spaces && window.Spaces.list().length >= 1;" nil))
-           (let [list (js/await (.executeScript mn
-                        "return window.Spaces.list().map(s => ({ name: s.name }));"))]
-             (if (or (not (.-length list)) (not= (.-name (aget list 0)) "Main"))
-               (throw (Error. (str "expected default 'Main', got " (.stringify JSON list))))
-               nil)
-             (let [activeName (js/await (.executeScript mn "return window.Spaces.active().name;"))]
-               (if (not= activeName "Main")
-                 (throw (Error. (str "expected active='Main', got '" activeName "'")))
-                 nil))))}
+  [(deftest "Spaces — window.Spaces is exposed with a default 'Main' space" [mn]
+     (await-true "return !!window.Spaces && window.Spaces.list().length >= 1;")
+     (let [list (chrome-eval "return window.Spaces.list().map(s => ({ name: s.name }));")]
+       (expect (and (.-length list) (= (.-name (aget list 0)) "Main"))
+               (str "expected default 'Main', got " (.stringify JSON list))))
+     (expect-eq (chrome-eval "return window.Spaces.active().name;") "Main" "active space"))
 
-   {:name "Spaces — creating + switching hides original tabs and shows new-space tabs"
-    :run (fn [mn]
-           ;; 0. Baseline: visible tabs in default space.
-           (js/await (wait-for mn "return !!window.Spaces;" nil))
-           (let [before (js/await (.executeScript mn (visible-tab-rows)))]
-
-             ;; 1. Create a "Work" space and switch to it.
-             (js/await (.executeScript mn
-               "
+   (deftest "Spaces — creating + switching hides original tabs and shows new-space tabs" [mn]
+     ;; 0. Baseline: visible tabs in default space.
+     (await-true "return !!window.Spaces;")
+     (let [before (chrome-eval (visible-tab-rows))]
+       ;; 1. Create a "Work" space and switch to it.
+       (chrome-eval "
         const s = window.Spaces.create(\"Work\");
         window.Spaces.setActive(s.id);
-      "))
-             (js/await (wait-for mn "return window.Spaces.active().name === \"Work\";" nil))
-
-             ;; 2. All previously-visible tabs should now be hidden (they're in Main).
-             (js/await (wait-for mn (str (.replace (visible-tab-rows) "return " "const c = ") "; return c === 0;") nil))
-             (let [afterSwitch (js/await (.executeScript mn (visible-tab-rows)))]
-               (if (not= afterSwitch 0)
-                 (throw (Error. (str "after switching to Work, expected 0 visible tabs, got " afterSwitch " (baseline " before ")")))
-                 nil))
-
-             ;; 3. Open a tab; it should land in Work and be visible.
-             (js/await (.executeScript mn
-               "
+      ")
+       (await-true "return window.Spaces.active().name === \"Work\";")
+       ;; 2. All previously-visible tabs should now be hidden (they're in Main).
+       (await-true (str (.replace (visible-tab-rows) "return " "const c = ") "; return c === 0;"))
+       (expect-eq (chrome-eval (visible-tab-rows)) 0
+                  (str "after switching to Work, expected 0 visible tabs (baseline " before ")"))
+       ;; 3. Open a tab; it should land in Work and be visible.
+       (chrome-eval "
         gBrowser.addTab(\"https://example.com/work-tab\", {
           triggeringPrincipal: Services.scriptSecurityManager.getSystemPrincipal(),
         });
-      "))
-             ;; Wait for the row to render + receive an assignment + pass the visibility filter.
-             (js/await (wait-for mn (str (.replace (visible-tab-rows) "return " "const c = ") "; return c >= 1;") 8000))
-
-             ;; 4. Switch back to Main; Work tab disappears, original tabs return.
-             (js/await (.executeScript mn
-               "
+      ")
+       ;; Wait for the row to render + receive an assignment + pass the visibility filter.
+       (await-true (str (.replace (visible-tab-rows) "return " "const c = ") "; return c >= 1;") 8000)
+       ;; 4. Switch back to Main; Work tab disappears, original tabs return.
+       (chrome-eval "
         const main = window.Spaces.list().find(s => s.name === \"Main\");
         window.Spaces.setActive(main.id);
-      "))
-             (js/await (wait-for mn "return window.Spaces.active().name === \"Main\";" nil))
-             ;; Original visible count is restored.
-             (js/await (wait-for mn (str (.replace (visible-tab-rows) "return " "const c = ") "; return c === " before ";") 5000))))}
+      ")
+       (await-true "return window.Spaces.active().name === \"Main\";")
+       ;; Original visible count is restored.
+       (await-true (str (.replace (visible-tab-rows) "return " "const c = ") "; return c === " before ";") 5000)))
 
-   {:name "Spaces — assignTab moves a tab between spaces (visibility follows)"
-    :run (fn [mn]
-           (js/await (wait-for mn "return !!window.Spaces;" nil))
-           ;; Setup: ensure we have a Work space and we're on Main.
-           (js/await (.executeScript mn
-             "
+   (deftest "Spaces — assignTab moves a tab between spaces (visibility follows)" [mn]
+     (await-true "return !!window.Spaces;")
+     ;; Setup: ensure we have a Work space and we're on Main.
+     (chrome-eval "
         const work = window.Spaces.list().find(s => s.name === \"Work\")
           || window.Spaces.create(\"Work\");
         window.Spaces._testWorkId = work.id;
         const main = window.Spaces.list().find(s => s.name === \"Main\");
         window.Spaces.setActive(main.id);
-      "))
-
-           ;; Open a fresh tab on Main, then move it to Work.
-           (js/await (.executeScript mn
-             "
+      ")
+     ;; Open a fresh tab on Main, then move it to Work.
+     (chrome-eval "
         const t = gBrowser.addTab(\"https://example.com/movable\", {
           triggeringPrincipal: Services.scriptSecurityManager.getSystemPrincipal(),
         });
         window.Spaces._testMovableTab = t;
-      "))
-           ;; Tab should be visible (it's on Main).
-           (js/await (wait-for mn "return window.Spaces._testMovableTab != null;" nil))
-           (let [visBefore (js/await (.executeScript mn
-                             "
+      ")
+     ;; Tab should be visible (it's on Main).
+     (await-true "return window.Spaces._testMovableTab != null;")
+     (expect (chrome-eval "
         const t = window.Spaces._testMovableTab;
         return window.Spaces.isVisible(t);
-      "))]
-             (if (not visBefore) (throw (Error. "freshly-opened tab should be visible on Main")) nil))
-
-           ;; Move to Work; should now be invisible (we're on Main).
-           (js/await (.executeScript mn
-             "
+      ") "freshly-opened tab should be visible on Main")
+     ;; Move to Work; should now be invisible (we're on Main).
+     (chrome-eval "
         window.Spaces.assignTab(window.Spaces._testMovableTab, window.Spaces._testWorkId);
-      "))
-           (let [visAfter (js/await (.executeScript mn
-                            "
+      ")
+     (expect (not (chrome-eval "
         const t = window.Spaces._testMovableTab;
         return window.Spaces.isVisible(t);
-      "))]
-             (if visAfter (throw (Error. "tab moved to Work should not be visible on Main")) nil))
-
-           ;; Switch to Work, tab is visible again.
-           (js/await (.executeScript mn
-             "
+      ")) "tab moved to Work should not be visible on Main")
+     ;; Switch to Work, tab is visible again.
+     (chrome-eval "
         window.Spaces.setActive(window.Spaces._testWorkId);
-      "))
-           (let [visOnWork (js/await (.executeScript mn
-                             "
+      ")
+     (expect (chrome-eval "
         return window.Spaces.isVisible(window.Spaces._testMovableTab);
-      "))]
-             (if (not visOnWork) (throw (Error. "tab in Work should be visible while Work is active")) nil)))}
+      ") "tab in Work should be visible while Work is active"))
 
-   {:name "Spaces — deleting an active space falls back to default; orphan tabs surface"
-    :run (fn [mn]
-           (js/await (wait-for mn "return !!window.Spaces;" nil))
-           ;; Create + switch to a doomed space; assign a tab; delete; assert orphan visibility.
-           (js/await (.executeScript mn
-             "
+   (deftest "Spaces — deleting an active space falls back to default; orphan tabs surface" [mn]
+     (await-true "return !!window.Spaces;")
+     ;; Create + switch to a doomed space; assign a tab; delete; assert orphan visibility.
+     (chrome-eval "
         const doomed = window.Spaces.create(\"Doomed\");
         window.Spaces.setActive(doomed.id);
         const t = gBrowser.addTab(\"https://example.com/orphan-test\", {
@@ -166,30 +108,22 @@
         });
         window.Spaces._testOrphanTab = t;
         window.Spaces._testDoomedId = doomed.id;
-      "))
-           (js/await (wait-for mn "return window.Spaces._testOrphanTab != null;" nil))
-
-           (js/await (.executeScript mn
-             "
+      ")
+     (await-true "return window.Spaces._testOrphanTab != null;")
+     (chrome-eval "
         window.Spaces.delete(window.Spaces._testDoomedId);
-      "))
-
-           (let [activeName (js/await (.executeScript mn "return window.Spaces.active().name;"))]
-             (if (not= activeName "Main")
-               (throw (Error. (str "expected active=Main after deleting Doomed, got '" activeName "'")))
-               nil))
-           ;; Orphan tab: spaceOf must return default (active), and isVisible must be true.
-           (let [orphanState (js/await (.executeScript mn
-                               "
+      ")
+     (expect-eq (chrome-eval "return window.Spaces.active().name;") "Main"
+                "active space after deleting Doomed")
+     ;; Orphan tab: spaceOf must return default (active), and isVisible must be true.
+     (let [orphan (chrome-eval "
         const t = window.Spaces._testOrphanTab;
         const def = window.Spaces.list()[0].id;
         return { vis: window.Spaces.isVisible(t), sid: window.Spaces.spaceOf(t), defId: def };
-      "))]
-             (if (not (:vis orphanState))
-               (throw (Error. (str "orphan tab should be visible (default-fallback), state=" (.stringify JSON orphanState))))
-               nil)
-             (if (not= (:sid orphanState) (:defId orphanState))
-               (throw (Error. (str "orphan should surface in default space, state=" (.stringify JSON orphanState))))
-               nil)))}]))
+      ")]
+       (expect (:vis orphan)
+               (str "orphan tab should be visible (default-fallback), state=" (.stringify JSON orphan)))
+       (expect-eq (:sid orphan) (:defId orphan)
+                  (str "orphan should surface in default space, state=" (.stringify JSON orphan)))))]))
 
 (js/export-default tests)

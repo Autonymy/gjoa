@@ -8,31 +8,13 @@
 ;;      child of the same parent.)
 ;;   - `gjoa.tabs.newTabPosition` pref, changeable via `:tabpos`,
 ;;     takes "sibling" (default) | "root" | "child".
-(ns gjoa.tests.integration.new-tab-no-indent-chain)
+(ns gjoa.tests.integration.new-tab-no-indent-chain
+  (:require [gjoa.tests.dsl :refer [deftest chrome-eval await-true expect expect-eq wait-for]]))
 (define-mode strict)
 
 ;; IntegrationTest / MarionetteClient are TypeScript type-only imports —
 ;; no runtime presence, so nothing to require here.
 (declare-extern [Date JSON] Any)
-
-(defn wait-for [mn :- Any script-returning-bool :- String timeout-ms :- Any] :- Any
-  (let [timeout (or timeout-ms 2000)
-        deadline (+ (.now Date) timeout)]
-    (loop [last-err nil]
-      (if (< (.now Date) deadline)
-        (let [r (js/await
-                  (try
-                    (let [ok (js/await (.executeScript mn script-returning-bool))]
-                      {:done ok :err last-err})
-                    (catch Any e {:done false :err last-err})))]
-          (if (:done r)
-            nil
-            (do
-              (js/await (Promise. (fn [res] (setTimeout (fn [] (res)) 20))))
-              (recur (:err r)))))
-        (throw (Error.
-                 (str "timed out: " (.slice script-returning-bool 0 200)
-                      (if last-err (str " (last: " (.-message last-err) ")") ""))))))))
 
 ;; Reset the pref + spaces between subtests.
 (defn reset [mn :- Any] :- Any
@@ -48,190 +30,178 @@
          "    }\n"
          "  "))))
 
-(def tests :- Any
-  [{:name "tabpos default — successive Ctrl+T-style at root spawns siblings at root (no indent chain)"
-    :run
-    (fn [mn]
-      (js/await (wait-for mn "return !!document.getElementById(\"gjoa-tab-panel\");" nil))
-      (js/await (reset mn))
+(js/export (def tests :- Any
+  [(deftest "tabpos default — successive Ctrl+T-style at root spawns siblings at root (no indent chain)" [mn]
+     (await-true "return !!document.getElementById(\"gjoa-tab-panel\");" 2000)
+     (js/await (reset mn))
 
-      ;; Single combined script: create 1 root + 3 owner-chained, then
-      ;; walk the rendered rows and capture their inline padding (the
-      ;; visual indent gjoa applies = level * 14 + 8 pixels). All single-
-      ;; script so we don't lose state across marionette sandboxes.
-      (let [stamp (str "tabpos-default-" (.now Date))
-            data (js/await (.executeScript mn
-                   (str
-                     "        const stamp = " (.stringify JSON stamp) ";\n"
-                     "        const principal = Services.scriptSecurityManager.getSystemPrincipal();\n"
-                     "        const root = gBrowser.addTab(\"about:blank\", { triggeringPrincipal: principal });\n"
-                     "        root.setAttribute(\"gjoa-test-marker\", stamp + \"-root\");\n"
-                     "        gBrowser.selectedTab = root;\n"
-                     "        for (let i = 0; i < 3; i++) {\n"
-                     "          const owner = gBrowser.selectedTab;\n"
-                     "          const t = gBrowser.addTab(\"about:newtab\", { triggeringPrincipal: principal, ownerTab: owner });\n"
-                     "          t.setAttribute(\"gjoa-test-marker\", stamp + \"-\" + i);\n"
-                     "          gBrowser.selectedTab = t;\n"
-                     "        }\n"
-                     "        const marked = [...gBrowser.tabs].filter(t =>\n"
-                     "          (t.getAttribute && (t.getAttribute(\"gjoa-test-marker\") || \"\").startsWith(stamp)));\n"
-                     "        return marked.map(t => {\n"
-                     "          const row = [...document.querySelectorAll(\"#gjoa-tab-panel .gjoa-tab-row, #gjoa-tab-panel-pinned .gjoa-tab-row\")]\n"
-                     "            .find(r => r._tab === t);\n"
-                     "          const pad = row ? parseFloat(row.style.paddingInlineStart || \"0\") : -1;\n"
-                     "          return {\n"
-                     "            marker: t.getAttribute(\"gjoa-test-marker\"),\n"
-                     "            pad,\n"
-                     "            parentId: window.gjoaTest.treeOf.get(t)?.parentId ?? null,\n"
-                     "          };\n"
-                     "        });\n"
-                     "      ")))]
-        (when (not= (.-length data) 4)
-          (throw (Error. (str "expected 4 marker tabs, got " (.-length data) ": " (.stringify JSON data)))))
-        ;; Root-level rows have padding-inline-start = 8px (level 0 * 14 + 8).
-        (let [non-root (.filter data (fn [r] (or (not= (.-pad r) 8) (not= (.-parentId r) nil))))]
-          (when (> (.-length non-root) 0)
-            (throw (Error. (str "expected all root (pad=8, parentId=null); got: " (.stringify JSON data))))))))}
+     ;; Single combined script: create 1 root + 3 owner-chained, then
+     ;; walk the rendered rows and capture their inline padding (the
+     ;; visual indent gjoa applies = level * 14 + 8 pixels). All single-
+     ;; script so we don't lose state across marionette sandboxes.
+     (let [stamp (str "tabpos-default-" (.now Date))
+           data (chrome-eval
+                  (str
+                    "        const stamp = " (.stringify JSON stamp) ";\n"
+                    "        const principal = Services.scriptSecurityManager.getSystemPrincipal();\n"
+                    "        const root = gBrowser.addTab(\"about:blank\", { triggeringPrincipal: principal });\n"
+                    "        root.setAttribute(\"gjoa-test-marker\", stamp + \"-root\");\n"
+                    "        gBrowser.selectedTab = root;\n"
+                    "        for (let i = 0; i < 3; i++) {\n"
+                    "          const owner = gBrowser.selectedTab;\n"
+                    "          const t = gBrowser.addTab(\"about:newtab\", { triggeringPrincipal: principal, ownerTab: owner });\n"
+                    "          t.setAttribute(\"gjoa-test-marker\", stamp + \"-\" + i);\n"
+                    "          gBrowser.selectedTab = t;\n"
+                    "        }\n"
+                    "        const marked = [...gBrowser.tabs].filter(t =>\n"
+                    "          (t.getAttribute && (t.getAttribute(\"gjoa-test-marker\") || \"\").startsWith(stamp)));\n"
+                    "        return marked.map(t => {\n"
+                    "          const row = [...document.querySelectorAll(\"#gjoa-tab-panel .gjoa-tab-row, #gjoa-tab-panel-pinned .gjoa-tab-row\")]\n"
+                    "            .find(r => r._tab === t);\n"
+                    "          const pad = row ? parseFloat(row.style.paddingInlineStart || \"0\") : -1;\n"
+                    "          return {\n"
+                    "            marker: t.getAttribute(\"gjoa-test-marker\"),\n"
+                    "            pad,\n"
+                    "            parentId: window.gjoaTest.treeOf.get(t)?.parentId ?? null,\n"
+                    "          };\n"
+                    "        });\n"
+                    "      "))]
+       (when (not= (.-length data) 4)
+         (throw (Error. (str "expected 4 marker tabs, got " (.-length data) ": " (.stringify JSON data)))))
+       ;; Root-level rows have padding-inline-start = 8px (level 0 * 14 + 8).
+       (let [non-root (.filter data (fn [r] (or (not= (.-pad r) 8) (not= (.-parentId r) nil))))]
+         (when (> (.-length non-root) 0)
+           (throw (Error. (str "expected all root (pad=8, parentId=null); got: " (.stringify JSON data))))))))
 
-   {:name "tabpos default — Ctrl+T while a CHILD tab is selected spawns a sibling at same depth"
-    :run
-    (fn [mn]
-      (js/await (wait-for mn "return !!document.getElementById(\"gjoa-tab-panel\");" nil))
-      (js/await (reset mn))
-      (let [stamp (str "tabpos-sibling-" (.now Date))]
-        (js/await (.executeScript mn (str "window.__stamp = \"" stamp "\";")))
+   (deftest "tabpos default — Ctrl+T while a CHILD tab is selected spawns a sibling at same depth" [mn]
+     (await-true "return !!document.getElementById(\"gjoa-tab-panel\");" 2000)
+     (js/await (reset mn))
+     (let [stamp (str "tabpos-sibling-" (.now Date))]
+       (chrome-eval (str "window.__stamp = \"" stamp "\";"))
 
-        ;; Build: parent → child. Select the child.
-        (js/await (.executeScript mn
-          (str
-            "        const principal = Services.scriptSecurityManager.getSystemPrincipal();\n"
-            "        const parent = gBrowser.addTab(\"about:blank\", { triggeringPrincipal: principal });\n"
-            "        parent.setAttribute(\"gjoa-test-marker\", window.__stamp + \"-parent\");\n"
-            "        const child = gBrowser.addTab(\"about:newtab\", { triggeringPrincipal: principal, ownerTab: parent });\n"
-            "        child.setAttribute(\"gjoa-test-marker\", window.__stamp + \"-child\");\n"
-            "        // Pin child to parent in our tree.\n"
-            "        window.gjoaTest.treeOf.get(child).parentId = window.gjoaTest.treeOf.get(parent).id;\n"
-            "        window.gjoaTest.rows.scheduleTreeResync();\n"
-            "        gBrowser.selectedTab = child;\n"
-            "      ")))
-        (js/await (wait-for mn
-          (str "return [...gBrowser.tabs].some(t => t.getAttribute(\"gjoa-test-marker\") === \"" stamp "-child\");") nil))
+       ;; Build: parent → child. Select the child.
+       (chrome-eval
+         (str
+           "        const principal = Services.scriptSecurityManager.getSystemPrincipal();\n"
+           "        const parent = gBrowser.addTab(\"about:blank\", { triggeringPrincipal: principal });\n"
+           "        parent.setAttribute(\"gjoa-test-marker\", window.__stamp + \"-parent\");\n"
+           "        const child = gBrowser.addTab(\"about:newtab\", { triggeringPrincipal: principal, ownerTab: parent });\n"
+           "        child.setAttribute(\"gjoa-test-marker\", window.__stamp + \"-child\");\n"
+           "        // Pin child to parent in our tree.\n"
+           "        window.gjoaTest.treeOf.get(child).parentId = window.gjoaTest.treeOf.get(parent).id;\n"
+           "        window.gjoaTest.rows.scheduleTreeResync();\n"
+           "        gBrowser.selectedTab = child;\n"
+           "      "))
+       (await-true
+         (str "return [...gBrowser.tabs].some(t => t.getAttribute(\"gjoa-test-marker\") === \"" stamp "-child\");") 2000)
 
-        ;; Ctrl+T while child is selected — new tab should be SIBLING of child
-        ;; (parentId = child.parentId = parent.id).
-        (js/await (.executeScript mn
-          (str
-            "        const principal = Services.scriptSecurityManager.getSystemPrincipal();\n"
-            "        const sib = gBrowser.addTab(\"about:newtab\", { triggeringPrincipal: principal, ownerTab: gBrowser.selectedTab });\n"
-            "        sib.setAttribute(\"gjoa-test-marker\", window.__stamp + \"-sib\");\n"
-            "      ")))
-        (js/await (wait-for mn
-          (str "return [...gBrowser.tabs].some(t => t.getAttribute(\"gjoa-test-marker\") === \"" stamp "-sib\");") nil))
+       ;; Ctrl+T while child is selected — new tab should be SIBLING of child
+       ;; (parentId = child.parentId = parent.id).
+       (chrome-eval
+         (str
+           "        const principal = Services.scriptSecurityManager.getSystemPrincipal();\n"
+           "        const sib = gBrowser.addTab(\"about:newtab\", { triggeringPrincipal: principal, ownerTab: gBrowser.selectedTab });\n"
+           "        sib.setAttribute(\"gjoa-test-marker\", window.__stamp + \"-sib\");\n"
+           "      "))
+       (await-true
+         (str "return [...gBrowser.tabs].some(t => t.getAttribute(\"gjoa-test-marker\") === \"" stamp "-sib\");") 2000)
 
-        (let [data (js/await (.executeScript mn
-                     (str
-                       "        const stamp = window.__stamp;\n"
-                       "        const parent = [...gBrowser.tabs].find(t => t.getAttribute(\"gjoa-test-marker\") === stamp + \"-parent\");\n"
-                       "        const child = [...gBrowser.tabs].find(t => t.getAttribute(\"gjoa-test-marker\") === stamp + \"-child\");\n"
-                       "        const sib = [...gBrowser.tabs].find(t => t.getAttribute(\"gjoa-test-marker\") === stamp + \"-sib\");\n"
-                       "        return {\n"
-                       "          parentOfSib: window.gjoaTest.treeOf.get(sib).parentId,\n"
-                       "          parentOfChild: window.gjoaTest.treeOf.get(child).parentId,\n"
-                       "        };\n"
-                       "      ")))]
-          (when (not= (.-parentOfSib data) (.-parentOfChild data))
-            (throw (Error.
-                     (str "Ctrl+T while child selected should produce a sibling of child. "
-                          "sib.parentId=" (.-parentOfSib data) ", child.parentId=" (.-parentOfChild data))))))))}
+       (let [data (chrome-eval
+                    (str
+                      "        const stamp = window.__stamp;\n"
+                      "        const parent = [...gBrowser.tabs].find(t => t.getAttribute(\"gjoa-test-marker\") === stamp + \"-parent\");\n"
+                      "        const child = [...gBrowser.tabs].find(t => t.getAttribute(\"gjoa-test-marker\") === stamp + \"-child\");\n"
+                      "        const sib = [...gBrowser.tabs].find(t => t.getAttribute(\"gjoa-test-marker\") === stamp + \"-sib\");\n"
+                      "        return {\n"
+                      "          parentOfSib: window.gjoaTest.treeOf.get(sib).parentId,\n"
+                      "          parentOfChild: window.gjoaTest.treeOf.get(child).parentId,\n"
+                      "        };\n"
+                      "      "))]
+         (when (not= (.-parentOfSib data) (.-parentOfChild data))
+           (throw (Error.
+                    (str "Ctrl+T while child selected should produce a sibling of child. "
+                         "sib.parentId=" (.-parentOfSib data) ", child.parentId=" (.-parentOfChild data))))))))
 
-   {:name ":tabpos root — switching the pref makes new tabs go to root regardless of selected tab"
-    :run
-    (fn [mn]
-      (js/await (wait-for mn "return !!window.gjoaTest && !!window.gjoaTest.vim;" nil))
-      (js/await (reset mn))
-      (js/await (.executeScript mn "window.gjoaTest.vim.runExCommand(\"tabpos root\");"))
-      (let [pref (js/await (.executeScript mn "return Services.prefs.getCharPref(\"gjoa.tabs.newTabPosition\");"))]
-        (when (not= pref "root")
-          (throw (Error. (str "pref not set: " pref))))
+   (deftest ":tabpos root — switching the pref makes new tabs go to root regardless of selected tab" [mn]
+     (await-true "return !!window.gjoaTest && !!window.gjoaTest.vim;" 2000)
+     (js/await (reset mn))
+     (chrome-eval "window.gjoaTest.vim.runExCommand(\"tabpos root\");")
+     (let [pref (chrome-eval "return Services.prefs.getCharPref(\"gjoa.tabs.newTabPosition\");")]
+       (when (not= pref "root")
+         (throw (Error. (str "pref not set: " pref))))
 
-        ;; Open: parent → child → grandchild via the pref. With "root",
-        ;; EVERY new tab should be at parentId=null even when an ownerTab
-        ;; is supplied.
-        (let [stamp (str "tabpos-root-" (.now Date))]
-          (js/await (.executeScript mn
-            (str
-              "        const principal = Services.scriptSecurityManager.getSystemPrincipal();\n"
-              "        const a = gBrowser.addTab(\"about:blank\", { triggeringPrincipal: principal });\n"
-              "        a.setAttribute(\"gjoa-test-marker\", \"" stamp "-a\");\n"
-              "        gBrowser.selectedTab = a;\n"
-              "        const b = gBrowser.addTab(\"about:newtab\", { triggeringPrincipal: principal, ownerTab: a });\n"
-              "        b.setAttribute(\"gjoa-test-marker\", \"" stamp "-b\");\n"
-              "        gBrowser.selectedTab = b;\n"
-              "        const c = gBrowser.addTab(\"about:newtab\", { triggeringPrincipal: principal, ownerTab: b });\n"
-              "        c.setAttribute(\"gjoa-test-marker\", \"" stamp "-c\");\n"
-              "      ")))
-          (js/await (wait-for mn
-            (str "return [...gBrowser.tabs].some(t => t.getAttribute(\"gjoa-test-marker\") === \"" stamp "-c\");") nil))
-          (let [parents (js/await (.executeScript mn
-                          (str
-                            "        return [...gBrowser.tabs]\n"
-                            "          .filter(t => t.getAttribute && (t.getAttribute(\"gjoa-test-marker\") || \"\").startsWith(\"" stamp "\"))\n"
-                            "          .map(t => ({ m: t.getAttribute(\"gjoa-test-marker\"), p: window.gjoaTest.treeOf.get(t).parentId }));\n"
-                            "      ")))
-                non-root (.filter parents (fn [r] (not= (.-p r) nil)))]
-            (when (> (.-length non-root) 0)
-              (throw (Error. (str ":tabpos root broken — non-root tabs: " (.stringify JSON parents)))))))))}
+       ;; Open: parent → child → grandchild via the pref. With "root",
+       ;; EVERY new tab should be at parentId=null even when an ownerTab
+       ;; is supplied.
+       (let [stamp (str "tabpos-root-" (.now Date))]
+         (chrome-eval
+           (str
+             "        const principal = Services.scriptSecurityManager.getSystemPrincipal();\n"
+             "        const a = gBrowser.addTab(\"about:blank\", { triggeringPrincipal: principal });\n"
+             "        a.setAttribute(\"gjoa-test-marker\", \"" stamp "-a\");\n"
+             "        gBrowser.selectedTab = a;\n"
+             "        const b = gBrowser.addTab(\"about:newtab\", { triggeringPrincipal: principal, ownerTab: a });\n"
+             "        b.setAttribute(\"gjoa-test-marker\", \"" stamp "-b\");\n"
+             "        gBrowser.selectedTab = b;\n"
+             "        const c = gBrowser.addTab(\"about:newtab\", { triggeringPrincipal: principal, ownerTab: b });\n"
+             "        c.setAttribute(\"gjoa-test-marker\", \"" stamp "-c\");\n"
+             "      "))
+         (await-true
+           (str "return [...gBrowser.tabs].some(t => t.getAttribute(\"gjoa-test-marker\") === \"" stamp "-c\");") 2000)
+         (let [parents (chrome-eval
+                         (str
+                           "        return [...gBrowser.tabs]\n"
+                           "          .filter(t => t.getAttribute && (t.getAttribute(\"gjoa-test-marker\") || \"\").startsWith(\"" stamp "\"))\n"
+                           "          .map(t => ({ m: t.getAttribute(\"gjoa-test-marker\"), p: window.gjoaTest.treeOf.get(t).parentId }));\n"
+                           "      "))
+               non-root (.filter parents (fn [r] (not= (.-p r) nil)))]
+           (when (> (.-length non-root) 0)
+             (throw (Error. (str ":tabpos root broken — non-root tabs: " (.stringify JSON parents)))))))))
 
-   {:name ":tabpos child — switching the pref makes new tabs nest under their owner"
-    :run
-    (fn [mn]
-      (js/await (wait-for mn "return !!window.gjoaTest;" nil))
-      (js/await (reset mn))
-      (js/await (.executeScript mn "window.gjoaTest.vim.runExCommand(\"tabpos child\");"))
-      (let [stamp (str "tabpos-child-" (.now Date))]
-        (js/await (.executeScript mn
-          (str
-            "        const principal = Services.scriptSecurityManager.getSystemPrincipal();\n"
-            "        const parent = gBrowser.addTab(\"about:blank\", { triggeringPrincipal: principal });\n"
-            "        parent.setAttribute(\"gjoa-test-marker\", \"" stamp "-p\");\n"
-            "        gBrowser.selectedTab = parent;\n"
-            "        const c = gBrowser.addTab(\"about:newtab\", { triggeringPrincipal: principal, ownerTab: parent });\n"
-            "        c.setAttribute(\"gjoa-test-marker\", \"" stamp "-c\");\n"
-            "      ")))
-        (js/await (wait-for mn
-          (str "return [...gBrowser.tabs].some(t => t.getAttribute(\"gjoa-test-marker\") === \"" stamp "-c\");") nil))
-        (let [data (js/await (.executeScript mn
-                     (str
-                       "        const p = [...gBrowser.tabs].find(t => t.getAttribute(\"gjoa-test-marker\") === \"" stamp "-p\");\n"
-                       "        const c = [...gBrowser.tabs].find(t => t.getAttribute(\"gjoa-test-marker\") === \"" stamp "-c\");\n"
-                       "        return {\n"
-                       "          parentId: window.gjoaTest.treeOf.get(c).parentId,\n"
-                       "          expectedParent: window.gjoaTest.treeOf.get(p).id,\n"
-                       "        };\n"
-                       "      ")))]
-          (when (not= (.-parentId data) (.-expectedParent data))
-            (throw (Error. (str ":tabpos child broken — got parentId=" (.-parentId data) ", expected " (.-expectedParent data))))))))}
+   (deftest ":tabpos child — switching the pref makes new tabs nest under their owner" [mn]
+     (await-true "return !!window.gjoaTest;" 2000)
+     (js/await (reset mn))
+     (chrome-eval "window.gjoaTest.vim.runExCommand(\"tabpos child\");")
+     (let [stamp (str "tabpos-child-" (.now Date))]
+       (chrome-eval
+         (str
+           "        const principal = Services.scriptSecurityManager.getSystemPrincipal();\n"
+           "        const parent = gBrowser.addTab(\"about:blank\", { triggeringPrincipal: principal });\n"
+           "        parent.setAttribute(\"gjoa-test-marker\", \"" stamp "-p\");\n"
+           "        gBrowser.selectedTab = parent;\n"
+           "        const c = gBrowser.addTab(\"about:newtab\", { triggeringPrincipal: principal, ownerTab: parent });\n"
+           "        c.setAttribute(\"gjoa-test-marker\", \"" stamp "-c\");\n"
+           "      "))
+       (await-true
+         (str "return [...gBrowser.tabs].some(t => t.getAttribute(\"gjoa-test-marker\") === \"" stamp "-c\");") 2000)
+       (let [data (chrome-eval
+                    (str
+                      "        const p = [...gBrowser.tabs].find(t => t.getAttribute(\"gjoa-test-marker\") === \"" stamp "-p\");\n"
+                      "        const c = [...gBrowser.tabs].find(t => t.getAttribute(\"gjoa-test-marker\") === \"" stamp "-c\");\n"
+                      "        return {\n"
+                      "          parentId: window.gjoaTest.treeOf.get(c).parentId,\n"
+                      "          expectedParent: window.gjoaTest.treeOf.get(p).id,\n"
+                      "        };\n"
+                      "      "))]
+         (when (not= (.-parentId data) (.-expectedParent data))
+           (throw (Error. (str ":tabpos child broken — got parentId=" (.-parentId data) ", expected " (.-expectedParent data))))))))
 
-   {:name ":tabpos with no arg reports current value"
-    :run
-    (fn [mn]
-      (js/await (reset mn))
-      (js/await (.executeScript mn "window.gjoaTest.vim.runExCommand(\"tabpos sibling\");"))
-      (js/await (.executeScript mn "window.gjoaTest.vim.runExCommand(\"tabpos\");"))
-      ;; The modeline gets a message — we don't assert the exact string,
-      ;; just that the pref is unchanged (no-op behavior of bare :tabpos).
-      (let [pref (js/await (.executeScript mn "return Services.prefs.getCharPref(\"gjoa.tabs.newTabPosition\");"))]
-        (when (not= pref "sibling")
-          (throw (Error. (str "bare :tabpos should be read-only, pref changed to " pref))))))}
+   (deftest ":tabpos with no arg reports current value" [mn]
+     (js/await (reset mn))
+     (chrome-eval "window.gjoaTest.vim.runExCommand(\"tabpos sibling\");")
+     (chrome-eval "window.gjoaTest.vim.runExCommand(\"tabpos\");")
+     ;; The modeline gets a message — we don't assert the exact string,
+     ;; just that the pref is unchanged (no-op behavior of bare :tabpos).
+     (let [pref (chrome-eval "return Services.prefs.getCharPref(\"gjoa.tabs.newTabPosition\");")]
+       (when (not= pref "sibling")
+         (throw (Error. (str "bare :tabpos should be read-only, pref changed to " pref))))))
 
-   {:name ":tabpos rejects invalid arg"
-    :run
-    (fn [mn]
-      (js/await (reset mn))
-      (js/await (.executeScript mn "window.gjoaTest.vim.runExCommand(\"tabpos sibling\");"))
-      (js/await (.executeScript mn "window.gjoaTest.vim.runExCommand(\"tabpos garbage\");"))
-      (let [pref (js/await (.executeScript mn "return Services.prefs.getCharPref(\"gjoa.tabs.newTabPosition\");"))]
-        (when (not= pref "sibling")
-          (throw (Error. (str ":tabpos garbage should be rejected, pref was " pref))))))}])
+   (deftest ":tabpos rejects invalid arg" [mn]
+     (js/await (reset mn))
+     (chrome-eval "window.gjoaTest.vim.runExCommand(\"tabpos sibling\");")
+     (chrome-eval "window.gjoaTest.vim.runExCommand(\"tabpos garbage\");")
+     (let [pref (chrome-eval "return Services.prefs.getCharPref(\"gjoa.tabs.newTabPosition\");")]
+       (when (not= pref "sibling")
+         (throw (Error. (str ":tabpos garbage should be rejected, pref was " pref))))))]))
 
 (js/export-default tests)

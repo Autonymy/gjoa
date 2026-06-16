@@ -12,13 +12,14 @@
 ;; The runtime adjuster lives in src/drawer/layout.ts::syncSymmetricFooter.
 ;; It writes --gjoa-symmetric-footer; CSS consumes that as padding-bottom
 ;; on `#sidebar-main > sidebar-main`.
-(ns gjoa.tests.integration.sidebar-symmetric-icons)
+(ns gjoa.tests.integration.sidebar-symmetric-icons
+  (:require [gjoa.tests.dsl :refer [deftest chrome-eval expect]]))
 (define-mode strict)
 
 ;; `IntegrationTest` from ../../tools/test-driver/runner is a type-only
 ;; import in the original — used purely for annotation, no runtime value.
 ;; Beagle has no type-only import; we annotate with Any.
-(declare-extern [Date Math JSON] Any)
+(declare-extern [Date Math JSON setTimeout] Any)
 
 ;; Walk light + shadow DOM looking for visible icon-like elements.
 ;; Returns the topmost (top=true) or bottommost (top=false) icon found.
@@ -81,70 +82,61 @@
 
 (def TOLERANCE-PX :- Any 1)
 
-;; NOTE: the original `export default tests`. Beagle's JS emitter has no
-;; `export default` form (only named `export const`), so this is exported
-;; as the named binding `tests`. See 'issues'.
 (js/export (def tests :- Any
-  [{:name "sidebar — top/bottom icon Y-deltas symmetric within ±1px"
-    :run
-    (fn [mn ctx]
-      ;; layout.ts schedules 30 setTimeout passes over 1.5s for the
-      ;; feedback loop. Wait at least that long. Poll for convergence
-      ;; up to 3s in case shadow DOM hydration was slow.
-      ;;
-      ;; The original used a mutable `r` + `while` loop that broke on
-      ;; convergence. Beagle's JS target has no `while`/`break`; the
-      ;; equivalent is a loop/recur that returns the latest probe result
-      ;; on either convergence or deadline.
-      (let [deadline (+ (.now Date) 3000)
-            r (js/await (loop [acc {}]
-                (if (>= (.now Date) deadline)
-                  acc
-                  (let [_ (js/await (Promise. (fn [res] (setTimeout res 200))))
-                        nr (js/await (.executeScript mn probe))]
-                    (if (and (.-topIcon nr) (.-bottomIcon nr) (.-sidebar nr)
-                             (let [tg (- (.-top (.-topIcon nr)) (.-top (.-sidebar nr)))
-                                   bg (- (.-bottom (.-sidebar nr)) (.-bottom (.-bottomIcon nr)))]
-                               (<= (.abs Math (- tg bg)) TOLERANCE-PX)))
-                      nr
-                      (recur nr))))))]
-        (do
-            (when (.-error r)
-              (throw (Error. (str "probe error: " (.-error r)))))
-            (when (not (.-sidebar r))
-              (throw (Error. "probe returned no sidebar rect")))
-            (when (not (.-topIcon r))
-              (throw (Error.
-                (str "No top icon found in #sidebar-main #nav-bar (searched "
-                     (.-topCount r) " candidates). "
-                     "Result: " (.stringify JSON r nil 2)))))
-            (when (not (.-bottomIcon r))
-              (throw (Error.
-                (str "No bottom icon found in #sidebar-main > sidebar-main (searched "
-                     (.-bottomCount r) " candidates). "
-                     "Result: " (.stringify JSON r nil 2)))))
-            (let [topGap (- (.-top (.-topIcon r)) (.-top (.-sidebar r)))
-                  bottomGap (- (.-bottom (.-sidebar r)) (.-bottom (.-bottomIcon r)))
-                  ;; src/drawer/layout.ts targets `bottomGap = topGap + BOTTOM_OFFSET`
-                  ;; (default 4px). Bottom icons sit further from edge than top icons —
-                  ;; user 2026-05-28 preference: keep top tight to the top edge, give
-                  ;; the bottom row a little extra breathing room.
-                  BOTTOM-OFFSET 4
-                  delta (.abs Math (- bottomGap (+ topGap BOTTOM-OFFSET)))]
-              (when (> delta TOLERANCE-PX)
-                (throw (Error.
-                  (str "Asymmetric icon Y-deltas off target: topGap=" (.toFixed topGap 2) "px "
-                       "bottomGap=" (.toFixed bottomGap 2) "px (expected bottom = top+" BOTTOM-OFFSET
-                       ", diff=" (.toFixed delta 2) "px, tolerance ±" TOLERANCE-PX ").\n"
-                       "--gjoa-symmetric-footer=" (.-cssVar r) "\n"
-                       "topIcon: " (.stringify JSON (.-topIcon r)) "\n"
-                       "bottomIcon: " (.stringify JSON (.-bottomIcon r)) "\n"
-                       "sidebar: " (.stringify JSON (.-sidebar r))))))
-              ;; Guard against negative / zero-gap regression (icons jammed
-              ;; outside the sidebar). The actual target gap is small (~6-12px)
-              ;; per 2026-05-28 user spec: tight to the top edge, not "spacious".
-              (when (< topGap 2)
-                (throw (Error.
-                  (str "Icons too close to top edge: topGap=" (.toFixed topGap 1) "px (expected ≥2)."))))))))}]))
+  [(deftest "sidebar — top/bottom icon Y-deltas symmetric within ±1px" [mn]
+     ;; layout.ts schedules 30 setTimeout passes over 1.5s for the
+     ;; feedback loop. Wait at least that long. Poll for convergence
+     ;; up to 3s in case shadow DOM hydration was slow.
+     ;;
+     ;; The original used a mutable `r` + `while` loop that broke on
+     ;; convergence. Beagle's JS target has no `while`/`break`; the
+     ;; equivalent is a loop/recur that returns the latest probe result
+     ;; on either convergence or deadline.
+     (let [deadline (+ (.now Date) 3000)
+           r (js/await (loop [acc {}]
+               (if (>= (.now Date) deadline)
+                 acc
+                 (let [_ (js/await (Promise. (fn [res] (setTimeout res 200))))
+                       nr (chrome-eval probe)]
+                   (if (and (.-topIcon nr) (.-bottomIcon nr) (.-sidebar nr)
+                            (let [tg (- (.-top (.-topIcon nr)) (.-top (.-sidebar nr)))
+                                  bg (- (.-bottom (.-sidebar nr)) (.-bottom (.-bottomIcon nr)))]
+                              (<= (.abs Math (- tg bg)) TOLERANCE-PX)))
+                     nr
+                     (recur nr))))))]
+       (do
+           (expect (not (.-error r))
+             (str "probe error: " (.-error r)))
+           (expect (.-sidebar r)
+             "probe returned no sidebar rect")
+           (expect (.-topIcon r)
+             (str "No top icon found in #sidebar-main #nav-bar (searched "
+                  (.-topCount r) " candidates). "
+                  "Result: " (.stringify JSON r nil 2)))
+           (expect (.-bottomIcon r)
+             (str "No bottom icon found in #sidebar-main > sidebar-main (searched "
+                  (.-bottomCount r) " candidates). "
+                  "Result: " (.stringify JSON r nil 2)))
+           (let [topGap (- (.-top (.-topIcon r)) (.-top (.-sidebar r)))
+                 bottomGap (- (.-bottom (.-sidebar r)) (.-bottom (.-bottomIcon r)))
+                 ;; src/drawer/layout.ts targets `bottomGap = topGap + BOTTOM_OFFSET`
+                 ;; (default 4px). Bottom icons sit further from edge than top icons —
+                 ;; user 2026-05-28 preference: keep top tight to the top edge, give
+                 ;; the bottom row a little extra breathing room.
+                 BOTTOM-OFFSET 4
+                 delta (.abs Math (- bottomGap (+ topGap BOTTOM-OFFSET)))]
+             (expect (<= delta TOLERANCE-PX)
+               (str "Asymmetric icon Y-deltas off target: topGap=" (.toFixed topGap 2) "px "
+                    "bottomGap=" (.toFixed bottomGap 2) "px (expected bottom = top+" BOTTOM-OFFSET
+                    ", diff=" (.toFixed delta 2) "px, tolerance ±" TOLERANCE-PX ").\n"
+                    "--gjoa-symmetric-footer=" (.-cssVar r) "\n"
+                    "topIcon: " (.stringify JSON (.-topIcon r)) "\n"
+                    "bottomIcon: " (.stringify JSON (.-bottomIcon r)) "\n"
+                    "sidebar: " (.stringify JSON (.-sidebar r))))
+             ;; Guard against negative / zero-gap regression (icons jammed
+             ;; outside the sidebar). The actual target gap is small (~6-12px)
+             ;; per 2026-05-28 user spec: tight to the top edge, not "spacious".
+             (expect (>= topGap 2)
+               (str "Icons too close to top edge: topGap=" (.toFixed topGap 1) "px (expected ≥2)."))))))]))
 
 (js/export-default tests)

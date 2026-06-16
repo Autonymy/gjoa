@@ -11,49 +11,19 @@
 ;; The TS source imported the `IntegrationTest` and `MarionetteClient`
 ;; TYPES only; those are type-only imports with no JS runtime value, so
 ;; they vanish at emit and are typed `Any` here.
-(ns gjoa.tests.integration.session-restore)
+(ns gjoa.tests.integration.session-restore
+  (:require [gjoa.tests.dsl :refer [deftest chrome-eval await-true expect wait-for]]))
 (define-mode strict)
 ;; Note: document/window/Spaces/Services/gBrowser appear only inside the
 ;; marionette script STRINGS below — they execute in the remote browser
 ;; chrome scope, never as beagle code here — so they need no externs.
-(declare-extern [JSON Date Promise setTimeout Error] Any)
+(declare-extern [JSON] Any)
 
-(defn waitFor
-  ([mn :- Any scriptReturningBool :- String] :- Any
-   (waitFor mn scriptReturningBool 2000))
-  ([mn :- Any scriptReturningBool :- String timeoutMs :- Any] :- Any
-   (let [deadline (+ (.now Date) timeoutMs)]
-     (loop [lastErr nil]
-       (if (< (.now Date) deadline)
-         ;; try the predicate; on success return, on error remember it
-         (let [result (js/await
-                        (try
-                          (let [ok (js/await (.executeScript mn scriptReturningBool))]
-                            (if ok {:done true :err nil} {:done false :err nil}))
-                          (catch Any e {:done false :err e})))]
-           (if (:done result)
-             nil
-             (do
-               (js/await (Promise. (fn [r] (setTimeout r 20))))
-               (recur (or (:err result) lastErr)))))
-         (throw (Error.
-                  (str "timed out: " (.slice scriptReturningBool 0 200)
-                       (if lastErr
-                         (str " (last: " (.-message lastErr) ")")
-                         "")))))))))
-
-;; The TS source did `export default tests`. Beagle's JS emitter has no
-;; `export default` form (parse.rkt only knows `(js/export <form>)` →
-;; `export <form>`), so the suite is exposed as the named export `tests`.
-;; The runner currently reads `mod.default`; see 'issues' for the
-;; one-line follow-up needed on the runner side.
 (js/export (def tests :- Any
-  [{:name "Session-like — opening 5 tabs in a row, every one renders as a visible sidebar row"
-    :run
-    (fn [mn]
-      (js/await (waitFor mn "return !!document.getElementById(\"gjoa-tab-panel\");"))
-      ;; Clear any non-Main spaces so visibility filter never hides legit tabs.
-      (js/await (.executeScript mn "
+  [(deftest "Session-like — opening 5 tabs in a row, every one renders as a visible sidebar row" [mn]
+     (await-true "return !!document.getElementById(\"gjoa-tab-panel\");" 2000)
+     ;; Clear any non-Main spaces so visibility filter never hides legit tabs.
+     (chrome-eval "
         if (window.Spaces) {
           const main = window.Spaces.list().find(s => s.name === \"Main\") || window.Spaces.list()[0];
           window.Spaces.setActive(main.id);
@@ -61,31 +31,31 @@
             if (s.id !== main.id) window.Spaces.delete(s.id);
           }
         }
-      "))
+      ")
 
-      (let [before (js/await (.executeScript mn "
+     (let [before (chrome-eval "
         return document.querySelectorAll(\"#gjoa-tab-panel .gjoa-tab-row\").length;
-      "))]
+      ")]
 
-        ;; Open 5 tabs as quickly as possible — mimics what session-restore
-        ;; does (5 successive TabOpen events).
-        (js/await (.executeScript mn "
+       ;; Open 5 tabs as quickly as possible — mimics what session-restore
+       ;; does (5 successive TabOpen events).
+       (chrome-eval "
         const principal = Services.scriptSecurityManager.getSystemPrincipal();
         for (let i = 0; i < 5; i++) {
           gBrowser.addTab(\"https://example.com/restore-\" + i, { triggeringPrincipal: principal });
         }
-      "))
+      ")
 
-        ;; Wait for 5 new rows. ALL must be present (we tolerate a couple
-        ;; hundred ms for rAF resyncs to settle).
-        (js/await (waitFor mn
-          (str "
+       ;; Wait for 5 new rows. ALL must be present (we tolerate a couple
+       ;; hundred ms for rAF resyncs to settle).
+       (await-true
+         (str "
         return document.querySelectorAll(\"#gjoa-tab-panel .gjoa-tab-row\").length >= " (+ before 5) ";
       ")
-          3000))
+         3000)
 
-        ;; CRITICAL: every row must be visible (not [hidden]).
-        (let [counts (js/await (.executeScript mn "
+       ;; CRITICAL: every row must be visible (not [hidden]).
+       (let [counts (chrome-eval "
         const rows = [...document.querySelectorAll(\"#gjoa-tab-panel .gjoa-tab-row\")];
         const hiddenSamples = rows.filter(r => r.hidden)
           .slice(0, 3)
@@ -95,52 +65,49 @@
           visible: rows.filter(r => !r.hidden).length,
           hiddenSamples,
         };
-      "))]
-          (when (< (.-visible counts) (+ before 5))
-            (throw (Error.
-                     (str "expected " (+ before 5) " visible rows, got "
-                          (.-visible counts) " visible / " (.-total counts) " total. "
-                          "hidden samples: " (.stringify JSON (.-hiddenSamples counts)))))))))}
+      ")]
+         (expect (not (< (.-visible counts) (+ before 5)))
+                 (str "expected " (+ before 5) " visible rows, got "
+                      (.-visible counts) " visible / " (.-total counts) " total. "
+                      "hidden samples: " (.stringify JSON (.-hiddenSamples counts)))))))
 
-   {:name "Session-like — panel construction is bulletproof: even with pre-set spaces state, panel exists and has rows for every tab"
-    :run
-    (fn [mn]
-      ;; This pokes at the user's actual failure shape: profile state
-      ;; includes spaces / migrated prefs, the panel still must render.
-      (js/await (waitFor mn "return !!document.getElementById(\"gjoa-tab-panel\");"))
+   (deftest "Session-like — panel construction is bulletproof: even with pre-set spaces state, panel exists and has rows for every tab" [mn]
+     ;; This pokes at the user's actual failure shape: profile state
+     ;; includes spaces / migrated prefs, the panel still must render.
+     (await-true "return !!document.getElementById(\"gjoa-tab-panel\");" 2000)
 
-      ;; Force a "messy" state: create some spaces, set a non-Main one
-      ;; active, then verify the panel STILL has visible rows for the
-      ;; tabs (which are anchored to Main / default, so they're hidden
-      ;; under the active non-Main space). Then switch back to Main:
-      ;; tabs must reappear.
-      (js/await (.executeScript mn "
+     ;; Force a "messy" state: create some spaces, set a non-Main one
+     ;; active, then verify the panel STILL has visible rows for the
+     ;; tabs (which are anchored to Main / default, so they're hidden
+     ;; under the active non-Main space). Then switch back to Main:
+     ;; tabs must reappear.
+     (chrome-eval "
         const work = window.Spaces.create(\"Work\");
         window.Spaces.setActive(work.id);
-      "))
-      ;; Open a couple of tabs in Work.
-      (js/await (.executeScript mn "
+      ")
+     ;; Open a couple of tabs in Work.
+     (chrome-eval "
         const principal = Services.scriptSecurityManager.getSystemPrincipal();
         gBrowser.addTab(\"https://example.com/work-a\", { triggeringPrincipal: principal });
         gBrowser.addTab(\"https://example.com/work-b\", { triggeringPrincipal: principal });
-      "))
-      (js/await (waitFor mn "
+      ")
+     (await-true "
         const rows = [...document.querySelectorAll(\"#gjoa-tab-panel .gjoa-tab-row\")];
         return rows.filter(r => !r.hidden).length >= 2;
-      "))
+      ")
 
-      ;; Switch to Main → at least the original (pre-Work) tabs must be
-      ;; visible. (Defining "at least 1" so the test is robust regardless
-      ;; of pre-suite tab count.)
-      (js/await (.executeScript mn "
+     ;; Switch to Main → at least the original (pre-Work) tabs must be
+     ;; visible. (Defining "at least 1" so the test is robust regardless
+     ;; of pre-suite tab count.)
+     (chrome-eval "
         const main = window.Spaces.list().find(s => s.name === \"Main\");
         window.Spaces.setActive(main.id);
-      "))
-      (let [visibleOnMain (js/await (.executeScript mn "
+      ")
+     (let [visibleOnMain (chrome-eval "
         return [...document.querySelectorAll(\"#gjoa-tab-panel .gjoa-tab-row\")]
           .filter(r => !r.hidden).length;
-      "))]
-        (when (< visibleOnMain 1)
-          (throw (Error. "switching back to Main showed 0 rows — visibility filter likely hides Main tabs")))))}]))
+      ")]
+       (expect (not (< visibleOnMain 1))
+               "switching back to Main showed 0 rows — visibility filter likely hides Main tabs")))]))
 
 (js/export-default tests)

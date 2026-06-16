@@ -4,37 +4,9 @@
 ;;
 ;; Pre-fix: group rows were intentionally space-agnostic ("future iteration"
 ;; in rows.ts:updateVisibility). User reported groups bleeding across spaces.
-(ns gjoa.tests.integration.spaces-scope-groups)
+(ns gjoa.tests.integration.spaces-scope-groups
+  (:require [gjoa.tests.dsl :refer [deftest chrome-eval await-true expect expect-eq sleep wait-for]]))
 (define-mode strict)
-
-;; IntegrationTest / MarionetteClient were type-only imports in the .ts —
-;; erased at runtime, so no :require is needed.
-(declare-extern [Date setTimeout Promise Error] Any)
-
-(defn sleep [ms :- Any] :- Any
-  (Promise. (fn [r] (setTimeout r ms))))
-
-;; Run the polling script once, swallowing any error (returns false on throw)
-;; so the caller can retry until the deadline.
-(defn try-script [mn :- Any script :- String] :- Any
-  (try
-    (js/await (.executeScript mn script))
-    (catch :default e false)))
-
-(defn wait-for-loop [mn :- Any script :- String deadline :- Any] :- Any
-  (if (< (.now Date) deadline)
-    (let [ok (js/await (try-script mn script))]
-      (if ok
-        true
-        (do
-          (js/await (sleep 20))
-          (js/await (wait-for-loop mn script deadline)))))
-    (throw (Error. (str "timed out: " (.slice script 0 200))))))
-
-(defn wait-for [mn :- Any script :- String timeout-ms :- Any] :- Any
-  (let [deadline (+ (.now Date) timeout-ms)]
-    (js/await (wait-for-loop mn script deadline))
-    nil))
 
 (defn clean-spaces [mn :- Any] :- Any
   (js/await (.executeScript mn "
@@ -50,88 +22,86 @@
   "))
   nil)
 
-(js/export (def tests :- Any [
-  {:name "spaces-scope-groups — group created in Space A is hidden when Space B is active"
-   :run (fn [mn]
-          (js/await (wait-for mn "return !!window.Spaces && !!window.gjoaTest;" 1500))
-          (js/await (clean-spaces mn))
+(js/export (def tests :- Any
+  [(deftest "spaces-scope-groups — group created in Space A is hidden when Space B is active" [mn]
+     (await-true "return !!window.Spaces && !!window.gjoaTest;" 1500)
+     (js/await (clean-spaces mn))
 
-          ;; Create Workspace and switch to it.
-          (js/await (.executeScript mn "
+     ;; Create Workspace and switch to it.
+     (chrome-eval "
         const ws = window.Spaces.create(\"Workspace\");
         window.Spaces.setActive(ws.id);
-      "))
-          (js/await (wait-for mn "return window.Spaces.active().name === \"Workspace\";" 1500))
+      ")
+     (await-true "return window.Spaces.active().name === \"Workspace\";" 1500)
 
-          ;; Create a group while in Workspace — it should be tagged with
-          ;; the active space at creation.
-          (js/await (.executeScript mn "
+     ;; Create a group while in Workspace — it should be tagged with
+     ;; the active space at creation.
+     (chrome-eval "
         const grp = window.gjoaTest.rows.createGroupRow(\"WS-only group\", 0);
         grp.setAttribute(\"gjoa-test-marker\", \"ws-group\");
         const panel = document.getElementById(\"gjoa-tab-panel\");
         panel.insertBefore(grp, panel.firstChild);
         window.gjoaTest.rows.updateVisibility();
-      "))
+      ")
 
-          ;; Assert spaceId captured.
-          (let [created (js/await (.executeScript mn "
+     ;; Assert spaceId captured.
+     (let [created (chrome-eval "
         const grp = document.querySelector('[gjoa-test-marker=\"ws-group\"]');
         const ws = window.Spaces.list().find(s => s.name === \"Workspace\");
         return { spaceId: grp._group.spaceId, wsId: ws.id };
-      "))]
-            (when (not= (:spaceId created) (:wsId created))
-              (throw (Error. (str "group.spaceId=" (:spaceId created) " but Workspace.id=" (:wsId created) " — createGroupRow didn't capture active space")))))
+      ")]
+       (expect-eq (:spaceId created) (:wsId created)
+                  (str "group.spaceId=" (:spaceId created) " but Workspace.id=" (:wsId created) " — createGroupRow didn't capture active space")))
 
-          ;; Switch back to Main. The group must hide.
-          (js/await (.executeScript mn "
+     ;; Switch back to Main. The group must hide.
+     (chrome-eval "
         const main = window.Spaces.list().find(s => s.name === \"Main\");
         window.Spaces.setActive(main.id);
-      "))
-          ;; Spaces.setActive triggers onChange which schedules a tree resync;
-          ;; give the scheduler a tick.
-          (js/await (sleep 100))
-          (js/await (.executeScript mn "window.gjoaTest.rows.updateVisibility();"))
+      ")
+     ;; Spaces.setActive triggers onChange which schedules a tree resync;
+     ;; give the scheduler a tick.
+     (js/await (sleep 100))
+     (chrome-eval "window.gjoaTest.rows.updateVisibility();")
 
-          (let [in-main (js/await (.executeScript mn "
+     (let [in-main (chrome-eval "
         const grp = document.querySelector('[gjoa-test-marker=\"ws-group\"]');
         return { hidden: !!grp.hidden };
-      "))]
-            (when (not (:hidden in-main))
-              (throw (Error. "group leaked into Main — was created in Workspace but stayed visible after setActive(Main)"))))
+      ")]
+       (expect (:hidden in-main)
+               "group leaked into Main — was created in Workspace but stayed visible after setActive(Main)"))
 
-          ;; Switch back to Workspace — group must be visible again.
-          (js/await (.executeScript mn "
+     ;; Switch back to Workspace — group must be visible again.
+     (chrome-eval "
         const ws = window.Spaces.list().find(s => s.name === \"Workspace\");
         window.Spaces.setActive(ws.id);
-      "))
-          (js/await (sleep 100))
-          (js/await (.executeScript mn "window.gjoaTest.rows.updateVisibility();"))
+      ")
+     (js/await (sleep 100))
+     (chrome-eval "window.gjoaTest.rows.updateVisibility();")
 
-          (let [back-in-ws (js/await (.executeScript mn "
+     (let [back-in-ws (chrome-eval "
         const grp = document.querySelector('[gjoa-test-marker=\"ws-group\"]');
         return { hidden: !!grp.hidden };
-      "))]
-            (when (:hidden back-in-ws)
-              (throw (Error. "group hidden in its own space after returning to Workspace — visibility filter broken")))))}
+      ")]
+       (expect (not (:hidden back-in-ws))
+               "group hidden in its own space after returning to Workspace — visibility filter broken")))
 
-  {:name "spaces-scope-groups — group spaceId persists across save/load (snapshot envelope carries spaceId)"
-   :run (fn [mn]
-          (js/await (wait-for mn "return !!window.Spaces && !!window.gjoaTest;" 1500))
-          (js/await (clean-spaces mn))
+   (deftest "spaces-scope-groups — group spaceId persists across save/load (snapshot envelope carries spaceId)" [mn]
+     (await-true "return !!window.Spaces && !!window.gjoaTest;" 1500)
+     (js/await (clean-spaces mn))
 
-          ;; Create Project space, switch in, create a group there.
-          (js/await (.executeScript mn "
+     ;; Create Project space, switch in, create a group there.
+     (chrome-eval "
         const proj = window.Spaces.create(\"Project\");
         window.Spaces.setActive(proj.id);
         const grp = window.gjoaTest.rows.createGroupRow(\"Project-A\", 0);
         grp.setAttribute(\"gjoa-test-marker\", \"proj-group\");
         const panel = document.getElementById(\"gjoa-tab-panel\");
         panel.insertBefore(grp, panel.firstChild);
-      "))
+      ")
 
-          ;; Build the snapshot envelope (same path scheduleSave takes) and
-          ;; inspect the serialized group entry.
-          (let [env (js/await (.executeScript mn "
+     ;; Build the snapshot envelope (same path scheduleSave takes) and
+     ;; inspect the serialized group entry.
+     (let [env (chrome-eval "
         // We can't call buildEnvelope directly, but scheduleSave + history
         // are wired. Instead, walk DOM rows the way buildEnvelope does and
         // assert _group.spaceId is non-empty and matches Project.
@@ -143,12 +113,10 @@
           entries.push({ name: g.name, spaceId: g.spaceId });
         }
         return { entries, projId: proj.id };
-      "))
-                proj-entry (.find (:entries env) (fn [e] (= (.-name e) "Project-A")))]
-            (when (not proj-entry)
-              (throw (Error. "Project-A group not found in DOM")))
-            (when (not= (.-spaceId proj-entry) (:projId env))
-              (throw (Error. (str "Project-A.spaceId=" (.-spaceId proj-entry) " doesn't match Project.id=" (:projId env) " — would not persist correctly across restart"))))))}
-]))
+      ")
+           proj-entry (.find (:entries env) (fn [e] (= (.-name e) "Project-A")))]
+       (expect proj-entry "Project-A group not found in DOM")
+       (expect-eq (.-spaceId proj-entry) (:projId env)
+                  (str "Project-A.spaceId=" (.-spaceId proj-entry) " doesn't match Project.id=" (:projId env) " — would not persist correctly across restart"))))]))
 
 (js/export-default tests)

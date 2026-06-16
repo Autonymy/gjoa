@@ -13,7 +13,8 @@
 ;;
 ;; IntegrationTest type (from tools/test-driver/runner.ts) is import-type only,
 ;; so it has no runtime presence after compilation.
-(ns gjoa.tests.integration.adblock-smoke)
+(ns gjoa.tests.integration.adblock-smoke
+  (:require [gjoa.tests.dsl :refer [deftest expect expect-eq]]))
 (define-mode strict)
 (declare-extern [JSON] Any)
 
@@ -23,87 +24,85 @@
 (def ALLOWED-3P :- String "https://example.net/favicon.ico")
 
 (js/export (def tests :- Any
-  [{:name "adblock: content.protection engine blocks a listed 3rd-party request"
-    :run (fn [mn ctx]
-      ;; 1) Write the block list into the profile, set the prefs, flush to disk.
-      (js/await (.setContext mn "chrome"))
-      (let [listPath (js/await (.executeAsyncScript mn
-                       (str "\n"
-                            "        const [resolve] = arguments;\n"
-                            "        (async () => {\n"
-                            "          const dir = Services.dirsvc.get(\"ProfD\", Ci.nsIFile).path;\n"
-                            "          const p = PathUtils.join(dir, \"gjoa-smoke-blocklist.txt\");\n"
-                            "          await IOUtils.writeUTF8(p, " (.stringify JSON BLOCK-LIST) ");\n"
-                            "          resolve(p);\n"
-                            "        })().catch(e => resolve(\"ERR:\" + e));\n"
-                            "      ")))]
-        (when (.startsWith listPath "ERR:")
-          (throw (Error. (str "write list failed: " listPath))))
-        (let [fileUrl (str "file://" listPath)]
-          (js/await (.executeScript mn
-            (str "\n"
-                 "        const [listUrl] = arguments;\n"
-                 "        Services.prefs.setBoolPref(\"privacy.trackingprotection.content.testing\", true);\n"
-                 "        Services.prefs.setBoolPref(\"privacy.trackingprotection.content.annotation.enabled\", false);\n"
-                 "        Services.prefs.setCharPref(\"privacy.trackingprotection.content.protection.test_list_urls\", listUrl);\n"
-                 "        Services.prefs.setBoolPref(\"privacy.trackingprotection.content.protection.enabled\", true);\n"
-                 "        Services.prefs.savePrefFile(null);\n"
-                 "      ")
-            [fileUrl]))
+  [(deftest "adblock: content.protection engine blocks a listed 3rd-party request" [mn ctx]
+     ;; 1) Write the block list into the profile, set the prefs, flush to disk.
+     (js/await (.setContext mn "chrome"))
+     (let [listPath (js/await (.executeAsyncScript mn
+                      (str "\n"
+                           "        const [resolve] = arguments;\n"
+                           "        (async () => {\n"
+                           "          const dir = Services.dirsvc.get(\"ProfD\", Ci.nsIFile).path;\n"
+                           "          const p = PathUtils.join(dir, \"gjoa-smoke-blocklist.txt\");\n"
+                           "          await IOUtils.writeUTF8(p, " (.stringify JSON BLOCK-LIST) ");\n"
+                           "          resolve(p);\n"
+                           "        })().catch(e => resolve(\"ERR:\" + e));\n"
+                           "      ")))]
+       (expect (not (.startsWith listPath "ERR:"))
+               (str "write list failed: " listPath))
+       (let [fileUrl (str "file://" listPath)]
+         (js/await (.executeScript mn
+           (str "\n"
+                "        const [listUrl] = arguments;\n"
+                "        Services.prefs.setBoolPref(\"privacy.trackingprotection.content.testing\", true);\n"
+                "        Services.prefs.setBoolPref(\"privacy.trackingprotection.content.annotation.enabled\", false);\n"
+                "        Services.prefs.setCharPref(\"privacy.trackingprotection.content.protection.test_list_urls\", listUrl);\n"
+                "        Services.prefs.setBoolPref(\"privacy.trackingprotection.content.protection.enabled\", true);\n"
+                "        Services.prefs.savePrefFile(null);\n"
+                "      ")
+           [fileUrl]))
 
-          ;; 2) Restart: the service now inits at startup with the prefs true and
-          ;;    loads the list. (restartGjoa reuses the same profile.)
-          (let [client (js/await (.restartGjoa ctx))]
-            (js/await (.setContext client "chrome"))
-            ;; give the engine a beat to finish loading the list at startup
-            (js/await (.executeAsyncScript client "const [r] = arguments; setTimeout(() => r(true), 2000);"))
+         ;; 2) Restart: the service now inits at startup with the prefs true and
+         ;;    loads the list. (restartGjoa reuses the same profile.)
+         (let [client (js/await (.restartGjoa ctx))]
+           (js/await (.setContext client "chrome"))
+           ;; give the engine a beat to finish loading the list at startup
+           (js/await (.executeAsyncScript client "const [r] = arguments; setTimeout(() => r(true), 2000);"))
 
-            ;; 3) Open a 1st-party tab and wait for it to finish loading.
-            (let [navOk (js/await (.executeAsyncScript client
-                          (str "\n"
-                               "        const [url, resolve] = arguments;\n"
-                               "        let done = false;\n"
-                               "        const finish = (v) => { if (!done) { done = true; resolve(v); } };\n"
-                               "        const win = Services.wm.getMostRecentWindow(\"navigator:browser\");\n"
-                               "        // Load into the SELECTED browser so Marionette's content context (which\n"
-                               "        // targets the focused top-level browsing context) lands on this page.\n"
-                               "        const b = win.gBrowser.selectedBrowser;\n"
-                               "        b.loadURI(Services.io.newURI(url), { triggeringPrincipal: Services.scriptSecurityManager.getSystemPrincipal() });\n"
-                               "        const listener = {\n"
-                               "          QueryInterface: ChromeUtils.generateQI([\"nsIWebProgressListener\", \"nsISupportsWeakReference\"]),\n"
-                               "          onStateChange(wp, req, flags) {\n"
-                               "            const S = Ci.nsIWebProgressListener;\n"
-                               "            if ((flags & S.STATE_STOP) && (flags & S.STATE_IS_WINDOW)) {\n"
-                               "              try { b.removeProgressListener(listener); } catch {}\n"
-                               "              finish(true);\n"
-                               "            }\n"
-                               "          },\n"
-                               "        };\n"
-                               "        b.addProgressListener(listener, Ci.nsIWebProgress.NOTIFY_STATE_ALL);\n"
-                               "        setTimeout(() => finish(false), 25000);\n"
-                               "      ")
-                          [TOP]))]
-              (when (not navOk)
-                (throw (Error. (str "top page " TOP " did not load (network?)"))))
+           ;; 3) Open a 1st-party tab and wait for it to finish loading.
+           (let [navOk (js/await (.executeAsyncScript client
+                         (str "\n"
+                              "        const [url, resolve] = arguments;\n"
+                              "        let done = false;\n"
+                              "        const finish = (v) => { if (!done) { done = true; resolve(v); } };\n"
+                              "        const win = Services.wm.getMostRecentWindow(\"navigator:browser\");\n"
+                              "        // Load into the SELECTED browser so Marionette's content context (which\n"
+                              "        // targets the focused top-level browsing context) lands on this page.\n"
+                              "        const b = win.gBrowser.selectedBrowser;\n"
+                              "        b.loadURI(Services.io.newURI(url), { triggeringPrincipal: Services.scriptSecurityManager.getSystemPrincipal() });\n"
+                              "        const listener = {\n"
+                              "          QueryInterface: ChromeUtils.generateQI([\"nsIWebProgressListener\", \"nsISupportsWeakReference\"]),\n"
+                              "          onStateChange(wp, req, flags) {\n"
+                              "            const S = Ci.nsIWebProgressListener;\n"
+                              "            if ((flags & S.STATE_STOP) && (flags & S.STATE_IS_WINDOW)) {\n"
+                              "              try { b.removeProgressListener(listener); } catch {}\n"
+                              "              finish(true);\n"
+                              "            }\n"
+                              "          },\n"
+                              "        };\n"
+                              "        b.addProgressListener(listener, Ci.nsIWebProgress.NOTIFY_STATE_ALL);\n"
+                              "        setTimeout(() => finish(false), 25000);\n"
+                              "      ")
+                         [TOP]))]
+             (expect navOk (str "top page " TOP " did not load (network?)"))
 
-              ;; 4) In content: 3rd-party fetch to the BLOCKED host (should reject) and a
-              ;;    control to the ALLOWED host (opaque resolve).
-              (js/await (.setContext client "content"))
-              (let [probe (fn [url]
-                            (.executeAsyncScript client
-                              (str "\n"
-                                   "        const [u, resolve] = arguments;\n"
-                                   "        const t = setTimeout(() => resolve(\"timeout\"), 15000);\n"
-                                   "        fetch(u, { mode: \"no-cors\", cache: \"no-store\" })\n"
-                                   "          .then(() => { clearTimeout(t); resolve(\"loaded\"); })\n"
-                                   "          .catch(() => { clearTimeout(t); resolve(\"blocked\"); });\n"
-                                   "      ")
-                              [url]))
-                    blocked (js/await (probe BLOCKED-3P))
-                    allowed (js/await (probe ALLOWED-3P))]
-                (when (not= blocked "blocked")
-                  (throw (Error. (str "expected " BLOCKED-3P " BLOCKED, got \"" blocked "\" — engine present but not blocking"))))
-                (when (= allowed "blocked")
-                  (throw (Error. (str "control " ALLOWED-3P " was blocked too (\"" allowed "\") — over-blocking"))))))))))}]))
+             ;; 4) In content: 3rd-party fetch to the BLOCKED host (should reject) and a
+             ;;    control to the ALLOWED host (opaque resolve).
+             (js/await (.setContext client "content"))
+             (let [probe (fn [url]
+                           (.executeAsyncScript client
+                             (str "\n"
+                                  "        const [u, resolve] = arguments;\n"
+                                  "        const t = setTimeout(() => resolve(\"timeout\"), 15000);\n"
+                                  "        fetch(u, { mode: \"no-cors\", cache: \"no-store\" })\n"
+                                  "          .then(() => { clearTimeout(t); resolve(\"loaded\"); })\n"
+                                  "          .catch(() => { clearTimeout(t); resolve(\"blocked\"); });\n"
+                                  "      ")
+                             [url]))
+                   blocked (js/await (probe BLOCKED-3P))
+                   allowed (js/await (probe ALLOWED-3P))]
+               (expect-eq blocked "blocked"
+                          (str "expected " BLOCKED-3P " BLOCKED, got \"" blocked "\" — engine present but not blocking"))
+               (expect (not= allowed "blocked")
+                       (str "control " ALLOWED-3P " was blocked too (\"" allowed "\") — over-blocking"))))))))]))
 
 (js/export-default tests)

@@ -1,0 +1,78 @@
+#lang beagle/js
+;; Integration-test DSL — macros + shared helpers that collapse the per-test
+;; boilerplate (executeScript / wait-for / throw-on-mismatch) the suite repeated
+;; ~360 times across 14 files. Macros are non-hygienic, so `mn` (the Marionette
+;; client) resolves anaphorically to the param `deftest` binds — bodies never
+;; thread it. Import both the macros and the runtime helpers you use:
+;;   (:require [gjoa.tests.dsl :refer [deftest chrome-eval await-true
+;;                                     expect expect-eq expect-includes
+;;                                     wait-for sleep]])
+(ns gjoa.tests.dsl)
+(define-mode strict)
+(declare-extern [Date setTimeout] Any)
+
+;; --- macros (compile-time) --------------------------------------------------
+
+;; (deftest "name" [mn] body…) → {:name "name" :run (fn [mn] body…)}
+;; Use [mn ctx] when the body needs ctx (skip / restartGjoa). The params come
+;; from the call site, so they are NOT gensym-renamed — that is what lets the
+;; macros below reference `mn` for free.
+(defmacro deftest [name params & body]
+  `{:name ,name :run (fn ,params ,@body)})
+
+;; (chrome-eval "return …;") → (js/await (.executeScript mn "return …;"))
+(defmacro chrome-eval [script]
+  `(js/await (.executeScript mn ,script)))
+
+;; (await-true "return cond;") → poll until the script returns truthy (1.5s).
+;; (await-true "…" 5000) → custom timeout in ms.
+;; NOTE: expands to a `wait-for` call, so any file using `await-true` MUST also
+;; `:refer wait-for` (the symbol resolves at the call site, not here). beagle
+;; won't flag the missing import at compile time — it surfaces as a runtime
+;; `wait_for is not defined`.
+(defmacro await-true [script & timeout]
+  `(js/await (wait-for mn ,script ,@timeout)))
+
+;; (expect cond "msg") → throw "msg" when cond is falsy.
+(defmacro expect [cond msg]
+  `(when (not ,cond) (throw (Error. ,msg))))
+
+;; (expect-eq actual expected "msg") → throw when actual !== expected, with both
+;; values in the message (str-coerced; no JSON dependency at the call site).
+(defmacro expect-eq [actual expected msg]
+  `(let [_a ,actual _e ,expected]
+     (when (not= _a _e)
+       (throw (Error. (str ,msg " — expected " _e ", got " _a))))))
+
+;; (expect-includes haystack needle "msg") → throw when haystack lacks needle.
+(defmacro expect-includes [haystack needle msg]
+  `(let [_h ,haystack _n ,needle]
+     (when (not (.includes _h _n))
+       (throw (Error. (str ,msg " — " _h " has no " _n))))))
+
+;; --- runtime helpers (one copy replaces 7 duplicated wait-for defns etc.) ----
+
+;; Poll `script` (chrome JS returning a bool) until truthy or `timeout-ms`
+;; (default 1.5s) elapses, then throw with the last error. 20ms cadence.
+(js/export (defn wait-for [mn :- Any script :- String timeout-ms :- Any] :- Any
+  (let [timeout (or timeout-ms 1500)
+        deadline (+ (.now Date) timeout)]
+    (loop [last-err nil]
+      (if (< (.now Date) deadline)
+        (let [r (js/await
+                  (try
+                    (let [ok (js/await (.executeScript mn script))]
+                      {:done ok :err last-err})
+                    (catch Any e {:done false :err e})))]
+          (if (:done r)
+            nil
+            (do
+              (js/await (Promise. (fn [res] (setTimeout (fn [] (res)) 20))))
+              (recur (:err r)))))
+        (throw (Error.
+                 (str "timed out waiting for: " (.slice script 0 160)
+                      (if last-err (str " (last error: " (.-message last-err) ")") "")))))))))
+
+;; Resolve after `ms` milliseconds.
+(js/export (defn sleep [ms :- Any] :- Any
+  (js/await (Promise. (fn [res] (setTimeout (fn [] (res)) ms))))))

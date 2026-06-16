@@ -3,7 +3,8 @@
 ;; SQLite ships with. Pure diagnostic, doesn't assert anything; the
 ;; chrome-script result is dumped to test:log so you can read it in
 ;; the runner output.
-(ns gjoa.tests.integration.sqlite)
+(ns gjoa.tests.integration.sqlite
+  (:require [gjoa.tests.dsl :refer [deftest]]))
 (define-mode strict)
 
 ;; IntegrationTest is a type-only import in the .ts source; types live in
@@ -52,9 +53,8 @@
 ;; `tests`; the runner's `mod.default` lookup needs a default-export shim
 ;; or a switch to the named export. See issues.
 (js/export (def tests :- Any
-  [{:name "sqlite: report version + FTS3/FTS5 availability"
-    :run  (fn [mn]
-            (let [probe (js/await (.executeAsyncScript mn PROBE-SCRIPT))]
-              (.error console "[sqlite probe]" (.stringify JSON probe nil 2))))}]))
+  [(deftest "sqlite: report version + FTS3/FTS5 availability" [mn]
+     (let [probe (js/await (.executeAsyncScript mn PROBE-SCRIPT))]
+       (.error console "[sqlite probe]" (.stringify JSON probe nil 2))))]))
 
 (js/export-default tests)

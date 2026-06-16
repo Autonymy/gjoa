@@ -2,36 +2,15 @@
 ;; E2E integration: Spaces driven through the actual vim ex-command path
 ;; and chord-key synthesis. This goes beyond the API-driven spaces.ts tests
 ;; and exercises the full keypress → vim dispatcher → spaces manager chain.
-(ns gjoa.tests.integration.spaces-vim)
+(ns gjoa.tests.integration.spaces-vim
+  (:require [gjoa.tests.dsl :refer [deftest chrome-eval await-true expect expect-eq expect-includes wait-for]]))
 (define-mode strict)
 
-(declare-extern [Date Error Promise setTimeout JSON] Any)
-
-(defn wait-for [mn :- Any script-returning-bool :- String timeout-ms :- Any] :- Any
-  (let [timeout (or timeout-ms 1500)
-        deadline (+ (.now Date) timeout)]
-    (loop [last-err nil]
-      (if (< (.now Date) deadline)
-        (let [result
-              (js/await
-                (try
-                  (let [ok (js/await (.executeScript mn script-returning-bool))]
-                    (if ok :done last-err))
-                  (catch Error e
-                    e)))]
-          (if (= result :done)
-            nil
-            (do
-              (js/await (Promise. (fn [r] (setTimeout (fn [] (r)) 20))))
-              (recur result))))
-        (throw (Error. (str "timed out waiting for: " (.slice script-returning-bool 0 160)
-                            (if last-err
-                              (str " (last error: " (.-message last-err) ")")
-                              ""))))))))
+(declare-extern [JSON] Any)
 
 ;; Reset all non-default spaces between subtests so each one starts clean.
 (defn reset-spaces [mn :- Any] :- Any
-  (js/await (.executeScript mn
+  (chrome-eval
     "
     const main = window.Spaces.list().find(s => s.name === \"Main\")
               || window.Spaces.list()[0];
@@ -39,190 +18,182 @@
     for (const s of [...window.Spaces.list()]) {
       if (s.id !== main.id) window.Spaces.delete(s.id);
     }
-  ")))
+  "))
 
 (js/export (def tests :- Any
-  [{:name "Spaces+vim — :space new <name> creates and switches via runExCommand"
-    :run (fn [mn]
-           (js/await (wait-for mn "return !!window.gjoaTest && !!window.gjoaTest.vim && !!window.Spaces;" 1500))
-           (js/await (reset-spaces mn))
-           (js/await (.executeScript mn "window.gjoaTest.vim.runExCommand(\"space new Work\");"))
-           (let [state (js/await (.executeScript mn
-                         "
+  [(deftest "Spaces+vim — :space new <name> creates and switches via runExCommand" [mn]
+     (await-true "return !!window.gjoaTest && !!window.gjoaTest.vim && !!window.Spaces;" 1500)
+     (js/await (reset-spaces mn))
+     (chrome-eval "window.gjoaTest.vim.runExCommand(\"space new Work\");")
+     (let [state (chrome-eval
+                   "
         return {
           count: window.Spaces.list().length,
           activeName: window.Spaces.active().name,
           names: window.Spaces.list().map(s => s.name),
         };
-      "))]
-             (if (not= (.-count state) 2)
-               (throw (Error. (str "expected 2 spaces, got " (.-count state) ": " (.stringify JSON state)))))
-             (if (not= (.-activeName state) "Work")
-               (throw (Error. (str "expected active=Work, got " (.-activeName state) ": " (.stringify JSON state)))))
-             (if (not (.includes (.-names state) "Work"))
-               (throw (Error. (str "Work not in list: " (.stringify JSON state)))))))}
+      ")]
+       (expect-eq (.-count state) 2
+                  (str "expected 2 spaces, got " (.-count state) ": " (.stringify JSON state)))
+       (expect-eq (.-activeName state) "Work"
+                  (str "expected active=Work, got " (.-activeName state) ": " (.stringify JSON state)))
+       (expect-includes (.-names state) "Work"
+                        (str "Work not in list: " (.stringify JSON state)))))
 
-   {:name "Spaces+vim — :space rename mutates the active space's name"
-    :run (fn [mn]
-           (js/await (wait-for mn "return !!window.gjoaTest;" 1500))
-           (js/await (reset-spaces mn))
-           (js/await (.executeScript mn "window.gjoaTest.vim.runExCommand(\"space new Work\");"))
-           (js/await (.executeScript mn "window.gjoaTest.vim.runExCommand(\"space rename Office\");"))
-           (let [name (js/await (.executeScript mn "return window.Spaces.active().name;"))]
-             (if (not= name "Office")
-               (throw (Error. (str "expected active name=Office, got " name))))))}
+   (deftest "Spaces+vim — :space rename mutates the active space's name" [mn]
+     (await-true "return !!window.gjoaTest;" 1500)
+     (js/await (reset-spaces mn))
+     (chrome-eval "window.gjoaTest.vim.runExCommand(\"space new Work\");")
+     (chrome-eval "window.gjoaTest.vim.runExCommand(\"space rename Office\");")
+     (let [name (chrome-eval "return window.Spaces.active().name;")]
+       (expect-eq name "Office"
+                  (str "expected active name=Office, got " name))))
 
-   {:name "Spaces+vim — :space switch <name> moves the active pointer"
-    :run (fn [mn]
-           (js/await (wait-for mn "return !!window.gjoaTest;" 1500))
-           (js/await (reset-spaces mn))
-           (js/await (.executeScript mn "window.gjoaTest.vim.runExCommand(\"space new Work\");"))
-           (js/await (.executeScript mn "window.gjoaTest.vim.runExCommand(\"space switch Main\");"))
-           (let [name (js/await (.executeScript mn "return window.Spaces.active().name;"))]
-             (if (not= name "Main")
-               (throw (Error. (str "expected active=Main after switch, got " name))))))}
+   (deftest "Spaces+vim — :space switch <name> moves the active pointer" [mn]
+     (await-true "return !!window.gjoaTest;" 1500)
+     (js/await (reset-spaces mn))
+     (chrome-eval "window.gjoaTest.vim.runExCommand(\"space new Work\");")
+     (chrome-eval "window.gjoaTest.vim.runExCommand(\"space switch Main\");")
+     (let [name (chrome-eval "return window.Spaces.active().name;")]
+       (expect-eq name "Main"
+                  (str "expected active=Main after switch, got " name))))
 
-   {:name "Spaces+vim — :space delete removes non-default; refuses to delete Main"
-    :run (fn [mn]
-           (js/await (wait-for mn "return !!window.gjoaTest;" 1500))
-           (js/await (reset-spaces mn))
-           ;; Create + delete (non-default) — should remove and fall back to Main.
-           (js/await (.executeScript mn "window.gjoaTest.vim.runExCommand(\"space new Doomed\");"))
-           (let [cnt-before (js/await (.executeScript mn "return window.Spaces.list().length;"))]
-             (if (not= cnt-before 2)
-               (throw (Error. (str "setup failed: " cnt-before)))))
-           (js/await (.executeScript mn "window.gjoaTest.vim.runExCommand(\"space delete\");"))
-           (let [after-del (js/await (.executeScript mn
-                             "
+   (deftest "Spaces+vim — :space delete removes non-default; refuses to delete Main" [mn]
+     (await-true "return !!window.gjoaTest;" 1500)
+     (js/await (reset-spaces mn))
+     ;; Create + delete (non-default) — should remove and fall back to Main.
+     (chrome-eval "window.gjoaTest.vim.runExCommand(\"space new Doomed\");")
+     (let [cnt-before (chrome-eval "return window.Spaces.list().length;")]
+       (expect-eq cnt-before 2
+                  (str "setup failed: " cnt-before)))
+     (chrome-eval "window.gjoaTest.vim.runExCommand(\"space delete\");")
+     (let [after-del (chrome-eval
+                       "
         return { count: window.Spaces.list().length, activeName: window.Spaces.active().name };
-      "))]
-             (if (not= (.-count after-del) 1)
-               (throw (Error. (str "expected 1 after delete, got " (.-count after-del)))))
-             (if (not= (.-activeName after-del) "Main")
-               (throw (Error. (str "expected active=Main, got " (.-activeName after-del))))))
-           ;; Refuse-to-delete-Main: should be a no-op.
-           (js/await (.executeScript mn "window.gjoaTest.vim.runExCommand(\"space delete\");"))
-           (let [final (js/await (.executeScript mn "return window.Spaces.list().length;"))]
-             (if (not= final 1)
-               (throw (Error. (str "Main should not be deletable; got count=" final))))))}
+      ")]
+       (expect-eq (.-count after-del) 1
+                  (str "expected 1 after delete, got " (.-count after-del)))
+       (expect-eq (.-activeName after-del) "Main"
+                  (str "expected active=Main, got " (.-activeName after-del))))
+     ;; Refuse-to-delete-Main: should be a no-op.
+     (chrome-eval "window.gjoaTest.vim.runExCommand(\"space delete\");")
+     (let [final (chrome-eval "return window.Spaces.list().length;")]
+       (expect-eq final 1
+                  (str "Main should not be deletable; got count=" final))))
 
-   {:name "Spaces+vim — gs / gS chord keys cycle active space"
-    :run (fn [mn]
-           (js/await (wait-for mn "return !!window.gjoaTest && !!window.gjoaTest.vim;" 1500))
-           (js/await (reset-spaces mn))
-           ;; Build up: A, B, C  (plus default Main = 4 total).
-           (js/await (.executeScript mn
-             "
+   (deftest "Spaces+vim — gs / gS chord keys cycle active space" [mn]
+     (await-true "return !!window.gjoaTest && !!window.gjoaTest.vim;" 1500)
+     (js/await (reset-spaces mn))
+     ;; Build up: A, B, C  (plus default Main = 4 total).
+     (chrome-eval
+       "
         window.gjoaTest.vim.runExCommand(\"space new A\");
         window.gjoaTest.vim.runExCommand(\"space new B\");
         window.gjoaTest.vim.runExCommand(\"space new C\");
-      "))
-           ;; Reset to Main so cycle starts predictably.
-           (js/await (.executeScript mn "window.gjoaTest.vim.runExCommand(\"space switch Main\");"))
+      ")
+     ;; Reset to Main so cycle starts predictably.
+     (chrome-eval "window.gjoaTest.vim.runExCommand(\"space switch Main\");")
 
-           ;; Synthesize chord keys "gs" → keydown 'g' then keydown 's' against the panel.
-           ;; The panel is what the vim handler listens on. We need to focus it first
-           ;; to put vim in "panel-active" mode.
-           (js/await (.executeScript mn "window.gjoaTest.vim.focusPanel();"))
+     ;; Synthesize chord keys "gs" → keydown 'g' then keydown 's' against the panel.
+     ;; The panel is what the vim handler listens on. We need to focus it first
+     ;; to put vim in "panel-active" mode.
+     (chrome-eval "window.gjoaTest.vim.focusPanel();")
 
-           ;; Two presses of "gs" → forward two spaces (Main → A → B).
-           (js/await (.executeScript mn "(async () => { await new Promise(r => setTimeout(r, 0)); })()"))
-           (js/await (.executeScript mn
-             "
+     ;; Two presses of "gs" → forward two spaces (Main → A → B).
+     (chrome-eval "(async () => { await new Promise(r => setTimeout(r, 0)); })()")
+     (chrome-eval
+       "
         function press(k, shift) {
           const ev = new KeyboardEvent(\"keydown\", { key: k, bubbles: true, cancelable: true, shiftKey: !!shift });
           document.dispatchEvent(ev);
         }
         press(\"g\"); press(\"s\");
-      "))
-           (let [after1 (js/await (.executeScript mn "return window.Spaces.active().name;"))]
-             (js/await (.executeScript mn
-               "
+      ")
+     (let [after1 (chrome-eval "return window.Spaces.active().name;")]
+       (chrome-eval
+         "
         function press(k, shift) {
           const ev = new KeyboardEvent(\"keydown\", { key: k, bubbles: true, cancelable: true, shiftKey: !!shift });
           document.dispatchEvent(ev);
         }
         press(\"g\"); press(\"s\");
-      "))
-             (let [after2 (js/await (.executeScript mn "return window.Spaces.active().name;"))]
-               ;; gS — reverse cycle once.
-               (js/await (.executeScript mn
-                 "
+      ")
+       (let [after2 (chrome-eval "return window.Spaces.active().name;")]
+         ;; gS — reverse cycle once.
+         (chrome-eval
+           "
         function press(k, shift) {
           const ev = new KeyboardEvent(\"keydown\", { key: k, bubbles: true, cancelable: true, shiftKey: !!shift });
           document.dispatchEvent(ev);
         }
         press(\"g\"); press(\"S\", true);
-      "))
-               (let [after-reverse (js/await (.executeScript mn "return window.Spaces.active().name;"))
-                     all (js/await (.executeScript mn "return window.Spaces.list().map(s => s.name);"))]
-                 ;; Verify we moved (we don't pin to exact name in case ordering shifts;
-                 ;; the property we care about is "active changed forward, then back").
-                 (if (= after1 "Main")
-                   (throw (Error. (str "gs from Main did not cycle. all=" (.stringify JSON all) " after1=" after1))))
-                 (if (= after2 after1)
-                   (throw (Error. (str "second gs did not cycle. all=" (.stringify JSON all) " after1=" after1 " after2=" after2))))
-                 (if (not= after-reverse after1)
-                   (throw (Error. (str "gS should reverse to after1. all=" (.stringify JSON all) " after1=" after1 " after2=" after2 " afterReverse=" after-reverse))))))))}
+      ")
+         (let [after-reverse (chrome-eval "return window.Spaces.active().name;")
+               all (chrome-eval "return window.Spaces.list().map(s => s.name);")]
+           ;; Verify we moved (we don't pin to exact name in case ordering shifts;
+           ;; the property we care about is "active changed forward, then back").
+           (expect (not= after1 "Main")
+                   (str "gs from Main did not cycle. all=" (.stringify JSON all) " after1=" after1))
+           (expect (not= after2 after1)
+                   (str "second gs did not cycle. all=" (.stringify JSON all) " after1=" after1 " after2=" after2))
+           (expect-eq after-reverse after1
+                      (str "gS should reverse to after1. all=" (.stringify JSON all) " after1=" after1 " after2=" after2 " afterReverse=" after-reverse))))))
 
-   {:name "Spaces+vim — :space list opens the picker"
-    :run (fn [mn]
-           (js/await (wait-for mn "return !!window.gjoaTest && !!window.gjoaTest.vim;" 1500))
-           (js/await (reset-spaces mn))
-           (js/await (.executeScript mn "window.gjoaTest.vim.runExCommand(\"space new Work\");"))
-           (js/await (.executeScript mn "window.gjoaTest.vim.runExCommand(\"space\");"))
-           ;; Picker should now be visible. We don't assert the exact DOM (picker
-           ;; internals are vim's concern), but we check that a picker container
-           ;; exists in the document.
-           (let [found (js/await (.executeScript mn
-                         "
+   (deftest "Spaces+vim — :space list opens the picker" [mn]
+     (await-true "return !!window.gjoaTest && !!window.gjoaTest.vim;" 1500)
+     (js/await (reset-spaces mn))
+     (chrome-eval "window.gjoaTest.vim.runExCommand(\"space new Work\");")
+     (chrome-eval "window.gjoaTest.vim.runExCommand(\"space\");")
+     ;; Picker should now be visible. We don't assert the exact DOM (picker
+     ;; internals are vim's concern), but we check that a picker container
+     ;; exists in the document.
+     (let [found (chrome-eval
+                   "
         return !!document.querySelector(\"#gjoa-picker, [id*='picker']\");
-      "))]
-             (if (not found)
-               (throw (Error. "Expected the picker to be open after `:space` (no-arg)"))))
-           ;; Dismiss it for cleanup.
-           (js/await (.executeScript mn
-             "
+      ")]
+       (expect found "Expected the picker to be open after `:space` (no-arg)"))
+     ;; Dismiss it for cleanup.
+     (chrome-eval
+       "
         const ev = new KeyboardEvent(\"keydown\", { key: \"Escape\", bubbles: true });
         document.dispatchEvent(ev);
-      ")))}
+      "))
 
-   {:name "Spaces+vim — visibility filter integrates with sidebar rendering after vim switch"
-    :run (fn [mn]
-           (js/await (wait-for mn "return !!window.gjoaTest;" 1500))
-           (js/await (reset-spaces mn))
-           ;; Open 2 throwaway tabs in Main first.
-           (js/await (.executeScript mn
-             "
+   (deftest "Spaces+vim — visibility filter integrates with sidebar rendering after vim switch" [mn]
+     (await-true "return !!window.gjoaTest;" 1500)
+     (js/await (reset-spaces mn))
+     ;; Open 2 throwaway tabs in Main first.
+     (chrome-eval
+       "
         gBrowser.addTab(\"https://example.com/a\", { triggeringPrincipal: Services.scriptSecurityManager.getSystemPrincipal() });
         gBrowser.addTab(\"https://example.com/b\", { triggeringPrincipal: Services.scriptSecurityManager.getSystemPrincipal() });
-      "))
-           ;; Wait for rows.
-           (js/await (wait-for mn
-             "
+      ")
+     ;; Wait for rows.
+     (await-true
+       "
         return [...document.querySelectorAll(\"#gjoa-tab-panel .gjoa-tab-row\")]
           .filter(r => !r.hidden).length >= 2;
-      " 1500))
-           (let [before (js/await (.executeScript mn
-                          "
+      " 1500)
+     (let [before (chrome-eval
+                    "
         return [...document.querySelectorAll(\"#gjoa-tab-panel .gjoa-tab-row\")]
           .filter(r => !r.hidden).length;
-      "))]
-             ;; Switch to a new space via the vim path.
-             (js/await (.executeScript mn "window.gjoaTest.vim.runExCommand(\"space new Foo\");"))
-             ;; After the switch, the tabs from Main should be hidden.
-             (js/await (wait-for mn
-               "
+      ")]
+       ;; Switch to a new space via the vim path.
+       (chrome-eval "window.gjoaTest.vim.runExCommand(\"space new Foo\");")
+       ;; After the switch, the tabs from Main should be hidden.
+       (await-true
+         "
         return [...document.querySelectorAll(\"#gjoa-tab-panel .gjoa-tab-row\")]
           .filter(r => !r.hidden).length === 0;
-      " 5000))
-             ;; Switch back via vim path; rows return.
-             (js/await (.executeScript mn "window.gjoaTest.vim.runExCommand(\"space switch Main\");"))
-             (js/await (wait-for mn
-               (str "
+      " 5000)
+       ;; Switch back via vim path; rows return.
+       (chrome-eval "window.gjoaTest.vim.runExCommand(\"space switch Main\");")
+       (await-true
+         (str "
         return [...document.querySelectorAll(\"#gjoa-tab-panel .gjoa-tab-row\")]
           .filter(r => !r.hidden).length === " before ";
-      ") 5000))))}]))
+      ") 5000)))]))
 
 ;; The runner loads test modules via `mod.default`. Beagle's emitter has no
 ;; `export default` form, so we expose the array under the named export `tests`

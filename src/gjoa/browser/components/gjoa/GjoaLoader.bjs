@@ -66,7 +66,7 @@
 ;; tools/chrome-bundle/build.config entries (minus the gjoa-hello.uc.js
 ;; smoke-test bundle, which we don't ship).
 (def PROD-SCRIPTS :- Any
-  ["gjoa-security.uc.js" "gjoa-drawer.uc.js" "gjoa-tabs.uc.js" "gjoa-dark-mode.uc.js"])
+  ["gjoa-security.uc.js" "gjoa-drawer.uc.js" "gjoa-tabs.uc.js" "gjoa-dark-mode.uc.js" "gjoa-blocking.uc.js"])
 (def PROD-STYLES :- Any
   ["gjoa.uc.css" "gjoa-tabs.uc.css" "gjoa-which-key.uc.css"])
 

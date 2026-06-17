@@ -1,0 +1,99 @@
+#lang beagle/js
+;; M1 production-path validation: blocking works via the SHIPPED defaults +
+;; the RS-client overlay — NOT the content.testing/test_list_urls path. Proves
+;; the actual user-facing path: default prefs (protection.enabled, list_names)
+;; trigger the C++ service -> our overlay -> setFilterListData/applyFilterLists.
+;;
+;; Offline-deterministic: we seed the profile cache (<ProfD>/gjoa-adblock/*.txt)
+;; from the local /tmp lists BEFORE restart, so the overlay's cache-first load
+;; short-circuits its network fetch.
+;;
+;;   GJOA_BIN=$PWD/engine/obj-x86_64-pc-linux-gnu/dist/bin/gjoa \
+;;     bun .beagle-tools/gjoa/tools/test-driver/runner.js --grep "adblock M1"
+(ns gjoa.tests.integration.adblock-production
+  (:require [gjoa.tests.dsl :refer [deftest expect expect-eq]]))
+(define-mode strict)
+(declare-extern [JSON console Promise] Any)
+
+(def TOP :- String "https://example.com/")
+(def MUST-BLOCK :- Any ["https://www.googletagservices.com/favicon.ico"
+                        "https://www.google-analytics.com/favicon.ico"])
+(def MUST-SKIP :- Any ["https://doubleclick.net/favicon.ico"
+                       "https://pagead2.googlesyndication.com/favicon.ico"])
+(def ALLOWED :- Any ["https://example.net/favicon.ico"
+                     "https://upload.wikimedia.org/favicon.ico"])
+
+(def PROBE-JS :- String
+  (str "\n"
+       "  const [u, resolve] = arguments;\n"
+       "  const t = setTimeout(() => resolve('timeout'), 15000);\n"
+       "  fetch(u, { mode: 'no-cors', cache: 'no-store' })\n"
+       "    .then(() => { clearTimeout(t); resolve('loaded'); })\n"
+       "    .catch(() => { clearTimeout(t); resolve('blocked'); });\n"))
+
+(def NAV-JS :- String
+  (str "\n"
+       "  const [url, resolve] = arguments;\n"
+       "  let done = false; const finish = v => { if (!done) { done = true; resolve(v); } };\n"
+       "  const win = Services.wm.getMostRecentWindow('navigator:browser');\n"
+       "  const b = win.gBrowser.selectedBrowser;\n"
+       "  b.loadURI(Services.io.newURI(url), { triggeringPrincipal: Services.scriptSecurityManager.getSystemPrincipal() });\n"
+       "  const l = { QueryInterface: ChromeUtils.generateQI(['nsIWebProgressListener','nsISupportsWeakReference']),\n"
+       "    onStateChange(wp, req, flags) { const S = Ci.nsIWebProgressListener;\n"
+       "      if ((flags & S.STATE_STOP) && (flags & S.STATE_IS_WINDOW)) { try { b.removeProgressListener(l); } catch {} finish(true); } } };\n"
+       "  b.addProgressListener(l, Ci.nsIWebProgress.NOTIFY_STATE_ALL);\n"
+       "  setTimeout(() => finish(false), 25000);\n"))
+
+(js/export (def tests :- Any
+  [(deftest "adblock M1: production defaults block via the overlay (no test mode)" [mn ctx]
+     (js/await (.setContext mn "chrome"))
+     ;; Confirm we are NOT relying on the test path, then seed the cache from
+     ;; the local lists so the overlay loads offline-deterministically.
+     (let [seeded (js/await (.executeAsyncScript mn
+                    (str "\n"
+                         "  const [resolve] = arguments;\n"
+                         "  (async () => {\n"
+                         "    const testing = Services.prefs.getBoolPref('privacy.trackingprotection.content.testing', false);\n"
+                         "    const enabled = Services.prefs.getBoolPref('privacy.trackingprotection.content.protection.enabled', false);\n"
+                         "    const names = Services.prefs.getCharPref('privacy.trackingprotection.content.protection.list_names', '');\n"
+                         "    const dir = Services.dirsvc.get('ProfD', Ci.nsIFile).path;\n"
+                         "    const cache = PathUtils.join(dir, 'gjoa-adblock');\n"
+                         "    await IOUtils.makeDirectory(cache, { ignoreExisting: true });\n"
+                         "    for (const [name, src] of [['easylist','/tmp/gjoa-easylist.txt'],['easyprivacy','/tmp/gjoa-easyprivacy.txt']]) {\n"
+                         "      const bytes = await IOUtils.read(src);\n"
+                         "      await IOUtils.write(PathUtils.join(cache, name + '.txt'), bytes);\n"
+                         "    }\n"
+                         "    resolve(JSON.stringify({ testing, enabled, names }));\n"
+                         "  })().catch(e => resolve('ERR:' + e));\n")))]
+       (expect (not (.startsWith seeded "ERR:")) (str "seed failed: " seeded))
+       (.log console (str "\n[M1-PROD] shipped prefs: " seeded))
+       (let [p (.parse JSON seeded)]
+         (expect-eq (.-testing p) false "content.testing is set — not validating the PRODUCTION path")
+         (expect-eq (.-enabled p) true "protection.enabled default is not ON — adblock-prefs not shipped")
+         (expect (> (.-length (.-names p)) 0) "protection.list_names default is empty — overlay would never run"))
+
+       ;; Restart so the C++ service inits, constructs our overlay, which reads
+       ;; the seeded cache + setFilterListData/applyFilterLists.
+       (let [client (js/await (.restartGjoa ctx))]
+         (js/await (.setContext client "chrome"))
+         (js/await (.executeAsyncScript client "const [r]=arguments; setTimeout(()=>r(true), 5000);"))
+         (let [navOk (js/await (.executeAsyncScript client NAV-JS [TOP]))]
+           (expect navOk (str "top page " TOP " did not load (network?)"))
+           (js/await (.setContext client "content"))
+           (let [probe (fn [url] (.executeAsyncScript client PROBE-JS [url]))
+                 mustBlockR (js/await (.all Promise (.map MUST-BLOCK probe)))
+                 mustSkipR (js/await (.all Promise (.map MUST-SKIP probe)))
+                 allowedR (js/await (.all Promise (.map ALLOWED probe)))
+                 nBlocked (.-length (.filter mustBlockR #(= % "blocked")))
+                 nSkipBlocked (.-length (.filter mustSkipR #(= % "blocked")))
+                 nOverblock (.-length (.filter allowedR #(= % "blocked")))]
+             (.log console (str "[M1-PROD] must-block -> " (.stringify JSON mustBlockR) " (" nBlocked "/" (.-length MUST-BLOCK) ")"))
+             (.log console (str "[M1-PROD] option-scoped must-skip -> " (.stringify JSON mustSkipR)))
+             (.log console (str "[M1-PROD] controls -> " (.stringify JSON allowedR)))
+             (expect-eq nBlocked (.-length MUST-BLOCK)
+                        (str "PRODUCTION path failed to block via overlay (defaults + setFilterListData): " (.stringify JSON mustBlockR)
+                             " — the overlay/prefs/list_names wiring is broken, NOT the engine"))
+             (expect-eq nSkipBlocked 0 (str "over-applied option-scoped rule: " (.stringify JSON mustSkipR)))
+             (expect-eq nOverblock 0 (str "control over-blocked: " (.stringify JSON allowedR))))))))]))
+
+(js/export-default tests)

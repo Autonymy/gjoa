@@ -11,6 +11,7 @@
 // merged into the same sheet.
 
 const CHUNK = 1000; // selectors per rule, to bound the blast radius of a bad one
+const COALESCE_MS = 250; // trailing-debounce window for the observer flush
 
 function buildCss(selectors) {
   let css = "";
@@ -36,6 +37,10 @@ export class GjoaCosmeticChild extends JSWindowActorChild {
     // which would pile up unbounded on a long-lived SPA.
     this._selectors = new Set();
     this._sheetUri = null;
+    // Coalescer state: pending new tokens + the trailing-window timer handle.
+    this._pendingC = new Set();
+    this._pendingI = new Set();
+    this._cooldown = 0;
   }
 
   addSelectors(list) {
@@ -173,26 +178,25 @@ export class GjoaCosmeticChild extends JSWindowActorChild {
     if (!win || !win.MutationObserver) {
       return;
     }
-    // Flush directly from the observer callback rather than via setTimeout:
-    // MutationObserver already coalesces a batch of mutations into one callback
-    // at the microtask checkpoint, the seen-set dedups repeats, and a timer
-    // would never fire in a frozen/background tab. collectClassesIds only emits
-    // classes/ids not seen before, so each query carries only what's new.
+    // collectClassesIds emits only classes/ids not seen before, accumulating
+    // into the pending sets; the coalescer (scheduleFlush) decides when to query.
     this._observer = new win.MutationObserver(records => {
-      const classes = new Set();
-      const ids = new Set();
       for (const rec of records) {
         if (rec.type === "attributes" && rec.target) {
-          this.collectClassesIds(rec.target.parentNode || rec.target, classes, ids);
+          this.collectClassesIds(
+            rec.target.parentNode || rec.target,
+            this._pendingC,
+            this._pendingI
+          );
         }
         for (const node of rec.addedNodes || []) {
           if (node.nodeType === 1 /* ELEMENT_NODE */) {
-            this.collectClassesIds(node, classes, ids);
+            this.collectClassesIds(node, this._pendingC, this._pendingI);
           }
         }
       }
-      if (classes.size || ids.size) {
-        this.queryAndInject([...classes], [...ids]);
+      if (this._pendingC.size || this._pendingI.size) {
+        this.scheduleFlush();
       }
     });
     try {
@@ -205,13 +209,38 @@ export class GjoaCosmeticChild extends JSWindowActorChild {
     } catch (e) {}
   }
 
-  // One sendQuery per observer batch that carries genuinely-new classes/ids.
-  // The seen-set caps total queries at one-per-distinct-token, so this is bounded
-  // even on busy pages; a page that continuously mints randomized classnames
-  // (hashed CSS modules) is the worst case. A leading-edge + trailing-debounce
-  // coalescer would cut that further, but a macrotask timer is frozen in
-  // background tabs — deferred until a frozen-tab-safe coalescer is in place.
-  async queryAndInject(classes, ids) {
+  // Leading-edge + trailing-debounce coalescer. The first batch flushes
+  // immediately (no timer dependency, so it works in a frozen/background tab and
+  // in the headless tests); during the trailing window further batches just
+  // accumulate and flush once when it closes. On a randomized-classname SPA this
+  // collapses a per-mutation sendQuery storm into ~one query per window; in a
+  // frozen tab the trailing timer is paused but the tab isn't mutating, so
+  // nothing is lost visually (and the seen-set already caps total distinct work).
+  scheduleFlush() {
+    if (this._cooldown) {
+      return;
+    }
+    this.flushPending(); // leading edge
+    const win = this.contentWindow;
+    if (!win) {
+      return;
+    }
+    this._cooldown = win.setTimeout(() => {
+      this._cooldown = 0;
+      if (this._pendingC.size || this._pendingI.size) {
+        this.flushPending();
+      }
+    }, COALESCE_MS);
+  }
+
+  async flushPending() {
+    if (!this._pendingC.size && !this._pendingI.size) {
+      return;
+    }
+    const classes = [...this._pendingC];
+    const ids = [...this._pendingI];
+    this._pendingC.clear();
+    this._pendingI.clear();
     try {
       const lazy = await this.sendQuery("Cosmetic:GetLazy", {
         classes,
@@ -231,6 +260,12 @@ export class GjoaCosmeticChild extends JSWindowActorChild {
       } catch (e) {}
       this._observer = null;
     }
+    if (this._cooldown) {
+      try {
+        this.contentWindow?.clearTimeout(this._cooldown);
+      } catch (e) {}
+      this._cooldown = 0;
+    }
     if (this._sheetUri) {
       try {
         const utils = this.contentWindow?.windowUtils;
@@ -241,5 +276,7 @@ export class GjoaCosmeticChild extends JSWindowActorChild {
     this._seenClasses.clear();
     this._seenIds.clear();
     this._selectors.clear();
+    this._pendingC.clear();
+    this._pendingI.clear();
   }
 }

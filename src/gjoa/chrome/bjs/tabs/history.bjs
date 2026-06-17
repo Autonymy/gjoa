@@ -74,12 +74,18 @@
 ;; {a:1,b:2} and {b:2,a:1} dedupe identically.
 (defn canonicalize [value :- Any] :- String
   (cond
-    (= value nil)                       (.stringify JSON value)
+    ;; `undefined` is NOT valid JSON. JSON.stringify omits undefined object
+    ;; values and maps undefined array elements to null — mirror that, or a
+    ;; node with `type: undefined` serializes to the literal text
+    ;; `"type":undefined` and the snapshot becomes unparseable forever.
+    (= (js/typeof value) "undefined")   "null"
+    (= value nil)                       "null"
     (not= (js/typeof value) "object")   (.stringify JSON value)
     (.isArray Array value)
-      (str "[" (.join (.map value canonicalize) ",") "]")
+      (str "[" (.join (.map value #(canonicalize %)) ",") "]")
     :else
-      (let [keys (.sort (.keys Object value))]
+      (let [keys (.filter (.sort (.keys Object value))
+                   #(not= (js/typeof (aget value %)) "undefined"))]
         (str "{"
              (.join (.map keys
                       #(str (.stringify JSON %) ":" (canonicalize (aget value %))))
@@ -201,14 +207,23 @@
         min (.padStart (String (.getMinutes dt)) 2 "0")]
     (str "Session - " day-short " " yyyy "/" mm "/" dd " " hh ":" min)))
 
+;; Returns nil for a row whose snapshot won't parse (e.g. legacy rows written
+;; before the canonicalize undefined-fix). Callers (query-rows) filter nils so
+;; one corrupt row can't reject the whole `:restore` / `:history` query.
 (defn decode-row [row :- Any] :- Any
-  (let [snap (.getResultByName row "snapshot")]
-    {:id (.getResultByName row "id")
-     :timestamp (.getResultByName row "timestamp")
-     :hash (.getResultByName row "hash")
-     :snapshot (.parse JSON snap)
-     :tag (.getResultByName row "tag")
-     :instanceId (or (.getResultByName row "instance_id") "")}))
+  (let [snap (.getResultByName row "snapshot")
+        parsed (try (.parse JSON snap)
+                 (catch Any e
+                   (.warn console "gjoa-tabs: skipping unparseable history snapshot"
+                     (.getResultByName row "id") (.-message e))
+                   nil))]
+    (when parsed
+      {:id (.getResultByName row "id")
+       :timestamp (.getResultByName row "timestamp")
+       :hash (.getResultByName row "hash")
+       :snapshot parsed
+       :tag (.getResultByName row "tag")
+       :instanceId (or (.getResultByName row "instance_id") "")})))
 
 ;; Extract (url, label) pairs from a snapshot for search indexing.
 (defn extract-searchable-rows [snapshot :- Any] :- Any
@@ -249,7 +264,8 @@
 (defn with-conn [f :- Any] :- Any (-> (open-connection) (.then f)))
 (def EVENTS-COLS :- String "SELECT id, timestamp, hash, snapshot, tag, instance_id FROM events")
 (defn query-rows [sql :- String params :- Any] :- Any
-  (-> (with-conn #(.execute % sql params)) (.then #(.map % decode-row))))
+  (-> (with-conn #(.execute % sql params))
+      (.then #(.filter (.map % decode-row) Boolean))))
 (defn query-one [sql :- String params :- Any] :- Any
   (-> (with-conn #(.execute % sql params))
       (.then #(when (.-length %) (decode-row (aget % 0))))))

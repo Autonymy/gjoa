@@ -161,11 +161,29 @@
     (catch Any e
       (.error console "gjoa-loader: setDefaults failed" e))))
 
+;; Registers the cosmetic-filtering JSWindowActor pair. The child (content
+;; process) asks the parent (where the MAIN_PROCESS_ONLY content-classifier
+;; service lives) for adblock-rust element-hiding selectors per document.
+;; Restricted to web content (messageManagerGroups "browsers"); allFrames so
+;; ads in subframes are covered too.
+(defn register-cosmetic-actor [] :- Any
+  (try
+    (.registerWindowActor ChromeUtils "GjoaCosmetic"
+      {:parent {:esModuleURI "resource://gre/modules/GjoaCosmeticParent.sys.mjs"}
+       :child {:esModuleURI "resource://gre/modules/GjoaCosmeticChild.sys.mjs"
+               :events {:DOMContentLoaded {:mozSystemGroup true}}}
+       :allFrames true
+       :messageManagerGroups ["browsers"]})
+    (.log console "gjoa-loader: registered GjoaCosmetic window actor")
+    (catch Any e
+      (.error console "gjoa-loader: registerWindowActor failed" e))))
+
 (js/export (def GjoaLoader :- Any
   {:start (fn [] :- Any
     (when (not (.-observer-registered st))
       (set! (.-observer-registered st) true)
       (set-defaults)
+      (register-cosmetic-actor)
       (.addObserver (.-obs Services) observer "chrome-document-loaded")
       (let [dev (dev-mode-dir)]
         (if dev

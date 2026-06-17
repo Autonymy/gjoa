@@ -1,0 +1,81 @@
+#lang beagle/js
+;; M2 cosmetic ACTOR end-to-end: validates the GjoaCosmetic JSWindowActor pair
+;; on a real page served locally. Covers BOTH delivery paths: an element present
+;; AT LOAD must be hidden by the initial scan -> GetLazy -> USER_SHEET path, and
+;; an element added AFTER load must be hidden by the (timer-free) MutationObserver
+;; path. A control element must stay visible. Exercises registerWindowActor,
+;; DOMContentLoaded, sendQuery, getHiddenClassIdSelectors, and
+;; windowUtils.loadSheetUsingURIString.
+;;
+;; Waits are runner-side via await-true (poll) — content-process setTimeout is
+;; frozen in this headless/background-tab harness, so the actor and the test both
+;; avoid it.
+;;
+;; Precondition: tools/test-driver/cosmetic-fixture-server.mjs serving :8975.
+;;   GJOA_BIN=$PWD/engine/obj-x86_64-pc-linux-gnu/dist/bin/gjoa \
+;;     bun .beagle-tools/gjoa/tools/test-driver/runner.js --grep "adblock M2 actor"
+(ns gjoa.tests.integration.adblock-cosmetic-actor
+  (:require [gjoa.tests.dsl :refer [deftest chrome-eval await-true wait-for expect]]))
+(define-mode strict)
+(declare-extern [JSON console] Any)
+
+(def TOP :- String "http://127.0.0.1:8975/")
+
+;; Synchronous chrome setup: feed two generic class rules, enable blocking,
+;; clear the allow-list.
+(def SETUP-JS :- String
+  (str "\n"
+       "  const svc = Cc['@mozilla.org/content-classifier-service;1']\n"
+       "    .getService(Ci.nsIContentClassifierService);\n"
+       "  const bytes = Array.from(new TextEncoder().encode('##.gjoa-probe-static\\n##.gjoa-probe-dynamic\\n'));\n"
+       "  svc.setFilterListData('gjoa-cosmetic-test', bytes);\n"
+       "  Services.prefs.setCharPref('privacy.trackingprotection.content.protection.list_names', 'gjoa-cosmetic-test');\n"
+       "  svc.applyFilterLists();\n"
+       "  Services.prefs.setBoolPref('gjoa.contentblock.enabled', true);\n"
+       "  Services.prefs.setBoolPref('privacy.trackingprotection.content.protection.enabled', true);\n"
+       "  Services.prefs.setCharPref('gjoa.contentblock.user.allow-hosts', '');\n"
+       "  return 'setup-ok';\n"))
+
+;; Async chrome nav: listener attached before loadURI so a fast local load can't
+;; race past it; resolve on load-stop.
+(def NAV-JS :- String
+  (str "\n"
+       "  const [url, resolve] = arguments;\n"
+       "  let done = false; const finish = v => { if (!done) { done = true; resolve(v); } };\n"
+       "  const win = Services.wm.getMostRecentWindow('navigator:browser');\n"
+       "  const b = win.gBrowser.selectedBrowser;\n"
+       "  const l = { QueryInterface: ChromeUtils.generateQI(['nsIWebProgressListener','nsISupportsWeakReference']),\n"
+       "    onStateChange(wp, req, flags) { const S = Ci.nsIWebProgressListener;\n"
+       "      if ((flags & S.STATE_STOP) && (flags & S.STATE_IS_WINDOW)) { try { b.removeProgressListener(l); } catch {} finish(true); } } };\n"
+       "  b.addProgressListener(l, Ci.nsIWebProgress.NOTIFY_STATE_ALL);\n"
+       "  b.loadURI(Services.io.newURI(url), { triggeringPrincipal: Services.scriptSecurityManager.getSystemPrincipal() });\n"
+       "  setTimeout(() => finish(false), 15000);\n"))
+
+(def STATIC-HIDDEN :- String
+  "const s=document.getElementById('static'); return !!(s && getComputedStyle(s).display === 'none');")
+(def KEEP-VISIBLE :- String
+  "const k=document.getElementById('keep'); return !!(k && getComputedStyle(k).display !== 'none');")
+(def INJECT-DYN :- String
+  "const d=document.createElement('div'); d.className='gjoa-probe-dynamic'; d.id='dyn'; d.textContent='x'; document.body.appendChild(d); return 'ok';")
+(def DYN-HIDDEN :- String
+  "const d=document.getElementById('dyn'); return !!(d && getComputedStyle(d).display === 'none');")
+
+(js/export (def tests :- Any
+  [(deftest "adblock M2 actor: at-load + dynamic elements hidden, control kept" [mn ctx]
+     (js/await (.setContext mn "chrome"))
+     (chrome-eval SETUP-JS)
+     (let [navOk (js/await (.executeAsyncScript mn NAV-JS [TOP]))]
+       (expect navOk (str "local fixture " TOP " did not load — is cosmetic-fixture-server.mjs running on :8975?"))
+       (js/await (.setContext mn "content"))
+       ;; await-true returns nil on success and throws (timeout) on failure.
+       ;; INITIAL path: the at-load .gjoa-probe-static must get hidden.
+       (await-true STATIC-HIDDEN 8000)
+       (.log console "\n[M2-ACTOR] at-load .gjoa-probe-static hidden")
+       ;; Control must stay visible.
+       (expect (chrome-eval KEEP-VISIBLE) "control .gjoa-keep was hidden — cosmetic over-hiding")
+       ;; OBSERVER path: a dynamically-added matching element must get hidden.
+       (chrome-eval INJECT-DYN)
+       (await-true DYN-HIDDEN 8000)
+       (.log console "[M2-ACTOR] dynamically-added .gjoa-probe-dynamic hidden")))]))
+
+(js/export-default tests)

@@ -272,3 +272,48 @@ for other people = the CI artifacts, not a nix package.
 - mach dev build (`gjoa dev`) — queued after native (sequential; no concurrent
   Firefox compiles — thermal/OOM).
 - CI linux + macos re-triggered on main with the fix — in progress.
+
+## 2026-06-17 — Native cosmetic ad-blocking (M2) — SUCCESS
+
+**Type:** mach (one full `./mach build` ~27 min + two `mach build faster`
+repackages ~37 s each for actor iteration). **Trigger:** extend the upstream
+FF152 `content-classifier` component (which M0/M1 used for *network* blocking via
+prefs + the RS-client overlay) with **cosmetic element hiding** — the
+`##.selector` half of uBlock.
+
+**What landed:** Rust FFI (`url_cosmetic_resources` /
+`hidden_class_id_selectors`) → cbindgen header → C++ engine wrappers → two new IDL
+methods → XPCOM service cross-engine union → `@mozilla.org/content-classifier-service;1`
+contract id (`GetSingleton`, so JS can reach the MAIN_PROCESS_ONLY service) →
+`GjoaCosmetic` JSWindowActor pair (USER_SHEET `display:none!important`, initial
+class/id scan + timer-free MutationObserver), registered in `GjoaLoader :start`.
+
+**Validation (Marionette, on the mach binary):** M0 (real EasyList+EasyPrivacy
+blocks real ad hosts) PASS, M1-UI PASS, M1-production (isolated) PASS, M2-service
+PASS, M2-actor (at-load + dynamic hiding, control kept visible) PASS. Pre-build
+adversarial agent review of the native layer: 0 real bugs.
+
+**Lessons (gate-worthy):**
+
+1. **PERSISTENCE — `engine/` is gitignored; gjoa-modified upstream files MUST be
+   mirrored into `src/gjoa/` or CI loses them.** CI rebuilds via `bun run import`
+   (overlay `src/gjoa/X → engine/X` + patches) on a FRESH extract, so direct
+   `engine/` edits are invisible to CI. M0/M1 never modified upstream `.cpp` (just
+   prefs + the `.sys.mjs` overlay), so this was the first build to hit it. Fix: the
+   8 modified content-classifier C++/Rust/IDL/build files are now whole-file
+   overlays under `src/gjoa/toolkit/components/content-classifier/` (+ a README).
+   **New preflight gate candidate: "every gjoa-modified engine file has a src/gjoa
+   overlay or a patch" — fail loud otherwise.**
+2. **Headless content-process `setTimeout` is FROZEN** (background-tab timer
+   suspension). The actor's MutationObserver flush was rewritten timer-free (flush
+   in the observer callback; MutationObserver already batches at the microtask
+   checkpoint) — more robust in real background tabs too. Tests wait via runner-side
+   `await-true` polling, never content `setTimeout`.
+3. **beagle `.zo` cache corruption** ("instantiate-linklet mismatch") from a
+   concurrent `../beagle` edit → `raco make beagle-lib/main.rkt` rebuilds it.
+4. **`adblock-smoke` nix-vs-mach discrepancy (NOT a regression):** smoke loads a
+   rigged rule via `test_list_urls` *at startup after restart* — a test-only path
+   M0/M1 don't exercise. Passes on the LTO nix binary, fails on the unoptimized mach
+   binary (startup-ordering). The shipped paths (M0 running-load, M1 RS restart-load)
+   both pass on mach. M2 code is additive and never touches
+   `Init()`/`LoadFilterLists()`/the network path.

@@ -19,6 +19,10 @@ node_modules/
 # Nix build output symlink
 result
 result-*
+gjoa-portable
+
+# Local build/test logs
+artifacts/
 
 # Build acceleration caches
 .sccache/

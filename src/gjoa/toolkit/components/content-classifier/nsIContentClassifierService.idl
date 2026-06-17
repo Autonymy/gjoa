@@ -1,0 +1,62 @@
+/* This Source Code Form is subject to the terms of the Mozilla Public
+ * License, v. 2.0. If a copy of the MPL was not distributed with this
+ * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
+
+#include "nsISupports.idl"
+
+/**
+ * Interface for the content classifier service, allowing JS code to
+ * provide filter list data (e.g. from RemoteSettings).
+ */
+[scriptable, uuid(7a3e9c14-2b5f-4d8a-9e1c-3f6b8d2a4c50)]
+interface nsIContentClassifierService : nsISupports {
+    /**
+     * Store filter list data for a named list. The data is the raw
+     * content of a filter list file (adblock format). Engines are not
+     * rebuilt until applyFilterLists() is called.
+     */
+    void setFilterListData(in ACString aName, in Array<uint8_t> aData);
+
+    /**
+     * Remove a previously stored filter list by name.
+     */
+    void removeFilterList(in ACString aName);
+
+    /**
+     * Rebuild classification engines from the currently stored filter
+     * list data, using the active list name preferences to select
+     * which lists to use for blocking and annotation.
+     */
+    void applyFilterLists();
+
+    /**
+     * Cosmetic filtering resources for a URL: element-hiding selectors,
+     * JSON-encoded procedural filters, generic-rule exceptions, injected
+     * scriptlet JS, and whether $generichide applies (skip the generic
+     * class/id query when true). Unioned across the active block engines.
+     */
+    void getUrlCosmeticResources(in ACString aUrl,
+                                 out Array<ACString> aHideSelectors,
+                                 out Array<ACString> aProceduralActions,
+                                 out Array<ACString> aExceptions,
+                                 out ACString aInjectedScript,
+                                 out boolean aGenericHide);
+
+    /**
+     * Generic element-hiding selectors triggered by the given CSS classes
+     * and ids, minus the exceptions from a prior getUrlCosmeticResources
+     * call for the same hostname. For lazy delivery as new nodes appear.
+     */
+    void getHiddenClassIdSelectors(in Array<ACString> aClasses,
+                                   in Array<ACString> aIds,
+                                   in Array<ACString> aExceptions,
+                                   out Array<ACString> aSelectors);
+};
+
+%{C++
+// Fired after filter list engines have been rebuilt, when the testing
+// pref (privacy.trackingprotection.content.testing) is set. Not fired
+// in production.
+#define NS_CONTENT_CLASSIFIER_FILTER_LISTS_LOADED_TOPIC \
+  "test-content-classifier-filter-lists-loaded"
+%}

@@ -1,0 +1,57 @@
+#lang beagle/js
+;; M2 cosmetic-stack validation: proves the native element-hiding path end to
+;; end — Rust FFI (url_cosmetic_resources / hidden_class_id_selectors) -> C++
+;; wrappers -> the two new IDL methods -> JS via the new
+;; @mozilla.org/content-classifier-service;1 contract. Page-free and offline:
+;; we feed a tiny synthetic cosmetic list straight through the service and read
+;; the selectors back.
+;;
+;;   GJOA_BIN=$PWD/engine/obj-x86_64-pc-linux-gnu/dist/bin/gjoa \
+;;     bun .beagle-tools/gjoa/tools/test-driver/runner.js --grep "adblock M2"
+(ns gjoa.tests.integration.adblock-cosmetic
+  (:require [gjoa.tests.dsl :refer [deftest expect expect-eq]]))
+(define-mode strict)
+(declare-extern [JSON console] Any)
+
+;; Generic class + generic id + a domain-specific element-hide rule. Generic
+;; rules surface via getHiddenClassIdSelectors (class/id-triggered); the
+;; domain-specific rule surfaces via getUrlCosmeticResources for that host.
+(def LIST :- String "##.gjoa-probe\nexample.com##.sponsored\n###gjoa-id-probe\n")
+
+(def EVAL-JS :- String
+  (str "\n"
+       "  const svc = Cc['@mozilla.org/content-classifier-service;1']\n"
+       "    .getService(Ci.nsIContentClassifierService);\n"
+       "  const bytes = Array.from(new TextEncoder().encode("
+       (.stringify JSON LIST) "));\n"
+       "  svc.setFilterListData('gjoa-cosmetic-test', bytes);\n"
+       "  Services.prefs.setCharPref(\n"
+       "    'privacy.trackingprotection.content.protection.list_names',\n"
+       "    'gjoa-cosmetic-test');\n"
+       "  svc.applyFilterLists();\n"
+       "  const sel = {};\n"
+       "  svc.getHiddenClassIdSelectors(['gjoa-probe'], ['gjoa-id-probe'], [], sel);\n"
+       "  const hide = {}, proc = {}, exc = {}, inj = {}, gh = {};\n"
+       "  svc.getUrlCosmeticResources('https://example.com/', hide, proc, exc, inj, gh);\n"
+       "  return JSON.stringify({\n"
+       "    generic: sel.value || [],\n"
+       "    specific: hide.value || [],\n"
+       "    generichide: !!gh.value,\n"
+       "  });\n"))
+
+(js/export (def tests :- Any
+  [(deftest "adblock M2: cosmetic selectors flow through the native service" [mn ctx]
+     (js/await (.setContext mn "chrome"))
+     (let [r (js/await (.executeScript mn EVAL-JS))
+           d (.parse JSON r)]
+       (.log console (str "\n[M2-COSMETIC] " r))
+       (expect (.includes (.-generic d) ".gjoa-probe")
+               "generic class rule ##.gjoa-probe did not come back from getHiddenClassIdSelectors")
+       (expect (.includes (.-generic d) "#gjoa-id-probe")
+               "generic id rule ###gjoa-id-probe did not come back from getHiddenClassIdSelectors")
+       (expect (.includes (.-specific d) ".sponsored")
+               "domain rule example.com##.sponsored did not come back from getUrlCosmeticResources")
+       (expect-eq (.-generichide d) false
+                  "generichide should be false for example.com (no $generichide exception in the list)")))]))
+
+(js/export-default tests)

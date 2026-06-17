@@ -111,10 +111,57 @@ export class GjoaCosmeticChild extends JSWindowActorChild {
   }
 
   async handleEvent(event) {
-    if (event.type !== "DOMContentLoaded") {
+    // DOMWindowCreated = document-start: inject scriptlets BEFORE page scripts
+    // run (a player pre-roll is decided the moment YouTube reads its config).
+    if (event.type === "DOMWindowCreated") {
+      await this.injectScriptlets();
       return;
     }
-    await this.applyCosmetics();
+    if (event.type === "DOMContentLoaded") {
+      await this.applyCosmetics();
+    }
+  }
+
+  // Run curated/engine scriptlets in the PAGE's main world. A privileged
+  // Cu.Sandbox over the content window is not subject to the page's CSP (so it
+  // works on YouTube, which blocks inline <script>), and with
+  // sandboxPrototype=win + wantXrays=false the scriptlet's writes to JSON.parse
+  // / Response.json land on the page's real globals — exactly what a player
+  // json-prune needs.
+  async injectScriptlets() {
+    const doc = this.document;
+    const url = doc?.documentURI || "";
+    if (!/^https?:/.test(url)) {
+      return;
+    }
+    let resp;
+    try {
+      resp = await this.sendQuery("Cosmetic:GetScriptlets", {});
+    } catch (e) {
+      return;
+    }
+    if (!resp || !resp.scriptlets || !resp.scriptlets.length) {
+      return;
+    }
+    const win = this.contentWindow;
+    if (!win) {
+      return;
+    }
+    let sandbox;
+    try {
+      sandbox = Cu.Sandbox(win, {
+        sandboxName: "gjoa-scriptlets",
+        sandboxPrototype: win,
+        wantXrays: false,
+      });
+    } catch (e) {
+      return;
+    }
+    for (const code of resp.scriptlets) {
+      try {
+        Cu.evalInSandbox(code, sandbox);
+      } catch (e) {}
+    }
   }
 
   async applyCosmetics() {

@@ -178,7 +178,8 @@
     (.registerWindowActor ChromeUtils "GjoaCosmetic"
       {:parent {:esModuleURI "resource://gre/modules/GjoaCosmeticParent.sys.mjs"}
        :child {:esModuleURI "resource://gre/modules/GjoaCosmeticChild.sys.mjs"
-               :events {:DOMContentLoaded {:mozSystemGroup true}}}
+               :events {:DOMContentLoaded {:mozSystemGroup true}
+                        :DOMWindowCreated {}}}
        :allFrames true
        :messageManagerGroups ["browsers"]})
     (.log console "gjoa-loader: registered GjoaCosmetic window actor")

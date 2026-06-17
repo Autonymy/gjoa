@@ -88,6 +88,20 @@
        (js/await (.setContext mn "content"))
        ;; poll (runner-side) until the existing box becomes inverted
        (await-true "const d=document.getElementById('dm-box'); return !!(d && getComputedStyle(d).backgroundColor === 'rgb(0, 0, 0)');" 8000)
-       (.log console "[DM-P1] live toggle restyled the existing box to inverted")))]))
+       (.log console "[DM-P1] live toggle restyled the existing box to inverted")))
+   ;; P2: system colors (the Canvas / default page background) invert too, so the
+   ;; full "engine" mode (force-light + invert) gives a dark page — not just dark
+   ;; explicit colors. The hook covers the Color::System arm now.
+   (deftest "darkmode P2: system colors invert under full engine mode" [mn ctx]
+     (js/await (.setContext mn "chrome"))
+     (chrome-eval "Services.prefs.setIntPref('layout.css.prefers-color-scheme.content-override', 1); Services.prefs.setBoolPref('gjoa.darkmode.invert.enabled', true); return 'engine';")
+     (expect (js/await (.executeAsyncScript mn NAV-JS [TOP])) (str "fixture " TOP " did not load"))
+     (js/await (.setContext mn "content"))
+     (let [r (chrome-eval (str "const c=document.createElement('div'); c.style.backgroundColor='Canvas'; document.body.appendChild(c);"
+                               " const bg=getComputedStyle(c).backgroundColor; const m=bg.match(/[0-9]+/g);"
+                               " const sum=m?(+m[0]+ +m[1]+ +m[2]):999; return JSON.stringify({bg, dark: sum<200});"))
+           d (.parse JSON r)]
+       (.log console (str "\n[DM-P2] Canvas system-color box -> " r))
+       (expect (.-dark d) (str "Canvas system color (page bg) did not invert to dark: " (.-bg d)))))]))
 
 (js/export-default tests)

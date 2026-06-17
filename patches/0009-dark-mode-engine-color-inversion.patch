@@ -6,13 +6,17 @@
 #     - layout/base/nsPresContext.h
 #     - layout/base/nsPresContext.cpp
 #
-Engine-level dark mode: luminance-invert absolute colors at style-resolution
-time (the performant successor to the compositor filter:invert).
+Engine-level dark mode: luminance-invert resolved absolute colors at
+style-resolution time (the performant successor to the compositor filter:invert).
 
 - specified/color.rs: invert_color_luminance() ports gfx RelativeLuminanceUtils
-  ::Adjust (WCAG, hue/sat/alpha-preserving) with target = 1 - luminance; hooked
-  in Color::to_computed_color's Absolute arm, gated on device.color_inversion().
-  Cached in ComputedValues -> zero per-frame cost; raster media untouched.
+  ::Adjust (WCAG, hue/sat/alpha-preserving) with target = 1 - luminance. Applied
+  at the END of Color::to_computed_color so it covers EVERY resolved absolute
+  color — explicit colors, resolved color-functions, AND system colors (so the
+  page Canvas/default background goes dark under force-light, not just explicit
+  colors). currentColor / color-mix / unresolved color-functions stay symbolic
+  and resolve against the already-inverted values. Cached in ComputedValues ->
+  zero per-frame cost; raster media untouched.
 - device/gecko.rs: color_inversion() accessor (mirrors forced_colors()).
 - nsPresContext.{h,cpp}: per-document mColorInversion flag + UpdateColorInversion
   (content-only; chrome excluded), called at construction and on change of the
@@ -132,7 +136,7 @@ index 7ed8c2c..54ffa6f 100644
      pub(crate) fn system_nscolor(
          &self,
 diff --git a/servo/components/style/values/specified/color.rs b/servo/components/style/values/specified/color.rs
-index 9c55023..a335fa7 100644
+index 9c55023..71ca91d 100644
 --- a/servo/components/style/values/specified/color.rs
 +++ b/servo/components/style/values/specified/color.rs
 @@ -860,6 +860,41 @@ impl Color {
@@ -177,19 +181,33 @@ index 9c55023..a335fa7 100644
  impl Color {
      /// Converts this Color into a ComputedColor.
      ///
-@@ -890,6 +925,15 @@ impl Color {
+@@ -885,7 +920,7 @@ impl Color {
+             }};
+         }
+ 
+-        Ok(match *self {
++        let computed = match *self {
+             Color::CurrentColor => ComputedColor::CurrentColor,
              Color::Absolute(ref absolute) => {
                  let mut color = absolute.color;
-                 adjust_absolute_color!(color);
-+                // gjoa engine-level dark mode: invert absolute colors at
-+                // computed time (cached in ComputedValues, zero per-frame cost).
-+                // currentColor/system stay symbolic and resolve against these
-+                // already-inverted values.
-+                if let Some(ctx) = context {
-+                    if ctx.device().color_inversion() {
-+                        color = invert_color_luminance(&color);
-+                    }
-+                }
-                 ComputedColor::Absolute(color)
+@@ -931,7 +966,19 @@ impl Color {
+             Color::InheritFromBodyQuirk => {
+                 ComputedColor::Absolute(context.ok_or(())?.device().body_text_color())
              },
-             Color::ColorFunction(ref color_function) => {
+-        })
++        };
++        // gjoa engine-level dark mode: luminance-invert ANY resolved absolute
++        // color — explicit colors, resolved color-functions, AND system colors,
++        // so the page canvas/default background goes dark under force-light (not
++        // just explicit colors). currentColor / color-mix / unresolved
++        // color-functions stay symbolic and resolve against these already-
++        // inverted values.
++        if context.map_or(false, |c| c.device().color_inversion()) {
++            if let ComputedColor::Absolute(ref abs) = computed {
++                return Ok(ComputedColor::Absolute(invert_color_luminance(abs)));
++            }
++        }
++        Ok(computed)
+     }
+ }
+ 

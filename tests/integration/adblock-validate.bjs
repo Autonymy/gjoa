@@ -1,0 +1,90 @@
+#lang beagle/js
+;; M0 VALIDATION (not a permanent test): does the in-engine adblock-rust actually
+;; block REAL ad/tracker domains on a real page when fed the FULL EasyList +
+;; EasyPrivacy (137k rules, 3.6 MB) — vs. the smoke test's single rigged rule.
+;; This is the cheapest end-to-end check before spending the M2 compile: it tells
+;; us whether "the dormant engine already works" holds at production scale, incl.
+;; whether a 3.6 MB list parses at startup without choking.
+;;
+;; Precondition: /tmp/gjoa-adblock-lists.txt = cat(easylist, easyprivacy).
+;;   GJOA_BIN=$PWD/result/bin/gjoa bun .beagle-tools/gjoa/tools/test-driver/runner.js --grep "adblock M0"
+(ns gjoa.tests.integration.adblock-validate
+  (:require [gjoa.tests.dsl :refer [deftest expect expect-eq]]))
+(define-mode strict)
+(declare-extern [JSON console Promise] Any)
+
+(def LIST-FILE :- String "file:///tmp/gjoa-adblock-lists.txt")
+(def TOP :- String "https://example.com/")
+;; A no-cors fetch is classified third-party + xmlhttprequest. These hosts have
+;; rules that MATCH that (bare ||host^, or $xmlhttprequest,third-party) → must block:
+(def MUST-BLOCK :- Any ["https://www.googletagservices.com/favicon.ico"   ; ||googletagservices.com^ (bare)
+                        "https://www.google-analytics.com/favicon.ico"]) ; ||...^$script,third-party,xmlhttprequest
+;; These hosts' ONLY rules are option-scoped to contexts our probe doesn't hit
+;; ($popup / $domain=other) → engine must CORRECTLY skip them (proves precise
+;; option handling, not blunt host blocking):
+(def MUST-SKIP :- Any ["https://doubleclick.net/favicon.ico"              ; ||doubleclick.net^$popup
+                       "https://pagead2.googlesyndication.com/favicon.ico"]) ; $domain=blogto.com|youtube.com
+;; Unlisted hosts → must load (no over-block):
+(def ALLOWED :- Any ["https://example.net/favicon.ico"
+                     "https://upload.wikimedia.org/favicon.ico"])
+
+(def PROBE-JS :- String
+  (str "\n"
+       "  const [u, resolve] = arguments;\n"
+       "  const t = setTimeout(() => resolve('timeout'), 15000);\n"
+       "  fetch(u, { mode: 'no-cors', cache: 'no-store' })\n"
+       "    .then(() => { clearTimeout(t); resolve('loaded'); })\n"
+       "    .catch(() => { clearTimeout(t); resolve('blocked'); });\n"))
+
+(def NAV-JS :- String
+  (str "\n"
+       "  const [url, resolve] = arguments;\n"
+       "  let done = false; const finish = v => { if (!done) { done = true; resolve(v); } };\n"
+       "  const win = Services.wm.getMostRecentWindow('navigator:browser');\n"
+       "  const b = win.gBrowser.selectedBrowser;\n"
+       "  b.loadURI(Services.io.newURI(url), { triggeringPrincipal: Services.scriptSecurityManager.getSystemPrincipal() });\n"
+       "  const l = { QueryInterface: ChromeUtils.generateQI(['nsIWebProgressListener','nsISupportsWeakReference']),\n"
+       "    onStateChange(wp, req, flags) { const S = Ci.nsIWebProgressListener;\n"
+       "      if ((flags & S.STATE_STOP) && (flags & S.STATE_IS_WINDOW)) { try { b.removeProgressListener(l); } catch {} finish(true); } } };\n"
+       "  b.addProgressListener(l, Ci.nsIWebProgress.NOTIFY_STATE_ALL);\n"
+       "  setTimeout(() => finish(false), 25000);\n"))
+
+(js/export (def tests :- Any
+  [(deftest "adblock M0: full EasyList+EasyPrivacy blocks real ad/tracker hosts" [mn ctx]
+     (js/await (.setContext mn "chrome"))
+     ;; enable the engine in production-shaped mode, pointed at the full lists
+     (js/await (.executeScript mn
+       (str "\n"
+            "  const [u] = arguments;\n"
+            "  Services.prefs.setBoolPref('privacy.trackingprotection.content.testing', true);\n"
+            "  Services.prefs.setBoolPref('privacy.trackingprotection.content.annotation.enabled', false);\n"
+            "  Services.prefs.setCharPref('privacy.trackingprotection.content.protection.test_list_urls', u);\n"
+            "  Services.prefs.setBoolPref('privacy.trackingprotection.content.protection.enabled', true);\n"
+            "  Services.prefs.savePrefFile(null);\n")
+       [LIST-FILE]))
+     ;; restart so the service inits at startup + parses the 3.6 MB list
+     (let [client (js/await (.restartGjoa ctx))]
+       (js/await (.setContext client "chrome"))
+       ;; generous beat for a 137k-rule parse at startup
+       (js/await (.executeAsyncScript client "const [r]=arguments; setTimeout(()=>r(true), 5000);"))
+       (let [navOk (js/await (.executeAsyncScript client NAV-JS [TOP]))]
+         (expect navOk (str "top page " TOP " did not load (network?)"))
+         (js/await (.setContext client "content"))
+         (let [probe (fn [url] (.executeAsyncScript client PROBE-JS [url]))
+               mustBlockR (js/await (.all Promise (.map MUST-BLOCK probe)))
+               mustSkipR (js/await (.all Promise (.map MUST-SKIP probe)))
+               allowedR (js/await (.all Promise (.map ALLOWED probe)))
+               nBlocked (.-length (.filter mustBlockR #(= % "blocked")))
+               nSkipBlocked (.-length (.filter mustSkipR #(= % "blocked")))
+               nOverblock (.-length (.filter allowedR #(= % "blocked")))]
+           (.log console (str "\n[M0-VALIDATE] must-block (matching rules) -> " (.stringify JSON mustBlockR) " (" nBlocked "/" (.-length MUST-BLOCK) ")"))
+           (.log console (str "[M0-VALIDATE] option-scoped must-skip ($popup/$domain) -> " (.stringify JSON mustSkipR)))
+           (.log console (str "[M0-VALIDATE] controls -> " (.stringify JSON allowedR)))
+           (expect-eq nBlocked (.-length MUST-BLOCK)
+                      (str "engine failed to block a MATCHING real ad rule: " (.stringify JSON mustBlockR)))
+           (expect-eq nSkipBlocked 0
+                      (str "engine over-applied an option-scoped rule (must honor $popup/$domain): " (.stringify JSON mustSkipR)))
+           (expect-eq nOverblock 0
+                      (str "control host over-blocked: " (.stringify JSON allowedR)))))))]))
+
+(js/export-default tests)

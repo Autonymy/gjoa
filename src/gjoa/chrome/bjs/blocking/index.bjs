@@ -1,0 +1,83 @@
+#lang beagle/js
+;; gjoa native ad/tracker blocking — chrome-side module (Lane 1, hot-reloads via
+;; `gjoa sync`). The actual engine + list loading is the C++ content classifier +
+;; the RS-client overlay (Lane 2, in omni.ja) — chrome JS can't touch the service
+;; directly. This module is the user-facing half:
+;;   - mirrors gjoa.contentblock.enabled onto the engine's protection.enabled, so
+;;     a single gjoa pref turns blocking on/off;
+;;   - manages the per-site allow-list (gjoa.contentblock.user.allow-hosts CSV);
+;;     the overlay observes that pref and rebuilds the synthetic @@ exception
+;;     engine, so a toggle here unblocks the current site without a restart;
+;;   - exposes window.gjoaBlocking for the drawer menu to drive.
+(ns gjoa.blocking.index
+  (:require [gjoa.macros :refer [pref-bool pref-str set-pref-bool! set-pref-str! on1!]]))
+(define-mode strict)
+
+(declare-extern [window Services console gBrowser] Any)
+
+(def PREF-ENABLED :- String "gjoa.contentblock.enabled")
+(def PREF-ALLOW-HOSTS :- String "gjoa.contentblock.user.allow-hosts")
+(def PREF-PROTECTION :- String "privacy.trackingprotection.content.protection.enabled")
+
+(def state :- Any {:unsub nil})
+
+(defn enabled? [] :- Boolean (pref-bool PREF-ENABLED true))
+
+(defn parse-hosts [csv :- String] :- Any
+  (let [t (.trim csv)]
+    (if (= (.-length t) 0) []
+      (.filter (.map (.split t ",") #(.trim %)) #(> (.-length %) 0)))))
+
+(defn allow-hosts [] :- Any (parse-hosts (pref-str PREF-ALLOW-HOSTS "")))
+
+(defn current-host [] :- String
+  (try
+    (let [b (.-selectedBrowser gBrowser)
+          u (when b (.-currentURI b))]
+      (if (and u (.-host u)) (.-host u) ""))
+    (catch Any _e "")))
+
+(defn host-allowed? [h :- String] :- Boolean
+  (and (> (.-length h) 0) (> (.indexOf (allow-hosts) h) -1)))
+
+;; Toggle a host in the allow-list. Returns true if the host is now ALLOWED
+;; (blocking off for it). Rejects empty / comma-bearing hosts (CSV safety). The
+;; overlay observes PREF-ALLOW-HOSTS and rebuilds the engine — no restart.
+(defn toggle-host [h :- String] :- Boolean
+  (if (or (= (.-length h) 0) (> (.indexOf h ",") -1))
+    false
+    (let [hosts (allow-hosts)
+          idx (.indexOf hosts h)
+          was-allowed (> idx -1)]
+      (if was-allowed (.splice hosts idx 1) (.push hosts h))
+      (set-pref-str! PREF-ALLOW-HOSTS (.join hosts ","))
+      (.savePrefFile (.-prefs Services) nil)
+      (not was-allowed))))
+
+;; Mirror the gjoa enable pref onto the engine's master switch.
+(defn apply! [] :- Any (set-pref-bool! PREF-PROTECTION (enabled?)))
+
+(defn toggle [] :- Boolean
+  (let [n (not (enabled?))]
+    (set-pref-bool! PREF-ENABLED n)
+    n))
+
+(defn destroy! [] :- Any
+  (let [u (.-unsub state)] (when u (u)))
+  (set! (.-unsub state) nil))
+
+(defn init-! [] :- Any
+  (apply!)
+  (let [obs {:observe (fn [_s _t _d] (apply!))}]
+    (.addObserver (.-prefs Services) PREF-ENABLED obs)
+    (set! (.-unsub state) #(.removeObserver (.-prefs Services) PREF-ENABLED obs)))
+  (set! (.-gjoaBlocking window)
+    {:enabled enabled?
+     :toggle toggle
+     :currentHost current-host
+     :hostAllowed host-allowed?
+     :toggleHost toggle-host})
+  (on1! window "unload" destroy!)
+  (.log console (str "gjoa-blocking: initialized (enabled=" (enabled?) ")")))
+
+(init-!)

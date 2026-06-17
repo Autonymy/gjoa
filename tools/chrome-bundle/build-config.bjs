@@ -88,4 +88,12 @@
                     "// @description    Chrome-level dark mode: native color-scheme override + optional CSS inversion filter"
                     "// @include        main"
                     "// ==/UserScript=="]
+                   "\n")}
+   {:out "gjoa-blocking.uc.js"
+    :files [(str B "/blocking/index.js")]
+    :banner (.join ["// ==UserScript=="
+                    "// @name           Gjoa Blocking"
+                    "// @description    Native ad/tracker blocking: engine enable/disable + per-site allow-list"
+                    "// @include        main"
+                    "// ==/UserScript=="]
                    "\n")}]))

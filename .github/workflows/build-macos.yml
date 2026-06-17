@@ -58,6 +58,10 @@ jobs:
           version: 'stable'
       - name: Checkout beagle (sibling compiler)
         run: git clone --depth 1 https://github.com/tompassarelli/beagle.git ../beagle
+      # beagle-build resolves modules from the 'beagle' Racket collection, which
+      # beagle-lib provides (info.rkt: collection "beagle", deps just base).
+      - name: Register beagle collection
+        run: raco pkg install --link --batch --no-docs ../beagle/beagle-lib
 
       - name: Apply overlays and patches
         run: bun run import

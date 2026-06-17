@@ -214,3 +214,31 @@ EXCEPT they all could have been caught by reading code or running
 
 **Could this have been Lane 1?** No — the 151 bump is genuinely Lane 3
 work. But the cascade from 1 build to 4 was 100% preventable.
+
+---
+
+## 2026-06-17 — Firefox 152.0 bump (nix .#gjoa) — SUCCESS
+
+**Trigger:** user asked for latest (152); 151.0.1 was 1 major behind with 2 high
+advisories. `security:bump` → 152.0.
+
+**Cascade, all clean on the first build (no repeat-build postmortems):**
+- `security:bump` → gjoa.json 152.0; `rm -rf engine && bun run download` (FF
+  152.0 source, 760.9 MB, verified) → `bun run import`.
+- **Patches: all 3 applied clean** against 152 (no fuzzy-context breakage — the
+  classic 151-era landmine; import-first caught nothing because there was nothing).
+- **NSS:** 152 bundles NSS 3.124; nixpkgs-unstable already ships 3.124, so the
+  flake leapfrog overlay auto-disables. Bumped `minNssVersion` 3.123.1→3.124 to match.
+- **Preflight gate I** was stale (pointed at pre-beagle-port `GjoaLoader.sys.mjs`);
+  fixed to `GjoaLoader.bjs`. Bundles verified aligned (4 scripts + 3 css).
+- **PREFLIGHT GREEN 9/9.** `nix build .#gjoa --impure` → result/bin/gjoa = "Mozilla
+  Gjoa 152.0". One build, no cascade.
+
+**Why no repeat builds this time:** import-first + preflight 9/9 + the NSS floor
+checked against the *actual* 152 requirement before launching. The discipline held.
+
+**CI (friend builds, separate from this nix build):** bringing the GitHub Actions
+Linux+macOS builds online for 152 took a chain of config fixes (stale lockfile →
+missing beagle sibling → setup-racket@v1.15 → raco-link beagle-lib for the
+collection). The free Linux runner is expected to OOM at link regardless (Zen uses
+paid Blacksmith/self-hosted) — popos fallback is `nix bundle` off this local build.

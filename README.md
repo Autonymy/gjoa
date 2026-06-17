@@ -5,11 +5,12 @@ near-zero runtime cost, the things most people bolt onto Firefox with a stack
 of extensions — an ad blocker, Dark Reader, tree-style tabs — and ship it as
 one aggressively optimized build.
 
-Built on Firefox 151. The UI is written in [Beagle](https://github.com/tompassarelli/beagle)
+Built on Firefox 152. The UI is written in [Beagle](https://github.com/tompassarelli/beagle)
 (a typed Clojure subset) as `.bjs` modules under `src/gjoa/chrome/bjs/`,
 compiled to chrome JS and loaded through a native chrome loader
-(`src/gjoa/browser/components/gjoa/GjoaLoader.sys.mjs`) baked into `omni.ja` —
-no fx-autoconfig, no extension process, no per-page injection.
+(`src/gjoa/browser/components/gjoa/GjoaLoader.bjs`, itself compiled to a
+`.sys.mjs`) baked into `omni.ja` — no fx-autoconfig, no extension process,
+no per-page injection.
 
 ## What's different
 
@@ -29,7 +30,7 @@ no fx-autoconfig, no extension process, no per-page injection.
 
 **In progress**
 
-- **Native ad / tracker blocking** — Firefox 151 ships Brave's `adblock-rust`
+- **Native ad / tracker blocking** — Firefox 152 ships Brave's `adblock-rust`
   engine *in-tree* but leaves it disabled (Mozilla uses it only for
   tracker-list processing). gjoa wires it on with real filter lists:
   network-layer blocking + cosmetic filtering, uBlock-Origin-compatible
@@ -49,17 +50,21 @@ Firefox-plus-extensions setup people actually run, gjoa is dramatically lighter.
 
 ## Build
 
-NixOS (or Nix on any Linux):
+**NixOS / Nix (the primary path):**
 
 ```sh
 bun run init                       # download mozilla-central + apply overlays
-nix build .#gjoa --impure          # dev variant — fast, no LTO
-nix build .#gjoa-release --impure  # release — O3 + LTO + march=native
+nix build .#gjoa --impure          # dev variant — fast, no LTO, CPU-portable
+nix build .#gjoa-release --impure  # release — O3 + LTO + march=native (this CPU only)
 ./result/bin/gjoa
 ```
 
-Other Linux is not supported yet — the build pipeline assumes Nix for the
-toolchain.
+**Other platforms.** `.github/workflows/` builds portable artifacts with mach on
+GitHub Actions — a Linux x86_64 tarball and a macOS (`macos-26`) `.dmg`/`.app`.
+For a self-contained Linux executable that runs on any glibc distro with **no Nix
+on the target**, `nix bundle .#gjoa --impure` emits a single relocatable file.
+(CI needs the [Beagle](https://github.com/tompassarelli/beagle) compiler as a
+sibling checkout — the workflows clone it and install Racket before `import`.)
 
 ## Dev loop
 
@@ -69,8 +74,8 @@ chrome JS/CSS iterates in ~1s without one:
 ```sh
 nix develop .#mach          # shell with mach + toolchain
 cd engine && ./mach build   # one-time, ~30-60 min cold
-# edit src/gjoa/chrome/src/*.ts ...
-gjoa sync                   # bundle TS + deploy into the mach install (~1s)
+# edit src/gjoa/chrome/bjs/*.bjs (or chrome/css/*.css) ...
+gjoa sync                   # compile the .bjs chrome + deploy into the mach install (~1s)
 gjoa dev                    # restart the mach binary
 ```
 
@@ -90,9 +95,10 @@ bun run preflight         # pre-build gates (patches, chrome alignment, nix eval
 ```
 gjoa.json            project config (version, branding, URLs)
 flake.nix            Nix build (dev + release variants)
-tools/prep/          Firefox-source preparation pipeline (Bun-native)
+src/gjoa/            source overlays — chrome UI (.bjs/.css), prefs, branding, loader
+tools/prep/          Firefox-source preparation pipeline (Beagle, run on Bun)
 tools/test-driver/   Marionette integration harness
-src/gjoa/            our source overlays (chrome modules, prefs, branding)
+.github/workflows/   cross-platform CI (Linux x86_64 + macOS mach builds)
 configs/branding/    icons + brand assets
 docs/                deep-dive documentation
 BUILD-LEDGER.md      every build's outcome + postmortems

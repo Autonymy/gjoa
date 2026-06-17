@@ -9,8 +9,14 @@
 (define-mode strict)
 (declare-extern [pref] Any)
 
-;; Master toggle: enables/disables dark mode entirely.
-(pref "gjoa.darkmode.enabled" false)
+;; Master toggle: enables/disables dark mode entirely. ON by default — gjoa is a
+;; dark-first browser, so a white site (e.g. YouTube) out of the box is wrong.
+;; Paired with mode="auto" (below): forces prefers-color-scheme:dark so sites
+;; with native dark themes render them — high quality, nothing breaks. The
+;; engine-invert-the-rest hybrid (for sites with NO dark theme) lands once the
+;; engine inverter covers gradients/shadows (P3); until then "auto" is the safe
+;; default and "engine" is opt-in.
+(pref "gjoa.darkmode.enabled" true)
 
 ;; Mode selector:
 ;;   "auto"   — forces prefers-color-scheme: dark; sites with native dark

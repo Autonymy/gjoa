@@ -1,21 +1,13 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!--
-  Gjoa logo — sailboat emoji (⛵, U+26F5) rendered via system color-emoji
-  font. tools/icons/generate.ts runs rsvg-convert in the dev shell, which
-  picks up Noto Color Emoji from fontconfig. Firefox renders the SVG
-  directly in about: pages using its own emoji font fallback.
+  gjoa wordmark — the product name as plain text, for the about-wordmark /
+  firefox-wordmark slots (the new-tab page shows logo + wordmark side by side).
+  Previously these slots got a copy of the logo, so the new-tab page rendered
+  two sailboats. Plain system sans-serif so it renders consistently; brand blue
+  so it's always visible. Copied verbatim by tools/icons/generate.bjs.
 -->
-<svg
-  xmlns="http://www.w3.org/2000/svg"
-  width="100"
-  height="100"
-  viewBox="0 0 100 100"
->
-  <text
-    x="50"
-    y="85"
-    font-size="90"
-    text-anchor="middle"
-    font-family="'Noto Color Emoji', 'Apple Color Emoji', 'Segoe UI Emoji', sans-serif"
-  >⛵</text>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 150 54" width="150" height="54">
+  <text x="75" y="40" text-anchor="middle" font-size="44"
+        font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, system-ui, sans-serif"
+        font-weight="700" letter-spacing="1.5" fill="#4a90d9">gjoa</text>
 </svg>

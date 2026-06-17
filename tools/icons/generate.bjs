@@ -12,6 +12,7 @@
 (declare-extern [process Bun Promise Error Response String console] Any)
 
 (def SOURCE-SVG :- String (join REPO-ROOT "assets" "gjoa.svg"))
+(def SOURCE-WORDMARK :- String (join REPO-ROOT "assets" "gjoa-wordmark.svg"))
 (def CONTENT-DIR :- String (join BRANDING-SRC "content"))
 
 ;; Desktop integration sizes (default<N>.png in the install tree). Mozilla
@@ -50,6 +51,9 @@
   (if (not (existsSync SOURCE-SVG))
     (throw (Error. (str "source SVG not found at " SOURCE-SVG)))
     nil)
+  (if (not (existsSync SOURCE-WORDMARK))
+    (throw (Error. (str "wordmark SVG not found at " SOURCE-WORDMARK)))
+    nil)
   (js/await (ensureRsvg))
   (mkdirSync BRANDING-SRC {:recursive true})
   (mkdirSync CONTENT-DIR {:recursive true})
@@ -83,10 +87,11 @@
   ;; about-logo SVGs render directly in about: pages for theme-aware tinting.
   (js/await (copyFile SOURCE-SVG (join CONTENT-DIR "about-logo.svg")))
   (js/await (copyFile SOURCE-SVG (join CONTENT-DIR "about-logo-private.svg")))
-  ;; wordmark slots — for now ship the icon SVG; we can replace with a real
-  ;; text-wordmark when the brand identity is set.
-  (js/await (copyFile SOURCE-SVG (join CONTENT-DIR "about-wordmark.svg")))
-  (js/await (copyFile SOURCE-SVG (join CONTENT-DIR "firefox-wordmark.svg")))
+  ;; wordmark slots — the product NAME as text (assets/gjoa-wordmark.svg). The
+  ;; new-tab page renders the logo and the wordmark side by side; copying the
+  ;; logo here is what showed two sailboats.
+  (js/await (copyFile SOURCE-WORDMARK (join CONTENT-DIR "about-wordmark.svg")))
+  (js/await (copyFile SOURCE-WORDMARK (join CONTENT-DIR "firefox-wordmark.svg")))
   (.ok log "wrote 4 SVGs")
 
   (.ok log "done — run `bun run import` to push these into engine/"))

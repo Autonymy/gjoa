@@ -1,21 +1,24 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!--
-  Gjoa logo — sailboat emoji (⛵, U+26F5) rendered via system color-emoji
-  font. tools/icons/generate.ts runs rsvg-convert in the dev shell, which
-  picks up Noto Color Emoji from fontconfig. Firefox renders the SVG
-  directly in about: pages using its own emoji font fallback.
+  gjoa logo — canonical source. A sloop under sail (the Gjøa, Amundsen's ship).
+  Pure vector, NO emoji-font dependency: rasterizes cleanly to every app-icon
+  PNG and renders identically in about: pages, and never clips (the old ⛵ emoji
+  was font-size 90 in a 100×100 box, so it overflowed and got cut off
+  everywhere). Brand blue reads on both dark and light surfaces.
+
+  Edit this file, then `bun run icons && bun run import`. The generator
+  (tools/icons/generate.bjs) rasterizes this to the icon PNGs and copies it to
+  the about-logo slots; the wordmark slots come from assets/gjoa-wordmark.svg.
 -->
-<svg
-  xmlns="http://www.w3.org/2000/svg"
-  width="100"
-  height="100"
-  viewBox="0 0 100 100"
->
-  <text
-    x="50"
-    y="85"
-    font-size="90"
-    text-anchor="middle"
-    font-family="'Noto Color Emoji', 'Apple Color Emoji', 'Segoe UI Emoji', sans-serif"
-  >⛵</text>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 120" width="120" height="120">
+  <g fill="#4a90d9">
+    <!-- mast -->
+    <rect x="58.5" y="20" width="3" height="66" rx="1.5"/>
+    <!-- mainsail (aft) -->
+    <path d="M64 24 C 84 44, 88 66, 84 82 L 64 82 Z"/>
+    <!-- jib (fore) -->
+    <path d="M55 32 L 55 82 L 33 82 Z"/>
+    <!-- hull -->
+    <path d="M22 86 L 98 86 C 92 102, 78 107, 60 107 C 42 107, 28 102, 22 86 Z"/>
+  </g>
 </svg>

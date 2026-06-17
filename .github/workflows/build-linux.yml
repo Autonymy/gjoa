@@ -93,11 +93,10 @@ jobs:
           ac_add_options --disable-tests
           ac_add_options --enable-optimize
           ac_add_options --enable-release
-          # lld links libxul far faster and with less peak RAM than bfd/gold.
-          ac_add_options --enable-linker=lld
           # Debug symbols dominate link-time RAM, objdir size, and final binary
           # size. A distribution build doesn't need them — dropping them is what
-          # keeps the link inside the runner's memory + disk envelope.
+          # keeps the link inside the runner's memory + disk envelope. (lld is the
+          # toolchain's default linker on clang/Linux, so it's used without a flag.)
           ac_add_options --disable-debug-symbols
           MOZCONFIG
           sed -i 's/^          //' engine/mozconfig

@@ -18,33 +18,52 @@
         is-vertical (fn [] :- Bool
           (pref-bool "sidebar.verticalTabs" true))
 
-        collapse-inactive-trees-keeping-active (fn []
-          (let [active-tab (and gBrowser (.-selectedTab gBrowser))
-                active-row (and active-tab (.get row-of active-tab))
+        ;; Keep only the active tree expanded in horizontal mode. This is a
+        ;; LAYOUT concern, so it writes the transient `layoutCollapsed` flag —
+        ;; NOT the persisted `collapsed`. Consequences:
+        ;;   - a horizontal<->vertical round-trip never mutates the user's saved
+        ;;     tree state (it's cleared when returning to vertical);
+        ;;   - it is scoped to the ACTIVE SPACE, so other spaces are untouched;
+        ;;   - if the active tree can't be resolved, nothing is collapsed — we
+        ;;     never mass-collapse on a missed selected-tab lookup.
+        apply-layout-tree-collapse (fn []
+          (let [vertical (is-vertical)
+                space-filter (.-isTabInActiveSpace deps)
                 all (all-rows)
-                found :- Any {:root nil}]
-            (when active-row
-              (loop [i (.indexOf all active-row)]
-                (when (>= i 0)
-                  (if (= (level-of-row (aget all i)) 0)
-                    (set! (.-root found) (aget all i))
-                    (recur (- i 1))))))
-            (let [mutated :- Any {:v false}]
+                mutated :- Any {:v false}
+                set-lc! (fn [row val :- Bool]
+                  (let [d (data-of! row)
+                        cur (if (and d (.-layoutCollapsed d)) true false)]
+                    (when (and d (not= cur val))
+                      (set! (.-layoutCollapsed d) val)
+                      (.syncAnyRow rows row)
+                      (set! (.-v mutated) true))))]
+            (if vertical
+              ;; Vertical never layout-collapses: clear the transient flag so the
+              ;; user's real (persisted) collapse state is what renders.
               (.forEach all (fn [row]
                 (when (= (level-of-row row) 0)
-                  (let [d (data-of! row)
-                        is-active-tree (= row (.-root found))]
-                    (if is-active-tree
-                      (when (and d (.-collapsed d))
-                        (set! (.-collapsed d) false)
-                        (.syncAnyRow rows row)
-                        (set! (.-v mutated) true))
-                      (when (and d (not (.-collapsed d)))
-                        (set! (.-collapsed d) true)
-                        (.syncAnyRow rows row)
-                        (set! (.-v mutated) true)))))))
-              (when (.-v mutated)
-                (.updateVisibility rows)))))
+                  (set-lc! row false))))
+              ;; Horizontal: collapse every active-space tree except the active one.
+              (let [active-tab (and gBrowser (.-selectedTab gBrowser))
+                    active-row (and active-tab
+                                    (or (.get row-of active-tab)
+                                        (.find all #(= (.-_tab %) active-tab))))
+                    found :- Any {:root nil}]
+                (when active-row
+                  (loop [i (.indexOf all active-row)]
+                    (when (>= i 0)
+                      (if (= (level-of-row (aget all i)) 0)
+                        (set! (.-root found) (aget all i))
+                        (recur (- i 1))))))
+                (when (.-root found)
+                  (.forEach all (fn [row]
+                    (when (and (= (level-of-row row) 0)
+                               (let [t (.-_tab row)]
+                                 (or (not t) (not space-filter) (space-filter t))))
+                      (set-lc! row (not= row (.-root found)))))))))
+            (when (.-v mutated)
+              (.updateVisibility rows))))
 
         setup-horizontal-align-spacer (fn []
           (let [target (by-id "TabsToolbar-customization-target")]
@@ -165,7 +184,13 @@
                         :initialHorizontal initial-horizontal
                         :willTrigger (or mode-changed initial-horizontal)})
                   (when (or mode-changed initial-horizontal)
-                    (collapse-inactive-trees-keeping-active)))
+                    (apply-layout-tree-collapse)))
+
+                ;; A visibility pass can hide the selected row if the selection
+                ;; drifted out of the active space; re-assert the invariant so a
+                ;; mode toggle never leaves the selected tab hidden.
+                (when (.-reconcileSelection deps)
+                  (.reconcileSelection deps))
                 (set! (.-lastVertical priv) vertical)))))]
 
     {:positionPanel position-panel

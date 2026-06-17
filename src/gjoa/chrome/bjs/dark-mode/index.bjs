@@ -19,6 +19,8 @@
 (def PREF-ENABLED :- String "gjoa.darkmode.enabled")
 (def PREF-MODE :- String "gjoa.darkmode.mode")
 (def PREF-CONTENT-OVERRIDE :- String "layout.css.prefers-color-scheme.content-override")
+;; gjoa engine-level dark mode flag (read by nsPresContext::UpdateColorInversion).
+(def PREF-INVERT :- String "gjoa.darkmode.invert.enabled")
 
 (def FILTER-CSS-ID :- String "gjoa-darkmode-filter-style")
 (def FILTER-CSS :- String
@@ -29,9 +31,13 @@
 
 (def state :- Any {:filter-el nil :unsub nil})
 
-;; Force (or release) dark color-scheme on web content. 0 = dark, 2 = no override.
-(defn force-content-scheme [on :- Boolean] :- Any
-  (set-pref-int! PREF-CONTENT-OVERRIDE (if on 0 2)))
+;; content-override: 0 = dark, 1 = light, 2 = no override.
+(defn set-content-override! [v :- Any] :- Any
+  (set-pref-int! PREF-CONTENT-OVERRIDE v))
+
+;; Toggle the engine-level luminance-inversion flag (read by nsPresContext).
+(defn set-invert! [on :- Boolean] :- Any
+  (set-pref-bool! PREF-INVERT on))
 
 (defn apply-filter! [] :- Any
   (when (not (.-filter-el state))
@@ -60,13 +66,20 @@
 (defn apply! [] :- Any
   (let [en (enabled?)
         m (mode-)]
-    (if (or (not en) (= m "off"))
-      (do (set-chrome-scheme! false)
-          (force-content-scheme false)
-          (remove-filter!))
-      (do (set-chrome-scheme! true)
-          (force-content-scheme true)
-          (if (= m "filter") (apply-filter!) (remove-filter!))))))
+    (cond
+      (or (not en) (= m "off"))
+        (do (set-chrome-scheme! false) (set-content-override! 2) (set-invert! false) (remove-filter!))
+      ;; "engine": force LIGHT so sites render their light theme, then the engine
+      ;; inverts every absolute color to dark at style-resolution time — cached,
+      ;; raster-safe, no per-frame compositor filter.
+      (= m "engine")
+        (do (set-chrome-scheme! true) (set-content-override! 1) (set-invert! true) (remove-filter!))
+      ;; "filter": legacy compositor invert (Lane-1 fallback, superseded by engine).
+      (= m "filter")
+        (do (set-chrome-scheme! true) (set-content-override! 0) (set-invert! false) (apply-filter!))
+      ;; "auto": native dark via prefers-color-scheme: dark.
+      :else
+        (do (set-chrome-scheme! true) (set-content-override! 0) (set-invert! false) (remove-filter!)))))
 
 ;; Public toggle API (for a future toolbar button), exposed on window.
 (defn toggle [] :- Boolean
@@ -76,7 +89,7 @@
 
 (defn cycle-mode [] :- String
   (let [cur (mode-)
-        nxt (cond (= cur "auto") "filter" (= cur "filter") "off" :else "auto")]
+        nxt (cond (= cur "auto") "engine" (= cur "engine") "off" :else "auto")]
     (set-pref-str! PREF-MODE nxt)
     nxt))
 

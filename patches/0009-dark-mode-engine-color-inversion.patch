@@ -1,0 +1,195 @@
+# gjoa-patch:
+#   baseline-firefox: 152.0
+#   touches:
+#     - servo/components/style/values/specified/color.rs
+#     - servo/components/style/device/gecko.rs
+#     - layout/base/nsPresContext.h
+#     - layout/base/nsPresContext.cpp
+#
+Engine-level dark mode: luminance-invert absolute colors at style-resolution
+time (the performant successor to the compositor filter:invert).
+
+- specified/color.rs: invert_color_luminance() ports gfx RelativeLuminanceUtils
+  ::Adjust (WCAG, hue/sat/alpha-preserving) with target = 1 - luminance; hooked
+  in Color::to_computed_color's Absolute arm, gated on device.color_inversion().
+  Cached in ComputedValues -> zero per-frame cost; raster media untouched.
+- device/gecko.rs: color_inversion() accessor (mirrors forced_colors()).
+- nsPresContext.{h,cpp}: per-document mColorInversion flag + UpdateColorInversion
+  (content-only; chrome excluded), called at construction and on change of the
+  gjoa.darkmode.invert.enabled pref (live toggle via RecascadeSubtree).
+
+The "engine" dark-mode mode (src/gjoa chrome) forces prefers-color-scheme:light
+then flips this flag, so sites render light and the engine inverts to dark.
+
+diff --git a/layout/base/nsPresContext.cpp b/layout/base/nsPresContext.cpp
+index b2394c6..a7e963f 100644
+--- a/layout/base/nsPresContext.cpp
++++ b/layout/base/nsPresContext.cpp
+@@ -327,6 +327,7 @@ nsPresContext::nsPresContext(dom::Document* aDocument, nsPresContextType aType)
+ 
+   UpdateFontVisibility();
+   UpdateForcedColors(/* aNotify = */ false);
++  UpdateColorInversion(/* aNotify = */ false);
+ }
+ 
+ static const char* gExactCallbackPrefs[] = {
+@@ -340,6 +341,7 @@ static const char* gExactCallbackPrefs[] = {
+     "layout.css.text-autospace.enabled",
+     "layout.css.text-transform.uppercase-eszett.enabled",
+     "privacy.trackingprotection.enabled",
++    "gjoa.darkmode.invert.enabled",
+     nullptr,
+ };
+ 
+@@ -532,6 +534,11 @@ void nsPresContext::PreferenceChanged(const char* aPrefName) {
+   }
+ 
+   nsDependentCString prefName(aPrefName);
++  if (prefName.EqualsLiteral("gjoa.darkmode.invert.enabled")) {
++    // gjoa engine-level dark mode: recompute the flag and restyle this doc.
++    UpdateColorInversion();
++    return;
++  }
+   if (prefName.EqualsLiteral("layout.css.dpi") ||
+       prefName.EqualsLiteral("layout.css.devPixelsPerPx")) {
+     int32_t oldAppUnitsPerDevPixel = mDeviceContext->AppUnitsPerDevPixel();
+@@ -775,6 +782,26 @@ void nsPresContext::UpdateForcedColors(bool aNotify) {
+   }
+ }
+ 
++// gjoa engine-level dark mode: derive the per-document color-inversion flag.
++// Content-only (chrome keeps its own theme); skipped for image documents.
++void nsPresContext::UpdateColorInversion(bool aNotify) {
++  bool old = mColorInversion;
++  mColorInversion = [&] {
++    if (Document()->IsBeingUsedAsImage()) {
++      return false;
++    }
++    if (PrefSheetPrefs().mIsChrome) {
++      return false;
++    }
++    return Preferences::GetBool("gjoa.darkmode.invert.enabled", false);
++  }();
++  if (aNotify && mColorInversion != old) {
++    MediaFeatureValuesChanged(
++        MediaFeatureChange::ForPreferredColorSchemeOrForcedColorsChange(),
++        MediaFeatureChangePropagation::JustThisDocument);
++  }
++}
++
+ bool nsPresContext::ForcingColors() const {
+   return mForcedColors == StyleForcedColors::Active;
+ }
+diff --git a/layout/base/nsPresContext.h b/layout/base/nsPresContext.h
+index 13aa714..2794d77 100644
+--- a/layout/base/nsPresContext.h
++++ b/layout/base/nsPresContext.h
+@@ -362,6 +362,10 @@ class nsPresContext : public nsISupports,
+   }
+ 
+   mozilla::StyleForcedColors ForcedColors() const { return mForcedColors; }
++
++  // gjoa engine-level dark mode: whether content absolute colors are
++  // luminance-inverted for this document (content-only; chrome excluded).
++  bool ColorInversion() const { return mColorInversion; }
+   bool ForcingColors() const;
+ 
+   mozilla::ColorScheme DefaultBackgroundColorScheme() const;
+@@ -565,6 +569,7 @@ class nsPresContext : public nsISupports,
+   void SetInRDMPane(bool aInRDMPane);
+   void UpdateInnerSizeSpoofedForRFP();
+   void UpdateForcedColors(bool aNotify = true);
++  void UpdateColorInversion(bool aNotify = true);
+ 
+  public:
+   float GetFullZoom() { return mFullZoom; }
+@@ -1440,6 +1445,8 @@ class nsPresContext : public nsISupports,
+   FontVisibility mFontVisibility = FontVisibility::Unknown;
+   mozilla::dom::PrefersColorSchemeOverride mOverriddenOrEmbedderColorScheme;
+   mozilla::StyleForcedColors mForcedColors;
++  // gjoa engine-level dark mode flag (content-only). See UpdateColorInversion.
++  bool mColorInversion = false;
+ 
+  protected:
+   virtual ~nsPresContext();
+diff --git a/servo/components/style/device/gecko.rs b/servo/components/style/device/gecko.rs
+index 7ed8c2c..54ffa6f 100644
+--- a/servo/components/style/device/gecko.rs
++++ b/servo/components/style/device/gecko.rs
+@@ -389,6 +389,14 @@ impl Device {
+             .map_or(ForcedColors::None, |pc| pc.mForcedColors)
+     }
+ 
++    /// gjoa engine-level dark mode: whether absolute colors should be
++    /// luminance-inverted for this document. Per-document, content-only (chrome
++    /// is excluded in nsPresContext::UpdateColorInversion).
++    #[inline]
++    pub fn color_inversion(&self) -> bool {
++        self.pres_context().map_or(false, |pc| pc.mColorInversion)
++    }
++
+     /// Computes a system color and returns it as an nscolor.
+     pub(crate) fn system_nscolor(
+         &self,
+diff --git a/servo/components/style/values/specified/color.rs b/servo/components/style/values/specified/color.rs
+index 9c55023..a335fa7 100644
+--- a/servo/components/style/values/specified/color.rs
++++ b/servo/components/style/values/specified/color.rs
+@@ -860,6 +860,41 @@ impl Color {
+     }
+ }
+ 
++/// gjoa engine-level dark mode: invert a color's WCAG relative luminance
++/// (Y -> 1 - Y) while preserving hue, saturation, and alpha. Mirrors
++/// gfx/src/RelativeLuminanceUtils.h::Adjust, operating on the legacy nscolor so
++/// the result is byte-identical to the C++ primitive.
++fn invert_color_luminance(color: &AbsoluteColor) -> AbsoluteColor {
++    let c = color.to_nscolor();
++    let r = (c & 0xff) as u8;
++    let g = ((c >> 8) & 0xff) as u8;
++    let b = ((c >> 16) & 0xff) as u8;
++    let a = (c >> 24) & 0xff;
++    let compute = |u: u8| -> f32 {
++        let f = u as f32 / 255.0;
++        if f <= 0.03928 {
++            f / 12.92
++        } else {
++            ((f + 0.055) / 1.055).powf(2.4)
++        }
++    };
++    let decompute = |x: f32| -> u32 {
++        let s = if x <= 0.03928 / 12.92 {
++            x * 12.92
++        } else {
++            1.055 * x.powf(1.0 / 2.4) - 0.055
++        };
++        (s * 255.0).round().max(0.0).min(255.0) as u32
++    };
++    let (lr, lg, lb) = (compute(r), compute(g), compute(b));
++    let lum = 0.2126 * lr + 0.7152 * lg + 0.0722 * lb;
++    let target = 1.0 - lum;
++    let factor = (target + 0.05) / (lum + 0.05);
++    let adj = |l: f32| -> u32 { decompute(((l + 0.05) * factor - 0.05).max(0.0)) };
++    let nc = (a << 24) | (adj(lb) << 16) | (adj(lg) << 8) | adj(lr);
++    AbsoluteColor::from_nscolor(nc)
++}
++
+ impl Color {
+     /// Converts this Color into a ComputedColor.
+     ///
+@@ -890,6 +925,15 @@ impl Color {
+             Color::Absolute(ref absolute) => {
+                 let mut color = absolute.color;
+                 adjust_absolute_color!(color);
++                // gjoa engine-level dark mode: invert absolute colors at
++                // computed time (cached in ComputedValues, zero per-frame cost).
++                // currentColor/system stay symbolic and resolve against these
++                // already-inverted values.
++                if let Some(ctx) = context {
++                    if ctx.device().color_inversion() {
++                        color = invert_color_luminance(&color);
++                    }
++                }
+                 ComputedColor::Absolute(color)
+             },
+             Color::ColorFunction(ref color_function) => {

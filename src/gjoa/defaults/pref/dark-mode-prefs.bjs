@@ -15,8 +15,17 @@
 ;; Mode selector:
 ;;   "auto"   — forces prefers-color-scheme: dark; sites with native dark
 ;;              support automatically use it. No visual filter.
-;;   "filter" — applies SVG inversion filter at the browser compositor level
-;;              for sites without native dark mode. Counter-inverts images/video.
+;;   "engine" — forces prefers-color-scheme: light, then the ENGINE inverts every
+;;              absolute color to dark at style-resolution time (cascade hook in
+;;              servo, cached in ComputedValues, raster media untouched). The
+;;              performant successor to "filter".
+;;   "filter" — legacy compositor-level SVG invert for sites without native dark.
+;;              Counter-inverts images/video. Superseded by "engine".
 ;;   "off"    — dark mode disabled (same as enabled=false; exists so the mode
 ;;              pref can be cycled without touching the enabled toggle).
 (pref "gjoa.darkmode.mode" "auto")
+
+;; Engine-level luminance-inversion flag. Set by the dark-mode chrome module for
+;; "engine" mode; read by nsPresContext::UpdateColorInversion to drive the Servo
+;; cascade hook. Default off; the chrome module owns it.
+(pref "gjoa.darkmode.invert.enabled" false)

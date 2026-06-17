@@ -1,0 +1,93 @@
+#lang beagle/js
+;; Dark-mode P0 validation: the engine-level luminance inversion. With
+;; gjoa.darkmode.invert.enabled set BEFORE navigation, a fresh content
+;; presContext reads the flag and the Servo cascade inverts every absolute
+;; color at computed time. We inject a white-bg / black-text box and assert its
+;; COMPUTED colors come back inverted (white -> black, black -> white) — proving
+;; the hook fires, caches, and reaches getComputedStyle. No content setTimeout
+;; (frozen in headless); waits are runner-side via await-true.
+;;
+;; Precondition: tools/test-driver/cosmetic-fixture-server.mjs serving :8975
+;; (any http content doc works; we just need a real content process).
+;;   GJOA_BIN=$PWD/engine/obj-x86_64-pc-linux-gnu/dist/bin/gjoa \
+;;     bun .beagle-tools/gjoa/tools/test-driver/runner.js --grep "darkmode P0"
+(ns gjoa.tests.integration.darkmode-invert
+  (:require [gjoa.tests.dsl :refer [deftest chrome-eval await-true wait-for expect expect-eq]]))
+(define-mode strict)
+(declare-extern [JSON console] Any)
+
+(def TOP :- String "http://127.0.0.1:8975/")
+
+(def NAV-JS :- String
+  (str "\n"
+       "  const [url, resolve] = arguments;\n"
+       "  let done = false; const finish = v => { if (!done) { done = true; resolve(v); } };\n"
+       "  const win = Services.wm.getMostRecentWindow('navigator:browser');\n"
+       "  const b = win.gBrowser.selectedBrowser;\n"
+       "  const l = { QueryInterface: ChromeUtils.generateQI(['nsIWebProgressListener','nsISupportsWeakReference']),\n"
+       "    onStateChange(wp, req, flags) { const S = Ci.nsIWebProgressListener;\n"
+       "      if ((flags & S.STATE_STOP) && (flags & S.STATE_IS_WINDOW)) { try { b.removeProgressListener(l); } catch {} finish(true); } } };\n"
+       "  b.addProgressListener(l, Ci.nsIWebProgress.NOTIFY_STATE_ALL);\n"
+       "  b.loadURI(Services.io.newURI(url), { triggeringPrincipal: Services.scriptSecurityManager.getSystemPrincipal() });\n"
+       "  setTimeout(() => finish(false), 15000);\n"))
+
+;; Inject a box with explicit white bg + black text, return its computed colors.
+(def PROBE :- String
+  (str "\n"
+       "  const d = document.createElement('div');\n"
+       "  d.id = 'dm-box';\n"
+       "  d.style.backgroundColor = 'rgb(255, 255, 255)';\n"
+       "  d.style.color = 'rgb(0, 0, 0)';\n"
+       "  d.textContent = 'x';\n"
+       "  document.body.appendChild(d);\n"
+       "  const cs = getComputedStyle(d);\n"
+       "  return JSON.stringify({ bg: cs.backgroundColor, fg: cs.color });\n"))
+
+(js/export (def tests :- Any
+  [(deftest "darkmode P0: engine inverts absolute colors at computed time" [mn ctx]
+     (js/await (.setContext mn "chrome"))
+     ;; Flag must be set BEFORE navigation — P0 reads it at presContext construction.
+     (chrome-eval "Services.prefs.setBoolPref('gjoa.darkmode.invert.enabled', true); return 'on';")
+     (let [navOk (js/await (.executeAsyncScript mn NAV-JS [TOP]))]
+       (expect navOk (str "fixture " TOP " did not load — is cosmetic-fixture-server.mjs on :8975?"))
+       (js/await (.setContext mn "content"))
+       (let [r (chrome-eval PROBE)
+             d (.parse JSON r)]
+         (.log console (str "\n[DM-P0] injected white-bg/black-text box -> " r))
+         (expect-eq (.-bg d) "rgb(0, 0, 0)"
+                    "white background was NOT inverted to black — the cascade color-inversion hook did not fire")
+         (expect-eq (.-fg d) "rgb(255, 255, 255)"
+                    "black text was NOT inverted to white — inversion hook did not fire"))))
+   ;; Control: with the flag OFF, the same box stays un-inverted.
+   (deftest "darkmode P0: flag off leaves colors untouched" [mn ctx]
+     (js/await (.setContext mn "chrome"))
+     (chrome-eval "Services.prefs.setBoolPref('gjoa.darkmode.invert.enabled', false); return 'off';")
+     (let [navOk (js/await (.executeAsyncScript mn NAV-JS [TOP]))]
+       (expect navOk (str "fixture " TOP " did not load"))
+       (js/await (.setContext mn "content"))
+       (let [r (chrome-eval PROBE)
+             d (.parse JSON r)]
+         (.log console (str "[DM-P0] flag off -> " r))
+         (expect-eq (.-bg d) "rgb(255, 255, 255)"
+                    "flag off but background changed — inversion leaked when disabled"))))
+   ;; P1: flipping the pref on an ALREADY-loaded tab must live-restyle it
+   ;; (nsPresContext::UpdateColorInversion via the pref-change callback).
+   (deftest "darkmode P1: live toggle restyles an already-loaded tab" [mn ctx]
+     (js/await (.setContext mn "chrome"))
+     (chrome-eval "Services.prefs.setBoolPref('gjoa.darkmode.invert.enabled', false); return 'off';")
+     (let [navOk (js/await (.executeAsyncScript mn NAV-JS [TOP]))]
+       (expect navOk (str "fixture " TOP " did not load"))
+       (js/await (.setContext mn "content"))
+       ;; inject the box while invert is OFF — it renders un-inverted
+       (let [before (.parse JSON (chrome-eval PROBE))]
+         (.log console (str "\n[DM-P1] before toggle -> bg=" (.-bg before)))
+         (expect-eq (.-bg before) "rgb(255, 255, 255)" "box should start un-inverted"))
+       ;; flip the flag ON without reloading — engine must restyle the live doc
+       (js/await (.setContext mn "chrome"))
+       (chrome-eval "Services.prefs.setBoolPref('gjoa.darkmode.invert.enabled', true); return 'on';")
+       (js/await (.setContext mn "content"))
+       ;; poll (runner-side) until the existing box becomes inverted
+       (await-true "const d=document.getElementById('dm-box'); return !!(d && getComputedStyle(d).backgroundColor === 'rgb(0, 0, 0)');" 8000)
+       (.log console "[DM-P1] live toggle restyled the existing box to inverted")))]))
+
+(js/export-default tests)

@@ -317,3 +317,37 @@ adversarial agent review of the native layer: 0 real bugs.
    binary (startup-ordering). The shipped paths (M0 running-load, M1 RS restart-load)
    both pass on mach. M2 code is additive and never touches
    `Init()`/`LoadFilterLists()`/the network path.
+
+## 2026-06-17 — Engine-level dark mode (P0 + P1) — SUCCESS
+
+**Type:** two `./mach build` (mach incremental, ~27 min each). **Trigger:**
+replace the crude compositor `filter:invert` with a **style-resolution-stage
+luminance inversion** — the "cranked to 9000" dark mode.
+
+**Design first (workflow `darkmode-engine-design`):** 3 research agents +
+synthesis + adversarial critique. The critique **caught a fatal flaw before any
+build** — the obvious hook (the forced-colors *specified*-stage tweak) has no
+concrete color to rescale; the correct hook is the **computed-stage** conversion
+(`Color::to_computed_color`'s Absolute arm). Verified against the tree.
+
+**P0 (one build):** the Servo cascade hook + a Rust port of
+`RelativeLuminanceUtils::Adjust` (target = 1 - Y, hue/sat/alpha-preserving),
+gated on a per-document `nsPresContext::mColorInversion` flag (mirrors
+forced-colors). Pre-build adversarial compile-review: green. **Validated on the
+binary:** white→black, black→white; flag-off untouched; raster media untouched
+for free (it's not a style color). Zero per-frame cost (cached in ComputedValues).
+
+**P1 (one build):** pref-change restyle (`gjoa.darkmode.invert.enabled` →
+`UpdateColorInversion` → RecascadeSubtree) so toggling **live-restyles open tabs
+without reload**; the chrome "engine" mode (force prefers-color-scheme:light then
+flip the flag, so native-dark sites aren't double-darkened). **Validated:** live
+toggle inverts an already-loaded box.
+
+**Persistence:** `patches/0009-dark-mode-engine-color-inversion.patch` (+86, the
+4 modified upstream files); chrome bits are src/gjoa overlays. `git apply --check`
+clean on pristine FF152; preflight gate A green. **Lesson re-applied:** engine
+edits are gitignored — persisted as a patch immediately so CI gets them.
+
+**Deferred (Phase 2/3):** shadows/gradients/SVG fill-stroke (`ColorFunction` arm
++ the compound longhands), an explicit RuleCache invert-key dependency, optional
+LAB-fidelity algorithm, then retire the `filter` fallback + Dark Reader.

@@ -1,0 +1,57 @@
+#lang beagle/js
+;; Validates the GENERAL (list-driven) scriptlet path end-to-end through the
+;; C++/IDL/JS pipeline: the engine, given the uBO scriptlet resource library
+;; (setScriptletResources) and a `+js()` cosmetic rule, expands it into a
+;; non-empty injected_script. The Rust core was proven by the resource-builder;
+;; this proves the gjoa wiring (nsIContentClassifierService.setScriptletResources
+;; -> Engine::use_resources -> url_cosmetic_resources.injected_script).
+(ns gjoa.tests.integration.scriptlet-engine
+  (:require [gjoa.tests.dsl :refer [deftest expect]]))
+(define-mode strict)
+(declare-extern [JSON Error] Any)
+
+(def DRIVE :- String
+  (str "\n"
+    "  const [resolve] = arguments;\n"
+    "  (async () => {\n"
+    "    try {\n"
+    "      const svc = Cc['@mozilla.org/content-classifier-service;1']\n"
+    "        .getService(Ci.nsIContentClassifierService);\n"
+    "      // Self-isolate: clear any test-list mode a prior test left, and pin\n"
+    "      // list_names so our easylist override actually builds an engine.\n"
+    "      try { Services.prefs.setBoolPref('privacy.trackingprotection.content.testing', false); } catch(e){}\n"
+    "      try { Services.prefs.clearUserPref('privacy.trackingprotection.content.protection.test_list_urls'); } catch(e){}\n"
+    "      try { Services.prefs.setCharPref('privacy.trackingprotection.content.protection.list_names', 'easylist,gjoa-allow'); } catch(e){}\n"
+    "      const resJson = await (await fetch('resource://gre/modules/scriptlet-resources.json')).text();\n"
+    "      // The service initializes async at startup; retry until it accepts calls.\n"
+    "      let ready = false;\n"
+    "      for (let i = 0; i < 60; i++) {\n"
+    "        try { svc.setScriptletResources(resJson); ready = true; break; }\n"
+    "        catch (e) { await new Promise(r => setTimeout(r, 100)); }\n"
+    "      }\n"
+    "      // Put a single youtube +js rule into a list that's in list_names.\n"
+    "      const rule = 'youtube.com##+js(json-prune, playerResponse.adPlacements adPlacements adSlots)\\n';\n"
+    "      svc.setFilterListData('easylist', new TextEncoder().encode(rule));\n"
+    "      svc.applyFilterLists();\n"
+    "      const hide={}, proc={}, exc={}, injected={}, gh={};\n"
+    "      svc.getUrlCosmeticResources('https://www.youtube.com/watch?v=x', hide, proc, exc, injected, gh);\n"
+    "      const inj = injected.value || '';\n"
+    "      resolve({ ready, len: inj.length,\n"
+    "                hasPrune: inj.indexOf('Prune') >= 0 || inj.indexOf('adPlacements') >= 0 });\n"
+    "    } catch (e) { resolve({ err: String(e) }); }\n"
+    "  })();\n"))
+
+(js/export (def tests :- Any
+  [(deftest "engine scriptlets: a +js() rule + the resource library yields injected_script" [mn]
+     (js/await (.setContext mn "chrome"))
+     (let [r (js/await (.executeAsyncScript mn DRIVE))]
+       (when (.-err r)
+         (throw (Error. (str "engine scriptlet path errored: " (.-err r)))))
+       (expect (.-ready r) "content-classifier service must initialize")
+       (expect (> (.-len r) 0)
+               (str "engine must produce a non-empty injected_script for the youtube +js rule (len="
+                    (.-len r) ")"))
+       (expect (.-hasPrune r)
+               "injected_script must contain the json-prune scriptlet body")))]))
+
+(js/export-default tests)

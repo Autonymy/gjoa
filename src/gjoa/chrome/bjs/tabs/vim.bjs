@@ -521,7 +521,7 @@
             false
             (cond
               (key= e "t") (dispatch-key e "t" (open-tabs-picker "space"))
-              (key= e "T") (dispatch-key e "T" (open-tabs-picker "current"))
+              (key= e "T") (dispatch-key e "T" (open-tabs-picker "all"))
               (key= e ":") (dispatch-key e "colon" (open-ex-command-picker))
               (key= e "x") (dispatch-key e "x"
                 (try (.removeTab gBrowser (.-selectedTab gBrowser)) (catch Any _e nil)))

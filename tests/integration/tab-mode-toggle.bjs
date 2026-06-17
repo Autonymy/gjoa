@@ -1,0 +1,222 @@
+#lang beagle/js
+;; Integration tests for the horizontal<->vertical tab-mode state machine.
+;;
+;; These exist because a mode toggle used to PERMANENTLY corrupt tree state:
+;; positionPanel's collapse-inactive-trees pass wrote `collapsed=true` into the
+;; PERSISTED tree record of every non-active tree (space-blind), and a save
+;; round-tripped it — so flipping modes silently collapsed your trees, across
+;; all spaces, forever. The fix routes layout collapse through a transient
+;; `layoutCollapsed` flag (never persisted, cleared in vertical) and scopes it
+;; to the active space.
+;;
+;; Invariants asserted across single, repeated, and interleaved toggles:
+;;   - the user's persisted `collapsed` is NEVER mutated by a mode flip
+;;   - other spaces' trees are never touched
+;;   - the selected tab stays selected and visible
+;;   - horizontal layout-collapse is transient, not written to the saved tree
+(ns gjoa.tests.integration.tab-mode-toggle
+  (:require [gjoa.tests.dsl :refer [deftest chrome-eval await-true expect expect-eq wait-for]]))
+(define-mode strict)
+(declare-extern [Date JSON] Any)
+
+;; --- helpers -----------------------------------------------------------------
+
+;; Reset to a single Main space in vertical mode. Closes prior test-marked tabs
+;; so per-test tree counts are clean.
+(defn reset! [mn :- Any] :- Any
+  (js/await (.executeScript mn
+    (str
+      "    try { Services.prefs.setBoolPref(\"sidebar.verticalTabs\", true); } catch {}\n"
+      "    if (window.Spaces) {\n"
+      "      const main = window.Spaces.list().find(s => s.name === \"Main\") || window.Spaces.list()[0];\n"
+      "      window.Spaces.setActive(main.id);\n"
+      "      for (const s of [...window.Spaces.list()]) {\n"
+      "        if (s.id !== main.id) window.Spaces.delete(s.id);\n"
+      "      }\n"
+      "    }\n"
+      "    const marked = [...gBrowser.tabs].filter(t => t.getAttribute && t.getAttribute(\"gjoa-test-marker\"));\n"
+      "    if (marked.length < gBrowser.tabs.length) {\n"
+      "      for (const t of marked) { try { gBrowser.removeTab(t); } catch {} }\n"
+      "    }\n"
+      "  ")))
+  (await-true "return !document.getElementById(\"gjoa-tab-panel\").hasAttribute(\"gjoa-horizontal\");" 3000))
+
+;; Build one expanded root tree `<stamp>-<key>` with two children, in the active
+;; space. Leaves `collapsed=false` on the root. Does NOT change the selection.
+(defn build-tree-js [stamp :- String key :- String] :- String
+  (str
+    "    const principal = Services.scriptSecurityManager.getSystemPrincipal();\n"
+    "    const T = window.gjoaTest.treeOf;\n"
+    "    const root = gBrowser.addTab(\"about:blank\", { triggeringPrincipal: principal });\n"
+    "    root.setAttribute(\"gjoa-test-marker\", \"" stamp "-" key "\");\n"
+    "    const c1 = gBrowser.addTab(\"about:blank\", { triggeringPrincipal: principal, ownerTab: root });\n"
+    "    c1.setAttribute(\"gjoa-test-marker\", \"" stamp "-" key "-c1\");\n"
+    "    const c2 = gBrowser.addTab(\"about:blank\", { triggeringPrincipal: principal, ownerTab: root });\n"
+    "    c2.setAttribute(\"gjoa-test-marker\", \"" stamp "-" key "-c2\");\n"
+    "    T.get(c1).parentId = T.get(root).id;\n"
+    "    T.get(c2).parentId = T.get(root).id;\n"
+    "    T.get(root).collapsed = false;\n"
+    "    window.gjoaTest.rows.scheduleTreeResync();\n"))
+
+;; Read {collapsed, layoutCollapsed, hasChildren} for a marked root tab.
+(defn read-root-js [stamp :- String key :- String] :- String
+  (str
+    "    const t = [...gBrowser.tabs].find(x => x.getAttribute(\"gjoa-test-marker\") === \"" stamp "-" key "\");\n"
+    "    if (!t) return null;\n"
+    "    const td = window.gjoaTest.treeOf.get(t);\n"
+    "    const row = [...document.querySelectorAll(\"#gjoa-tab-panel .gjoa-tab-row\")].find(r => r._tab === t);\n"
+    "    return { collapsed: !!td.collapsed, layoutCollapsed: !!td.layoutCollapsed,\n"
+    "             caret: row ? row.hasAttribute(\"gjoa-collapsed\") : null };\n"))
+
+(defn to-horizontal! [mn :- Any] :- Any
+  (chrome-eval "Services.prefs.setBoolPref(\"sidebar.verticalTabs\", false);")
+  (await-true "return document.getElementById(\"gjoa-tab-panel\").hasAttribute(\"gjoa-horizontal\");" 3000))
+
+(defn to-vertical! [mn :- Any] :- Any
+  (chrome-eval "Services.prefs.setBoolPref(\"sidebar.verticalTabs\", true);")
+  (await-true "return !document.getElementById(\"gjoa-tab-panel\").hasAttribute(\"gjoa-horizontal\");" 3000))
+
+;; --- tests -------------------------------------------------------------------
+
+(js/export (def tests :- Any
+  [(deftest "mode toggle — an expanded tree is still expanded after horizontal<->vertical" [mn]
+     (await-true "return !!window.gjoaTest && !!document.getElementById(\"gjoa-tab-panel\");" 3000)
+     (js/await (reset! mn))
+     (let [stamp (str "mt-expand-" (.now Date))]
+       (chrome-eval (build-tree-js stamp "A"))
+       (await-true
+         (str "return [...gBrowser.tabs].some(t => t.getAttribute(\"gjoa-test-marker\") === \"" stamp "-A-c2\");") 3000)
+       ;; Select a tab inside the tree so it is the active tree.
+       (chrome-eval
+         (str "gBrowser.selectedTab = [...gBrowser.tabs].find(t => t.getAttribute(\"gjoa-test-marker\") === \"" stamp "-A-c1\");"))
+       (js/await (to-horizontal! mn))
+       (js/await (to-vertical! mn))
+       (let [r (chrome-eval (read-root-js stamp "A"))]
+         (expect-eq (.-collapsed r) false "persisted collapsed must stay false after a round-trip")
+         (expect-eq (.-layoutCollapsed r) false "layoutCollapsed must be cleared in vertical")
+         (expect-eq (.-caret r) false "caret must show expanded"))))
+
+   (deftest "mode toggle — a user-collapsed tree stays collapsed (persisted state preserved)" [mn]
+     (await-true "return !!window.gjoaTest;" 3000)
+     (js/await (reset! mn))
+     (let [stamp (str "mt-collapsed-" (.now Date))]
+       (chrome-eval (build-tree-js stamp "A"))
+       (await-true
+         (str "return [...gBrowser.tabs].some(t => t.getAttribute(\"gjoa-test-marker\") === \"" stamp "-A-c2\");") 3000)
+       ;; User explicitly collapses the tree, then selects a tab OUTSIDE it.
+       (chrome-eval
+         (str
+           "    const root = [...gBrowser.tabs].find(t => t.getAttribute(\"gjoa-test-marker\") === \"" stamp "-A\");\n"
+           "    window.gjoaTest.treeOf.get(root).collapsed = true;\n"
+           "    window.gjoaTest.rows.scheduleTreeResync();\n"
+           "    window.gjoaTest.rows.updateVisibility();\n"))
+       (js/await (to-horizontal! mn))
+       (js/await (to-vertical! mn))
+       (let [r (chrome-eval (read-root-js stamp "A"))]
+         (expect-eq (.-collapsed r) true "user collapse must survive a mode round-trip"))))
+
+   (deftest "mode toggle — does not collapse trees in other spaces" [mn]
+     (await-true "return !!window.gjoaTest && !!window.Spaces;" 3000)
+     (js/await (reset! mn))
+     (let [stamp (str "mt-spaces-" (.now Date))]
+       ;; Tree in Main.
+       (chrome-eval (build-tree-js stamp "main"))
+       ;; Create Work, switch to it, build a tree there.
+       (chrome-eval
+         (str
+           "    const w = window.Spaces.create(\"Work\");\n"
+           "    window.__mtWork = w.id;\n"
+           "    window.Spaces.setActive(w.id);\n"))
+       (await-true "return window.Spaces.active().name === \"Work\";" 3000)
+       (chrome-eval (build-tree-js stamp "work"))
+       (await-true
+         (str "return [...gBrowser.tabs].some(t => t.getAttribute(\"gjoa-test-marker\") === \"" stamp "-work-c2\");") 3000)
+       ;; Back to Main, select a Main tab, toggle modes there.
+       (chrome-eval
+         (str
+           "    const main = window.Spaces.list().find(s => s.name === \"Main\");\n"
+           "    window.Spaces.setActive(main.id);\n"
+           "    gBrowser.selectedTab = [...gBrowser.tabs].find(t => t.getAttribute(\"gjoa-test-marker\") === \"" stamp "-main-c1\");\n"))
+       (await-true "return window.Spaces.active().name === \"Main\";" 3000)
+       (js/await (to-horizontal! mn))
+       (js/await (to-vertical! mn))
+       ;; The Work tree (other space) must be untouched.
+       (let [w (chrome-eval (read-root-js stamp "work"))]
+         (expect-eq (.-collapsed w) false "a tree in a non-active space must never be collapsed by a toggle"))))
+
+   (deftest "mode toggle — horizontal layout-collapse is transient, never written to the saved tree" [mn]
+     (await-true "return !!window.gjoaTest;" 3000)
+     (js/await (reset! mn))
+     (let [stamp (str "mt-transient-" (.now Date))]
+       ;; Two sibling root trees; select a tab in A so B is inactive.
+       (chrome-eval (build-tree-js stamp "A"))
+       (chrome-eval (build-tree-js stamp "B"))
+       (await-true
+         (str "return [...gBrowser.tabs].some(t => t.getAttribute(\"gjoa-test-marker\") === \"" stamp "-B-c2\");") 3000)
+       (chrome-eval
+         (str "gBrowser.selectedTab = [...gBrowser.tabs].find(t => t.getAttribute(\"gjoa-test-marker\") === \"" stamp "-A-c1\");"))
+       (js/await (to-horizontal! mn))
+       ;; In horizontal, inactive tree B is layout-collapsed (transient) but its
+       ;; PERSISTED collapsed must remain false.
+       (let [b (chrome-eval (read-root-js stamp "B"))]
+         (expect-eq (.-layoutCollapsed b) true "inactive tree should be layout-collapsed in horizontal")
+         (expect-eq (.-collapsed b) false "but the saved/persisted collapsed must stay false"))
+       ;; And the saver snapshot must not see the layout collapse.
+       (let [saved (chrome-eval
+                     (str
+                       "    const t = [...gBrowser.tabs].find(x => x.getAttribute(\"gjoa-test-marker\") === \"" stamp "-B\");\n"
+                       "    const id = window.gjoaTest.treeOf.get(t).id;\n"
+                       "    const snap = window.gjoaTest.snapshotTree().find(e => e.id === id);\n"
+                       "    return snap ? !!snap.collapsed : null;\n"))]
+         (expect-eq saved false "the persisted snapshot must record collapsed=false for a layout-collapsed tree"))
+       (js/await (to-vertical! mn))))
+
+   (deftest "mode toggle — selected tab stays selected and visible" [mn]
+     (await-true "return !!window.gjoaTest;" 3000)
+     (js/await (reset! mn))
+     (let [stamp (str "mt-select-" (.now Date))]
+       (chrome-eval (build-tree-js stamp "A"))
+       (await-true
+         (str "return [...gBrowser.tabs].some(t => t.getAttribute(\"gjoa-test-marker\") === \"" stamp "-A-c2\");") 3000)
+       (chrome-eval
+         (str
+           "    const sel = [...gBrowser.tabs].find(t => t.getAttribute(\"gjoa-test-marker\") === \"" stamp "-A-c1\");\n"
+           "    gBrowser.selectedTab = sel;\n"
+           "    window.__mtSelId = window.gjoaTest.treeOf.get(sel).id;\n"))
+       (js/await (to-horizontal! mn))
+       (js/await (to-vertical! mn))
+       (let [r (chrome-eval
+                 (str
+                   "    const sel = gBrowser.selectedTab;\n"
+                   "    const id = window.gjoaTest.treeOf.get(sel) ? window.gjoaTest.treeOf.get(sel).id : null;\n"
+                   "    const row = [...document.querySelectorAll(\"#gjoa-tab-panel .gjoa-tab-row\")].find(x => x._tab === sel);\n"
+                   "    return { sameId: id === window.__mtSelId, hidden: row ? row.hidden : true };\n"))]
+         (expect-eq (.-sameId r) true "the same tab must remain selected after a round-trip")
+         (expect-eq (.-hidden r) false "the selected tab's row must be visible"))))
+
+   (deftest "mode toggle — repeated toggling is idempotent (collapsed map unchanged)" [mn]
+     (await-true "return !!window.gjoaTest;" 3000)
+     (js/await (reset! mn))
+     (let [stamp (str "mt-idem-" (.now Date))]
+       (chrome-eval (build-tree-js stamp "A"))
+       (chrome-eval (build-tree-js stamp "B"))
+       (chrome-eval (build-tree-js stamp "C"))
+       (await-true
+         (str "return [...gBrowser.tabs].some(t => t.getAttribute(\"gjoa-test-marker\") === \"" stamp "-C-c2\");") 3000)
+       (chrome-eval
+         (str "gBrowser.selectedTab = [...gBrowser.tabs].find(t => t.getAttribute(\"gjoa-test-marker\") === \"" stamp "-A-c1\");"))
+       (let [snap-js
+             (str
+               "    return [...gBrowser.tabs]\n"
+               "      .filter(t => t.getAttribute && (t.getAttribute(\"gjoa-test-marker\")||\"\").startsWith(\"" stamp "\"))\n"
+               "      .map(t => [window.gjoaTest.treeOf.get(t).id, !!window.gjoaTest.treeOf.get(t).collapsed])\n"
+               "      .sort((a,b) => a[0]-b[0]);\n")
+             before (chrome-eval snap-js)]
+         (js/await (to-horizontal! mn)) (js/await (to-vertical! mn))
+         (js/await (to-horizontal! mn)) (js/await (to-vertical! mn))
+         (js/await (to-horizontal! mn)) (js/await (to-vertical! mn))
+         (let [after (chrome-eval snap-js)]
+           (expect-eq (.stringify JSON after) (.stringify JSON before)
+                      "persisted collapsed map must be identical after repeated toggles")))))]))
+
+(js/export-default tests)

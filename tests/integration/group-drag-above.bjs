@@ -1,0 +1,95 @@
+#lang beagle/js
+;; Regression: a tab positioned ABOVE a group, dropped INTO the group, must land
+;; BELOW the group (indented child) — not stay above it. The empty-group case is
+;; the trap: the group is not a Firefox tab, so moveTabTo leaves the dropped
+;; tab's index unchanged and fires no TabMove to reposition its row, which used
+;; to strand the child ABOVE its parent. drag.bjs now repositions the row
+;; explicitly for the tab-into-group case.
+(ns gjoa.tests.integration.group-drag-above
+  (:require [gjoa.tests.dsl :refer [deftest chrome-eval await-true wait-for expect]]))
+(define-mode strict)
+(declare-extern [JSON Promise Error setTimeout document] Any)
+
+(defn ensure-sidebar-expanded [mn :- Any] :- Any
+  (chrome-eval "
+    const sm = document.getElementById(\"sidebar-main\");
+    if (sm && !sm.hasAttribute(\"sidebar-launcher-expanded\")) {
+      sm.setAttribute(\"sidebar-launcher-expanded\", \"true\");
+    }
+    return true;")
+  (await-true "return !!document.querySelector(\"#gjoa-tab-panel\");")
+  nil)
+
+(def ROWS-JS :- String "
+  return [...document.querySelectorAll(\"#gjoa-tab-panel .gjoa-tab-row, #gjoa-tab-panel .gjoa-group-row\")]
+    .map(r => ({
+      kind: r.classList.contains(\"gjoa-group-row\") ? \"group\" : \"tab\",
+      level: Math.max(0, Math.round(((parseFloat(r.style.paddingInlineStart||\"0\")||0) - 8) / 14)),
+      label: r.querySelector(\".gjoa-tab-label, .gjoa-group-name\")?.textContent ?? \"\",
+    }));")
+
+(defn drag-script [src :- Int tgt :- Int] :- String
+  (str "
+    const rows = [...document.querySelectorAll(\"#gjoa-tab-panel .gjoa-tab-row, #gjoa-tab-panel .gjoa-group-row\")];
+    const source = rows[" src "]; const target = rows[" tgt "];
+    if (!source || !target) throw new Error(\"row missing src=" src " tgt=" tgt " len=\"+rows.length);
+    const tR = target.getBoundingClientRect();
+    const cY = tR.top + tR.height/2; const cX = tR.left + tR.width/2;
+    const dt = new DataTransfer();
+    const fire = (el,type,x,y) => el.dispatchEvent(new DragEvent(type,{bubbles:true,cancelable:true,view:window,clientX:x,clientY:y,dataTransfer:dt}));
+    const sR = source.getBoundingClientRect();
+    fire(source,\"dragstart\",sR.left+5,sR.top+5);
+    fire(target,\"dragenter\",cX,cY); fire(target,\"dragover\",cX,cY);
+    fire(target,\"drop\",cX,cY); fire(source,\"dragend\",cX,cY);
+    return true;"))
+
+(js/export (def tests :- Any
+  [(deftest "drag: tab ABOVE an (empty) group dropped INTO it lands BELOW + indented" [mn]
+     (js/await (ensure-sidebar-expanded mn))
+     (chrome-eval "Services.prefs.setCharPref(\"gjoa.tabs.newTabPosition\", \"root\");")
+     ;; A marked tab, then an empty group (spacer menu -> goes to the bottom, so
+     ;; the marked tab is above it).
+     (chrome-eval "
+        const sp = Services.scriptSecurityManager.getSystemPrincipal();
+        gBrowser.addTab(\"about:blank?abovegrp\", { triggeringPrincipal: sp });
+        return true;")
+     (await-true "return [...document.querySelectorAll('#gjoa-tab-panel .gjoa-tab-label')].some(e=>e.textContent.includes('abovegrp'));")
+     (chrome-eval "
+        const panel = document.getElementById(\"gjoa-tab-panel\");
+        const spacer = panel.querySelector(\"[gjoa-spacer], .gjoa-spacer\") || panel.firstChild;
+        const rect = (spacer || panel).getBoundingClientRect();
+        (spacer || panel).dispatchEvent(new MouseEvent(\"contextmenu\", { bubbles:true, cancelable:true, button:2, clientX:rect.left+4, clientY:rect.top+4 }));
+        const menu = document.getElementById(\"gjoa-panel-menu\");
+        const item = [...menu.querySelectorAll(\"menuitem\")].find(mi => mi.getAttribute(\"label\") === \"New Tab Group\");
+        item.dispatchEvent(new Event(\"command\", { bubbles:true }));
+        return true;")
+     (await-true "return document.querySelectorAll('#gjoa-tab-panel .gjoa-group-row').length >= 1;")
+     ;; Find the marked tab + the latest group; require the tab to be ABOVE it.
+     (let [rows (chrome-eval ROWS-JS)
+           grp-idx (loop [i 0 acc -1]
+                     (if (< i (.-length rows))
+                       (recur (+ i 1) (if (= (.-kind (aget rows i)) "group") i acc))
+                       acc))
+           src-idx (.findIndex rows (fn [r] (.includes (.-label r) "abovegrp")))]
+       (when (or (< grp-idx 0) (< src-idx 0))
+         (throw (Error. (str "setup: grpIdx=" grp-idx " srcIdx=" src-idx " rows=" (.stringify JSON rows)))))
+       (when (>= src-idx grp-idx)
+         (throw (Error. (str "setup: marked tab must be ABOVE the group (srcIdx=" src-idx " grpIdx=" grp-idx ")"))))
+       (chrome-eval (drag-script src-idx grp-idx))
+       (js/await (Promise. (fn [r] (setTimeout (fn [] (r)) 250))))
+       ;; After: the marked tab must render AFTER the group and indented.
+       (let [after (chrome-eval ROWS-JS)
+             grp2 (loop [i 0 acc -1]
+                    (if (< i (.-length after))
+                      (recur (+ i 1) (if (= (.-kind (aget after i)) "group") i acc))
+                      acc))
+             src2 (.findIndex after (fn [r] (.includes (.-label r) "abovegrp")))]
+         (when (or (< grp2 0) (< src2 0))
+           (throw (Error. (str "after: grpIdx=" grp2 " srcIdx=" src2 " rows=" (.stringify JSON after)))))
+         (expect (> src2 grp2)
+                 (str "dropped tab must render BELOW the group, not above (tabIdx=" src2 " groupIdx=" grp2 ")"))
+         (expect (> (.-level (aget after src2)) (.-level (aget after grp2)))
+                 (str "dropped tab must be indented as a child of the group (tabLevel="
+                      (.-level (aget after src2)) " groupLevel=" (.-level (aget after grp2)) ")")))))]))
+
+(js/export-default tests)

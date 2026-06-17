@@ -469,6 +469,32 @@
                                      {:groupRowsCount
                                        (.-length group-rows)})))
 
+                            ;; A TAB dropped INTO a group must render BELOW the
+                            ;; group. A group is not a Firefox tab, so moveTabTo
+                            ;; can leave the tab's index unchanged and fire no
+                            ;; TabMove to reposition its row — stranding the
+                            ;; child above the group. Position the moved rows
+                            ;; explicitly after the group's last existing child
+                            ;; (or the group row itself when empty).
+                            (when (and (.-_group tgt-row)
+                                       (= position "child")
+                                       (.-_tab src-row))
+                              (let [st (subtree-rows tgt-row)
+                                    anchor-rows
+                                    (.filter st
+                                      #(not (.includes moved-rows %)))
+                                    anchor
+                                    (if (.-length anchor-rows)
+                                      (aget anchor-rows
+                                        (- (.-length anchor-rows) 1))
+                                      tgt-row)
+                                    last-ins :- Any {:v anchor}]
+                                (.forEach moved-rows
+                                  #(do (.after (.-v last-ins) %)
+                                       (set! (.-v last-ins) %)))
+                                (log "executeDrop:tabIntoGroupDOMMove"
+                                     {:movedRows (.-length moved-rows)})))
+
                             ;; Clear selection
                             (clear-selection)
 

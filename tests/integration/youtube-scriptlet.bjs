@@ -1,0 +1,61 @@
+#lang beagle/js
+;; YouTube video ads can't be blocked at the network layer (pre/mid-roll are
+;; served first-party from googlevideo.com). gjoa prunes the ad descriptors out
+;; of the player response with a curated scriptlet injected into the page's main
+;; world at document-start (via the GjoaCosmetic actor + a privileged sandbox).
+;; This asserts the scriptlet actually patched JSON.parse and pruned
+;; ytInitialPlayerResponse.adPlacements on a real watch page. Network-dependent:
+;; SKIPs (does not fail) if YouTube won't load or serves no player response.
+(ns gjoa.tests.integration.youtube-scriptlet
+  (:require [gjoa.tests.dsl :refer [deftest expect]]))
+(define-mode strict)
+(declare-extern [JSON Promise Error console] Any)
+
+(def YT-URL :- String "https://www.youtube.com/watch?v=jNQXAC9IVRw")
+
+(def NAV-JS :- String
+  (str "\n"
+    "  const [url, resolve] = arguments;\n"
+    "  let done=false; const finish=v=>{if(!done){done=true;resolve(v);}};\n"
+    "  const win = Services.wm.getMostRecentWindow('navigator:browser');\n"
+    "  const b = win.gBrowser.selectedBrowser;\n"
+    "  b.loadURI(Services.io.newURI(url), { triggeringPrincipal: Services.scriptSecurityManager.getSystemPrincipal() });\n"
+    "  const l = { QueryInterface: ChromeUtils.generateQI(['nsIWebProgressListener','nsISupportsWeakReference']),\n"
+    "    onStateChange(wp,req,flags){ const S=Ci.nsIWebProgressListener;\n"
+    "      if((flags&S.STATE_STOP)&&(flags&S.STATE_IS_WINDOW)){ try{b.removeProgressListener(l);}catch{} finish(true);} } };\n"
+    "  b.addProgressListener(l, Ci.nsIWebProgress.NOTIFY_STATE_ALL);\n"
+    "  setTimeout(()=>finish(false), 25000);\n"))
+
+(def PROBE :- String
+  (str "\n"
+    "  const w = (typeof window.wrappedJSObject !== 'undefined' && window.wrappedJSObject) ? window.wrappedJSObject : window;\n"
+    "  let jp=''; try { jp = String(w.JSON.parse); } catch(e){}\n"
+    "  const y = w.ytInitialPlayerResponse;\n"
+    "  return {\n"
+    "    title: document.title,\n"
+    "    jsonPatched: jp.indexOf('[native code]') < 0,\n"
+    "    hasYtipr: !!y,\n"
+    "    adPlacements: y ? (y.adPlacements===undefined ? 'pruned' : 'PRESENT') : 'none',\n"
+    "  };"))
+
+(js/export (def tests :- Any
+  [(deftest "youtube: player-prune scriptlet strips adPlacements at document-start" [mn]
+     (js/await (.setContext mn "chrome"))
+     (let [navOk (js/await (.executeAsyncScript mn NAV-JS [YT-URL]))]
+       (js/await (.setContext mn "content"))
+       (js/await (.executeAsyncScript mn "const[r]=arguments; setTimeout(()=>r(true), 3000);"))
+       (let [info (js/await (.executeScript mn PROBE))]
+         (cond
+           (not navOk)
+           (.log console "[youtube] SKIP — page did not load (network)")
+           (not (.-hasYtipr info))
+           (.log console (str "[youtube] SKIP — no player response (" (.-title info) ")"))
+           :else
+           (do
+             (expect (.-jsonPatched info)
+                     "JSON.parse must be wrapped by the document-start scriptlet")
+             (expect (= (.-adPlacements info) "pruned")
+                     (str "ytInitialPlayerResponse.adPlacements must be pruned, got "
+                          (.-adPlacements info))))))))]))
+
+(js/export-default tests)

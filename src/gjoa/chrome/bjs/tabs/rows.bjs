@@ -95,7 +95,8 @@
                   (toggle! row "busy" (has? tab "busy")))
                 (toggle! row "pinned" (.-pinned tab))
                 (toggle! row "gjoa-collapsed"
-                  (and (bool (.-collapsed td)) (has-children row)))
+                  (and (or (bool (.-collapsed td)) (bool (.-layoutCollapsed td)))
+                       (has-children row)))
                 (set! (.-paddingInlineStart (.-style row))
                       (str (+ (* (level-of tab) INDENT) 8) "px"))))))
 
@@ -172,7 +173,8 @@
                 (when label
                   (set! (.-textContent label) (str state-prefix (.-name g))))
                 (toggle! row "gjoa-collapsed"
-                  (and (bool (.-collapsed g)) (has-children row)))
+                  (and (or (bool (.-collapsed g)) (bool (.-layoutCollapsed g)))
+                       (has-children row)))
                 (set! (.-paddingInlineStart (.-style row))
                       (str (+ (* (.-level g) INDENT) 8) "px"))))))
 
@@ -196,7 +198,8 @@
                        :else
                        (do (set! (.-hidden %) false)
                            (set! (.-below hide-state)
-                                 (if (and (.-collapsed d) (has-children %)) lv -1))))))))
+                                 (if (and (or (.-collapsed d) (.-layoutCollapsed d))
+                                          (has-children %)) lv -1))))))))
             (update-horizontal-grid)))
 
         ;; ----- horizontal grid -----
@@ -324,7 +327,15 @@
         toggle-collapse (fn [row]
           (let [d (data-of! row)]
             (when (and d (has-children row))
-              (set! (.-collapsed d) (not (.-collapsed d)))
+              ;; The caret reflects the EFFECTIVE collapsed state (user collapse
+              ;; OR transient layout collapse). Expanding clears both; collapsing
+              ;; sets only the persisted user flag. This keeps a click on a
+              ;; layout-collapsed tree (horizontal mode) from silently writing
+              ;; collapsed=true into the saved tree.
+              (if (or (.-collapsed d) (.-layoutCollapsed d))
+                (do (set! (.-collapsed d) false)
+                    (set! (.-layoutCollapsed d) false))
+                (set! (.-collapsed d) true))
               (if (.-_tab row)
                 (sync-tab-row (.-_tab row))
                 (sync-group-row row))

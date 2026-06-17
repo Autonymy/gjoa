@@ -266,11 +266,21 @@
   background-image: none !important;
   position: relative !important;
   z-index: 3 !important;
+  /* Firefox draws a `border-bottom: 0.01px solid --chrome-content-separator-color`
+   * on the toolbox (content-area.css) — a thin white seam between chrome and
+   * content, visible in horizontal-tabs mode. gjoa blends the two, so drop it. */
+  border: none !important;
 }
 
 #nav-bar {
   border: none !important;
   margin: 6px 0 !important;
+  /* FF152's `.browser-toolbar` only applies `--toolbar-bgcolor` under
+   * `@media not -moz-pref("sidebar.verticalTabs")` (browser-shared.css). gjoa
+   * uses vertical tabs, so the nav-bar lost that rule and fell back to a
+   * transparent/neutral-gray window background. Paint it with the gjoa surface
+   * explicitly so it matches the toolbox + sidebar. */
+  background-color: var(--gjoa-bg) !important;
 }
 
 /* -1px compensates for XUL toolbarbutton internal padding we can't override.

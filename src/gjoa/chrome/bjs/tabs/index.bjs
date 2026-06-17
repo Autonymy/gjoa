@@ -118,6 +118,20 @@
         snap))
     history))
 
+;; Re-assert the load-bearing invariant "the selected tab lives in the active
+;; space". If a visibility pass (e.g. a mode toggle) would otherwise hide the
+;; selected row, pick a visible tab in the active space; if the active space is
+;; empty, follow the selection to its own space rather than strand it. No-op in
+;; the normal case, so it is safe to call after any updateVisibility.
+(defn reconcile-selection! [] :- Any
+  (let [sel (.-selectedTab gBrowser)
+        active (.activeId spaces)]
+    (when (and sel (not= (.spaceOf spaces sel) active))
+      (let [in-active (.find (tabs!) #(= (.spaceOf spaces %) active))]
+        (if in-active
+          (set! (.-selectedTab gBrowser) in-active)
+          (.setActive spaces (.spaceOf spaces sel)))))))
+
 ;; --- Factory wiring (drag <-> rows <-> vim cycle) ---
 
 (def drag :- Any
@@ -142,7 +156,9 @@
 (def layout :- Any
   (make-layout!
     {:sidebarMain sidebar-main
-     :rows (.-v rows-ref)}))
+     :rows (.-v rows-ref)
+     :isTabInActiveSpace #(.isVisible spaces %)
+     :reconcileSelection reconcile-selection!}))
 
 (set! (.-v vim-ref)
   (make-vim!
@@ -447,14 +463,7 @@
                               (.insertBefore (.-panel state) row (.-spacer state)))))))
 
                     ;; Ensure selected tab in active space
-                    (let [sel (.-selectedTab gBrowser)
-                          active (.activeId spaces)]
-                      (when (and sel (not= (.spaceOf spaces sel) active))
-                        (let [in-active (.find (tabs!)
-                                          #(= (.spaceOf spaces %) active))]
-                          (if in-active
-                            (set! (.-selectedTab gBrowser) in-active)
-                            (.setActive spaces (.spaceOf spaces sel))))))
+                    (reconcile-selection!)
                     (.updateVisibility rows-api)
 
                     ;; Spacer click -> activate vim with last visible row
@@ -529,6 +538,7 @@
                                            out))
                          :vim vim-api
                          :rows rows-api
+                         :layout layout
                          :scheduleSave schedule-save
                          :history history
                          :contentFocus content-focus

@@ -1,0 +1,168 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="color-scheme" content="dark">
+  <title>New Tab</title>
+  <style>
+    /* gjoa new tab — a navigator's station at polar night.
+       Dark, always: it mirrors gjoa's dark chrome (the chrome is dark
+       regardless of the content dark-mode pref), so the page is the gjoa
+       identity, not the OS theme. Ambient layers are static CSS gradients —
+       no per-frame cost. */
+    :root {
+      color-scheme: dark;
+      --bg: #1c1b22;
+      --fg: #fbfbfe;
+      --fg-muted: #8b8b99;
+      --accent: #00ddff;
+      --boat-top: #6fd6ff;
+      --boat-bottom: #4a90d9;
+      --star: rgba(255, 255, 255, 0.55);
+    }
+
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    html, body { height: 100%; }
+    body {
+      background: var(--bg);
+      color: var(--fg);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, system-ui, sans-serif;
+      display: grid;
+      place-items: center;
+      overflow: hidden;
+      user-select: none;
+      -moz-user-select: none;
+    }
+
+    /* ---- ambient sky (behind everything, non-interactive) ---- */
+    .sky { position: fixed; inset: 0; z-index: 0; pointer-events: none; }
+
+    /* aurora: a soft polar glow rising behind the mark */
+    .aurora {
+      position: absolute;
+      left: 50%; top: 34%;
+      width: 78vmax; height: 78vmax;
+      transform: translate(-50%, -50%);
+      background: radial-gradient(circle at center,
+        color-mix(in srgb, var(--accent) 13%, transparent) 0%,
+        color-mix(in srgb, var(--accent) 4%, transparent) 38%,
+        transparent 62%);
+      filter: blur(14px);
+    }
+
+    /* faint starfield — celestial navigation, hand-placed so it never tiles */
+    .stars {
+      position: absolute; inset: 0;
+      background-repeat: no-repeat;
+      background-image:
+        radial-gradient(1.3px 1.3px at 14% 18%, var(--star), transparent),
+        radial-gradient(1px 1px   at 27% 34%, var(--star), transparent),
+        radial-gradient(1.1px 1.1px at 41% 12%, var(--star), transparent),
+        radial-gradient(1px 1px   at 63% 26%, var(--star), transparent),
+        radial-gradient(1.4px 1.4px at 76% 16%, var(--star), transparent),
+        radial-gradient(1px 1px   at 88% 31%, var(--star), transparent),
+        radial-gradient(1.1px 1.1px at 9%  46%, var(--star), transparent),
+        radial-gradient(1px 1px   at 52% 8%,  var(--star), transparent),
+        radial-gradient(1.2px 1.2px at 92% 9%,  var(--star), transparent),
+        radial-gradient(1px 1px   at 34% 52%, var(--star), transparent),
+        radial-gradient(1px 1px   at 70% 48%, var(--star), transparent),
+        radial-gradient(1.3px 1.3px at 20% 7%,  var(--star), transparent);
+      opacity: 0.7;
+    }
+
+    /* the horizon — a thin band of light where the dark sea meets the sky */
+    .horizon {
+      position: absolute; left: 0; right: 0; bottom: 0; height: 34vh;
+      background: linear-gradient(to top,
+        color-mix(in srgb, var(--accent) 7%, transparent) 0%,
+        transparent 100%);
+    }
+    .horizon::after {
+      content: "";
+      position: absolute; left: 0; right: 0; bottom: 22%;
+      height: 1px;
+      background: linear-gradient(to right,
+        transparent,
+        color-mix(in srgb, var(--accent) 38%, transparent) 50%,
+        transparent);
+    }
+
+    /* ---- the station ---- */
+    main {
+      position: relative; z-index: 1;
+      display: flex; flex-direction: column; align-items: center;
+      text-align: center;
+    }
+
+    .mark {
+      width: 78px; height: 78px;
+      filter: drop-shadow(0 0 18px color-mix(in srgb, var(--accent) 42%, transparent));
+    }
+    #sail-0 { stop-color: var(--boat-top); }
+    #sail-1 { stop-color: var(--boat-bottom); }
+
+    .wordmark {
+      margin-top: 16px;
+      font-size: 34px; font-weight: 700; letter-spacing: 3px;
+      color: var(--fg);
+    }
+
+    /* A ship's chronometer: monospace, thin, tabular. The instrument readout
+       is the only live element and the page's quiet focal point. */
+    .clock {
+      margin-top: 42px;
+      font-family: ui-monospace, "SF Mono", "JetBrains Mono", "Cascadia Code",
+        Menlo, Consolas, monospace;
+      font-size: 60px; font-weight: 300; line-height: 1;
+      letter-spacing: 2px;
+      font-variant-numeric: tabular-nums;
+      color: color-mix(in srgb, var(--fg) 92%, var(--accent));
+    }
+    .date {
+      margin-top: 8px;
+      font-size: 15px; letter-spacing: 0.4px;
+      color: var(--fg-muted);
+    }
+
+    .hint {
+      margin-top: 48px;
+      font-size: 12.5px; letter-spacing: 0.4px;
+      color: var(--fg-muted);
+    }
+    .hint b { color: color-mix(in srgb, var(--accent) 70%, var(--fg)); font-weight: 600; }
+  </style>
+</head>
+<body>
+  <div class="sky" aria-hidden="true">
+    <div class="stars"></div>
+    <div class="aurora"></div>
+    <div class="horizon"></div>
+  </div>
+
+  <main>
+    <svg class="mark" viewBox="0 0 120 120" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="gjoa">
+      <defs>
+        <linearGradient id="sail" x1="0" y1="0" x2="0" y2="1">
+          <stop id="sail-0" offset="0"/>
+          <stop id="sail-1" offset="1"/>
+        </linearGradient>
+      </defs>
+      <g fill="url(#sail)">
+        <rect x="58.5" y="20" width="3" height="66" rx="1.5"/>
+        <path d="M64 24 C 84 44, 88 66, 84 82 L 64 82 Z"/>
+        <path d="M55 32 L 55 82 L 33 82 Z"/>
+        <path d="M22 86 L 98 86 C 92 102, 78 107, 60 107 C 42 107, 28 102, 22 86 Z"/>
+      </g>
+    </svg>
+
+    <div class="wordmark">gjoa</div>
+
+    <div class="clock" id="clock">--:--</div>
+    <div class="date" id="date"></div>
+
+    <p class="hint">start typing to navigate</p>
+  </main>
+
+  <script src="chrome://gjoa-newtab/content/newtab.js"></script>
+</body>
+</html>

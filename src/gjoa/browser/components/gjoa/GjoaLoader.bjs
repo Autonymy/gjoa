@@ -43,7 +43,14 @@
 
 (def lazy :- Any {})
 
-(.defineESModuleGetters ChromeUtils lazy {})
+(.defineESModuleGetters ChromeUtils lazy
+  {:AboutNewTab "resource:///modules/AboutNewTab.sys.mjs"})
+
+;; The gjoa new-tab page. A content-accessible chrome document (see jar.mn's
+;; `gjoa-newtab` package) pointed at by AboutNewTab.newTabURL. Because this URL
+;; becomes BROWSER_NEW_TAB_URL, Firefox's blank-page handling gives it the
+;; normal new-tab treatment (focused, empty urlbar) for free.
+(def NEW-TAB-URL :- String "chrome://gjoa-newtab/content/newtab.html")
 
 (def STYLE-SHEET-SERVICE :- Any
   (let [cid "@mozilla.org/content/style-sheet-service;1"]
@@ -171,18 +178,27 @@
     (.registerWindowActor ChromeUtils "GjoaCosmetic"
       {:parent {:esModuleURI "resource://gre/modules/GjoaCosmeticParent.sys.mjs"}
        :child {:esModuleURI "resource://gre/modules/GjoaCosmeticChild.sys.mjs"
-               :events {:DOMContentLoaded {:mozSystemGroup true}}}
+               :events {:DOMContentLoaded {:mozSystemGroup true}
+                        :DOMWindowCreated {}}}
        :allFrames true
        :messageManagerGroups ["browsers"]})
     (.log console "gjoa-loader: registered GjoaCosmetic window actor")
     (catch Any e
       (.error console "gjoa-loader: registerWindowActor failed" e))))
 
+(defn set-new-tab-url [] :- Any
+  (try
+    (set! (.-newTabURL (.-AboutNewTab lazy)) NEW-TAB-URL)
+    (.log console (str "gjoa-loader: new tab URL set to " NEW-TAB-URL))
+    (catch Any e
+      (.error console "gjoa-loader: failed to set newTabURL" e))))
+
 (js/export (def GjoaLoader :- Any
   {:start (fn [] :- Any
     (when (not (.-observer-registered st))
       (set! (.-observer-registered st) true)
       (set-defaults)
+      (set-new-tab-url)
       (register-cosmetic-actor)
       (.addObserver (.-obs Services) observer "chrome-document-loaded")
       (let [dev (dev-mode-dir)]

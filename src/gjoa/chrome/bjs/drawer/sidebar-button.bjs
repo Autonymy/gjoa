@@ -77,15 +77,18 @@
                                          (when (and native (.-click native))
                                            (.click native))))
                                      (catch Any e
-                                       (.error console "gjoa: customize sidebar failed" e)))))]
+                                       (.error console "gjoa: customize sidebar failed" e)))))
+                block-item (mi "Disable Blocking"
+                             #(when (.-gjoaBlocking window) (.toggle (.-gjoaBlocking window))))]
 
             (set! (.-id compact-item) "gjoa-toggle-compact")
             (set! (.-id collapse-item) "gjoa-collapse-layout")
             (set! (.-id sidebar-item) "gjoa-toggle-sidebar")
             (set! (.-id layout-item) "gjoa-toggle-tab-layout")
             (set! (.-id customize-item) "gjoa-customize-sidebar")
+            (set! (.-id block-item) "gjoa-toggle-blocking")
 
-            (.append menu compact-item collapse-item sidebar-item layout-item (sep) customize-item)
+            (.append menu compact-item collapse-item sidebar-item layout-item (sep) block-item customize-item)
 
             (let [popup-set (by-id "mainPopupSet")]
               (when popup-set
@@ -110,6 +113,9 @@
                                                                 (> (.-width (.getBoundingClientRect sidebar-main)) 0)))]
                                         (attr! sidebar-item "label" (if sidebar-open "Disable Sidebar" "Enable Sidebar")))
                                       (attr! layout-item "label" (if vertical "Horizontal Tabs" "Vertical Tabs"))
+                                      (when (.-gjoaBlocking window)
+                                        (attr! block-item "label"
+                                          (if (.enabled (.-gjoaBlocking window)) "Disable Blocking" "Enable Blocking")))
                                       (when (.isCompactVertical compact) (.pinSidebar compact))
                                       (when (.isCompactHorizontal compact) (.pinToolbox compact))))
 

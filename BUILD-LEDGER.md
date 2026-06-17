@@ -351,3 +351,32 @@ edits are gitignored — persisted as a patch immediately so CI gets them.
 **Deferred (Phase 2/3):** shadows/gradients/SVG fill-stroke (`ColorFunction` arm
 + the compound longhands), an explicit RuleCache invert-key dependency, optional
 LAB-fidelity algorithm, then retire the `filter` fallback + Dark Reader.
+
+---
+
+## 2026-06-18 — Dark mode P2 + new-tab page + tab-toggle fix — SUCCESS
+
+**Lane 3** full mach build (`./mach build`, ~18 min) for dark-mode **P2**: the
+inversion hook moved to the END of `Color::to_computed_color` so resolved
+**System/Canvas** colors invert too (P0 only covered absolute colors → page
+backgrounds stayed light). Then a **Lane 2** `./mach build faster` rebake to fold
+in the new-tab page + GjoaLoader `newTabURL` override + nav-bar/toolbox-border CSS
++ the cosmetic coalescer.
+
+**Gotcha (cost one failed `faster`):** running `bun run import` OUTSIDE
+`nix develop` rewrote `engine/mozconfig` WITHOUT `--with-libclang-path`, so the
+next `faster` tried to reconfigure and died on libclang. Fix: run import + the
+bake INSIDE `nix develop .#mach` so mozconfig keeps libclang (matches the prior
+config → no reconfigure). Gate idea: warn if mozconfig regenerates without
+libclang while an objdir exists.
+
+**Validated on the real binary:** darkmode P0+P1+P2 pass; new-tab page rendered
+via headless `--screenshot`; full integration suite **58/59** (the one fail =
+`adblock-smoke`, the documented mach-vs-nix network discrepancy, NOT a
+regression — `adblock M0` blocks real ad hosts fine). New `tab-mode-toggle.bjs`
+6/6 green: a horizontal↔vertical round-trip no longer corrupts tree collapse
+state (transient `layoutCollapsed`, active-space-scoped, never persisted).
+
+**Persistence:** `patches/0009` regenerated to include the P2 END hook
+(apply-clean on pristine). Chrome/newtab/loader are src/gjoa overlays. Batch is a
+**minor v0.3.0** (adds the new-tab feature) — release held for user sign-off.

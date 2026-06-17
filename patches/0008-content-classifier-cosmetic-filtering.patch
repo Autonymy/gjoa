@@ -9,6 +9,7 @@
 #     - toolkit/components/content-classifier/content_classifier_engine/ContentClassifierEngine.cpp
 #     - toolkit/components/content-classifier/content_classifier_engine/ContentClassifierEngine.h
 #     - toolkit/components/content-classifier/content_classifier_engine/src/lib.rs
+#     - toolkit/components/content-classifier/content_classifier_engine/Cargo.toml
 #
 Extend the upstream FF152 content-classifier component with native COSMETIC
 element-hiding (the gjoa adblock M2 feature).
@@ -22,7 +23,7 @@ element-hiding (the gjoa adblock M2 feature).
   (those NEW actor files ship as src/gjoa overlays, not in this patch)
 
 diff --git a/toolkit/components/content-classifier/ContentClassifierService.cpp b/toolkit/components/content-classifier/ContentClassifierService.cpp
-index 8ea4179..c138392 100644
+index 8ea4179418..c69193e525 100644
 --- a/toolkit/components/content-classifier/ContentClassifierService.cpp
 +++ b/toolkit/components/content-classifier/ContentClassifierService.cpp
 @@ -25,6 +25,7 @@
@@ -52,7 +53,32 @@ index 8ea4179..c138392 100644
  already_AddRefed<nsIAsyncShutdownClient>
  ContentClassifierService::GetAsyncShutdownBarrier() const {
    nsCOMPtr<nsIAsyncShutdownService> svc = components::AsyncShutdown::Service();
-@@ -554,6 +567,97 @@ NS_IMETHODIMP ContentClassifierService::ApplyFilterLists() {
+@@ -520,6 +533,24 @@ NS_IMETHODIMP ContentClassifierService::SetFilterListData(
+   return NS_OK;
+ }
+ 
++NS_IMETHODIMP ContentClassifierService::SetScriptletResources(
++    const nsACString& aJson) {
++  MOZ_ASSERT(NS_IsMainThread());
++
++  MOZ_LOG_FMT(gContentClassifierLog, LogLevel::Debug,
++              "SetScriptletResources - size={}", aJson.Length());
++
++  MutexAutoLock lock(mLock);
++  if (mInitPhase != InitPhase::InitSucceeded) {
++    return NS_ERROR_NOT_INITIALIZED;
++  }
++  mScriptletResources = aJson;
++  // Applied to engines at build time (RebuildEnginesFromStoredData), so a
++  // subsequent applyFilterLists() picks it up. Engines already built keep their
++  // current resources until the next rebuild.
++  return NS_OK;
++}
++
+ NS_IMETHODIMP ContentClassifierService::RemoveFilterList(
+     const nsACString& aName) {
+   MOZ_ASSERT(NS_IsMainThread());
+@@ -554,6 +585,97 @@ NS_IMETHODIMP ContentClassifierService::ApplyFilterLists() {
    return NS_OK;
  }
  
@@ -150,8 +176,21 @@ index 8ea4179..c138392 100644
  // Parses a byte buffer of adblock-format filter list text into rules.
  // Tolerates both LF and CRLF line endings; skips empty lines.
  static void ParseFilterListRules(const nsTArray<uint8_t>& aData,
+@@ -626,6 +748,12 @@ void ContentClassifierService::RebuildEnginesFromStoredData() {
+                 continue;
+               }
+ 
++              // Load the scriptlet resource library so this engine can expand
++              // `+js(...)` cosmetic rules into injectable scriptlets.
++              if (!mScriptletResources.IsEmpty()) {
++                engine->UseResources(mScriptletResources);
++              }
++
+               MOZ_LOG_FMT(gContentClassifierLog, LogLevel::Info,
+                           "RebuildEnginesFromStoredData - loaded engine "
+                           "for \"{}\" with {} rules",
 diff --git a/toolkit/components/content-classifier/ContentClassifierService.h b/toolkit/components/content-classifier/ContentClassifierService.h
-index a1e5b98..d59bbd6 100644
+index a1e5b9871a..52afe8d6ca 100644
 --- a/toolkit/components/content-classifier/ContentClassifierService.h
 +++ b/toolkit/components/content-classifier/ContentClassifierService.h
 @@ -40,6 +40,12 @@ class ContentClassifierService final : public nsIAsyncShutdownBlocker,
@@ -179,8 +218,20 @@ index a1e5b98..d59bbd6 100644
    nsTArray<UniquePtr<ContentClassifierEngine>> mBlockEngines
        MOZ_GUARDED_BY(mLock);
    nsTArray<UniquePtr<ContentClassifierEngine>> mAnnotateEngines
+@@ -82,6 +93,11 @@ class ContentClassifierService final : public nsIAsyncShutdownBlocker,
+   nsTHashMap<nsCStringHashKey, nsTArray<uint8_t>> mFilterListData
+       MOZ_GUARDED_BY(mLock);
+ 
++  // JSON-serialized uBO-style scriptlet/redirect resource library, set by the
++  // RS client. Applied to every block engine at build time so `+js(...)` rules
++  // expand into injectable scriptlets.
++  nsCString mScriptletResources MOZ_GUARDED_BY(mLock);
++
+   // RemoteSettings client for fetching filter lists. All reads and
+   // writes must happen on the main thread; each call site asserts.
+   nsCOMPtr<nsIContentClassifierRemoteSettingsClient> mRSClient;
 diff --git a/toolkit/components/content-classifier/components.conf b/toolkit/components/content-classifier/components.conf
-index 522b94f..b5bd568 100644
+index 522b94ffa0..b5bd5687a5 100644
 --- a/toolkit/components/content-classifier/components.conf
 +++ b/toolkit/components/content-classifier/components.conf
 @@ -13,4 +13,13 @@ Classes = [
@@ -197,8 +248,20 @@ index 522b94f..b5bd568 100644
 +        'processes': ProcessSelector.MAIN_PROCESS_ONLY,
 +    },
  ]
+diff --git a/toolkit/components/content-classifier/content_classifier_engine/Cargo.toml b/toolkit/components/content-classifier/content_classifier_engine/Cargo.toml
+index 2a56e9f630..6ef06d5c18 100644
+--- a/toolkit/components/content-classifier/content_classifier_engine/Cargo.toml
++++ b/toolkit/components/content-classifier/content_classifier_engine/Cargo.toml
+@@ -8,6 +8,7 @@ license = "MPL-2.0"
+ [dependencies]
+ adblock = { version = "0.12.1", features = ["full-regex-handling", "single-thread"], default-features = false }
+ cstr = "0.2"
++serde_json = "1.0"
+ nsstring = { path = "../../../../xpcom/rust/nsstring" }
+ nserror = { path = "../../../../xpcom/rust/nserror" }
+ thin-vec = { version = "0.2.1", features = ["gecko-ffi"] }
 diff --git a/toolkit/components/content-classifier/content_classifier_engine/ContentClassifierEngine.cpp b/toolkit/components/content-classifier/content_classifier_engine/ContentClassifierEngine.cpp
-index ae6ba60..1f5f642 100644
+index ae6ba60e72..1f5f642bf3 100644
 --- a/toolkit/components/content-classifier/content_classifier_engine/ContentClassifierEngine.cpp
 +++ b/toolkit/components/content-classifier/content_classifier_engine/ContentClassifierEngine.cpp
 @@ -37,6 +37,28 @@ ContentClassifierResult ContentClassifierEngine::CheckNetworkRequest(
@@ -231,10 +294,22 @@ index ae6ba60..1f5f642 100644
      const ContentClassifierResult& aOther) {
    if (NS_FAILED(aOther.mEngineResult)) {
 diff --git a/toolkit/components/content-classifier/content_classifier_engine/ContentClassifierEngine.h b/toolkit/components/content-classifier/content_classifier_engine/ContentClassifierEngine.h
-index b9c414c..5f46eaf 100644
+index b9c414cce4..f9a5a1e71e 100644
 --- a/toolkit/components/content-classifier/content_classifier_engine/ContentClassifierEngine.h
 +++ b/toolkit/components/content-classifier/content_classifier_engine/ContentClassifierEngine.h
-@@ -89,6 +89,18 @@ class ContentClassifierEngine final {
+@@ -86,9 +86,30 @@ class ContentClassifierEngine final {
+     return content_classifier_engine_from_rules(&aRules, &mEngine);
+   }
+ 
++  // Load a uBO-style scriptlet/redirect resource library (JSON) so the engine
++  // can expand `+js(...)` cosmetic rules into an injectable script.
++  nsresult UseResources(const nsACString& aResourcesJson) {
++    if (!mEngine) {
++      return NS_ERROR_NOT_INITIALIZED;
++    }
++    return content_classifier_engine_use_resources(mEngine, &aResourcesJson);
++  }
++
    ContentClassifierResult CheckNetworkRequest(
        const ContentClassifierRequest& aRequest);
  
@@ -254,7 +329,7 @@ index b9c414c..5f46eaf 100644
    static inline bool sInitializedETLDService = false;
  
 diff --git a/toolkit/components/content-classifier/content_classifier_engine/src/lib.rs b/toolkit/components/content-classifier/content_classifier_engine/src/lib.rs
-index 295b3bf..11e1c99 100644
+index 295b3bfd8b..88ad661a1c 100644
 --- a/toolkit/components/content-classifier/content_classifier_engine/src/lib.rs
 +++ b/toolkit/components/content-classifier/content_classifier_engine/src/lib.rs
 @@ -2,6 +2,7 @@
@@ -265,7 +340,36 @@ index 295b3bf..11e1c99 100644
  use std::sync::Mutex;
  
  use adblock::Engine;
-@@ -124,6 +125,76 @@ pub unsafe extern "C" fn content_classifier_engine_check_network_request_prepars
+@@ -67,6 +68,28 @@ pub unsafe extern "C" fn content_classifier_engine_from_rules(
+     NS_OK
+ }
+ 
++/// Load a scriptlet/redirect resource library (uBO-style, JSON-serialized
++/// `Vec<adblock::resources::Resource>`) into the engine. Without this, the
++/// engine cannot expand `+js(...)` cosmetic rules, so `injected_script` is
++/// always empty. Call once after `from_rules`.
++#[no_mangle]
++pub unsafe extern "C" fn content_classifier_engine_use_resources(
++    engine: *mut ContentClassifierFFIEngine,
++    resources_json: &nsACString,
++) -> nsresult {
++    if engine.is_null() {
++        return NS_ERROR_INVALID_ARG;
++    }
++    let json = String::from_utf8_lossy(resources_json.as_ref()).to_string();
++    let resources: Vec<adblock::resources::Resource> = match serde_json::from_str(&json) {
++        Ok(r) => r,
++        Err(_) => return NS_ERROR_INVALID_ARG,
++    };
++    let engine = &mut (*engine).engine;
++    engine.use_resources(resources);
++    NS_OK
++}
++
+ #[no_mangle]
+ pub unsafe extern "C" fn content_classifier_engine_destroy(
+     engine: *mut ContentClassifierFFIEngine,
+@@ -124,6 +147,76 @@ pub unsafe extern "C" fn content_classifier_engine_check_network_request_prepars
      NS_OK
  }
  
@@ -343,20 +447,28 @@ index 295b3bf..11e1c99 100644
  
  impl adblock::url_parser::ResolvesDomain for SchemelessSiteResolver {
 diff --git a/toolkit/components/content-classifier/moz.build b/toolkit/components/content-classifier/moz.build
-index e65d3ee..00171e2 100644
+index e65d3eebce..668e0c6f84 100644
 --- a/toolkit/components/content-classifier/moz.build
 +++ b/toolkit/components/content-classifier/moz.build
-@@ -28,6 +28,8 @@ LOCAL_INCLUDES += [
+@@ -28,6 +28,16 @@ LOCAL_INCLUDES += [
  
  EXTRA_JS_MODULES += [
      "ContentClassifierRemoteSettingsClient.sys.mjs",
 +    "GjoaCosmeticChild.sys.mjs",
 +    "GjoaCosmeticParent.sys.mjs",
++]
++
++# uBO-derived scriptlet/redirect resource library (JSON), read at init by the
++# RS client and handed to nsIContentClassifierService.setScriptletResources so
++# the engine can expand `+js(...)` rules. Lands at
++# resource://gre/modules/scriptlet-resources.json.
++FINAL_TARGET_FILES.modules += [
++    "scriptlet-resources.json",
  ]
  
  XPCOM_MANIFESTS += [
 diff --git a/toolkit/components/content-classifier/nsIContentClassifierService.idl b/toolkit/components/content-classifier/nsIContentClassifierService.idl
-index 8f408b3..9f596b9 100644
+index 8f408b3f0d..a99d29969c 100644
 --- a/toolkit/components/content-classifier/nsIContentClassifierService.idl
 +++ b/toolkit/components/content-classifier/nsIContentClassifierService.idl
 @@ -8,7 +8,7 @@
@@ -364,11 +476,26 @@ index 8f408b3..9f596b9 100644
   * provide filter list data (e.g. from RemoteSettings).
   */
 -[scriptable, uuid(1AFC121B-6849-4BA4-A515-C7E91F20D0DC)]
-+[scriptable, uuid(7a3e9c14-2b5f-4d8a-9e1c-3f6b8d2a4c50)]
++[scriptable, uuid(8b4fad25-3c6e-4f9b-af2d-4e7c9e3b5d61)]
  interface nsIContentClassifierService : nsISupports {
      /**
       * Store filter list data for a named list. The data is the raw
-@@ -28,6 +28,29 @@ interface nsIContentClassifierService : nsISupports {
+@@ -17,6 +17,14 @@ interface nsIContentClassifierService : nsISupports {
+      */
+     void setFilterListData(in ACString aName, in Array<uint8_t> aData);
+ 
++    /**
++     * Provide the scriptlet/redirect resource library (a JSON-serialized
++     * array of adblock-rust resources, uBO-derived) used to expand `+js(...)`
++     * cosmetic rules into injectable scriptlets. Stored and applied to every
++     * block engine at build time; call before applyFilterLists().
++     */
++    void setScriptletResources(in ACString aJson);
++
+     /**
+      * Remove a previously stored filter list by name.
+      */
+@@ -28,6 +36,29 @@ interface nsIContentClassifierService : nsISupports {
       * which lists to use for blocking and annotation.
       */
      void applyFilterLists();

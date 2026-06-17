@@ -35,7 +35,39 @@ ChromeUtils.defineLazyGetter(lazy, "log", () => {
 const LISTS = [
   { name: "easylist", url: "https://easylist.to/easylist/easylist.txt" },
   { name: "easyprivacy", url: "https://easylist.to/easylist/easyprivacy.txt" },
+  // uBlock Origin's own filter set — carries the `+js(...)` scriptlet rules
+  // (YouTube player-prune, anti-adblock defusers, etc.) that EasyList does not.
+  // These need the scriptlet resource library (scriptlet-resources.json) loaded
+  // via setScriptletResources to actually expand + inject.
+  {
+    name: "ublock-filters",
+    url: "https://ublockorigin.github.io/uAssets/filters/filters.txt",
+  },
+  {
+    name: "ublock-badware",
+    url: "https://ublockorigin.github.io/uAssets/filters/badware.txt",
+  },
+  {
+    name: "ublock-privacy",
+    url: "https://ublockorigin.github.io/uAssets/filters/privacy.txt",
+  },
+  {
+    name: "ublock-quick-fixes",
+    url: "https://ublockorigin.github.io/uAssets/filters/quick-fixes.txt",
+  },
+  {
+    name: "ublock-unbreak",
+    url: "https://ublockorigin.github.io/uAssets/filters/unbreak.txt",
+  },
+  {
+    name: "ublock-resource-abuse",
+    url: "https://ublockorigin.github.io/uAssets/filters/resource-abuse.txt",
+  },
 ];
+
+// Packaged uBO-derived scriptlet/redirect resource library (see moz.build).
+const SCRIPTLET_RESOURCES_URL =
+  "resource://gre/modules/scriptlet-resources.json";
 
 const CACHE_DIR = "gjoa-adblock";
 const ALLOW_PREF = "gjoa.contentblock.user.allow-hosts";
@@ -76,6 +108,9 @@ export class ContentClassifierRemoteSettingsClient {
     this.#service = service;
 
     try {
+      // Scriptlet resources first: must be set BEFORE applyFilterLists so the
+      // engines pick them up at build time and can expand `+js(...)` rules.
+      await this.#loadScriptletResources(service);
       await this.#loadAllLists(service);
     } catch (e) {
       lazy.log.error("init: list load failed", e);
@@ -116,6 +151,23 @@ export class ContentClassifierRemoteSettingsClient {
   #cacheDir() {
     const prof = Services.dirsvc.get("ProfD", Ci.nsIFile).path;
     return PathUtils.join(prof, CACHE_DIR);
+  }
+
+  // Hand the engine the scriptlet/redirect resource library so `+js(...)` rules
+  // in the uBO lists expand into injectable scriptlets. Packaged static
+  // (version-pinned to the vendored adblock-rust + the uBO scriptlet harvest);
+  // read once at init.
+  async #loadScriptletResources(service) {
+    try {
+      const resp = await fetch(SCRIPTLET_RESOURCES_URL);
+      const json = await resp.text();
+      if (json && json.length) {
+        service.setScriptletResources(json);
+        lazy.log.info(`scriptlet resources loaded (${json.length} bytes)`);
+      }
+    } catch (e) {
+      lazy.log.error("scriptlet resources load failed", e);
+    }
   }
 
   async #loadAllLists(service) {

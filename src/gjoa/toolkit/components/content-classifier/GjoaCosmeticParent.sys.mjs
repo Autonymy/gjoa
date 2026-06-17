@@ -191,8 +191,26 @@ export class GjoaCosmeticParent extends JSWindowActorParent {
         if (!blockingActive(url)) {
           return null;
         }
-        const scriptlets = scriptletsForHost(hostOf(url));
-        return scriptlets.length ? { scriptlets } : null;
+        const out = scriptletsForHost(hostOf(url));
+        // Engine-produced scriptlets: adblock-rust expands this URL's `+js()`
+        // rules (from the uBO lists) against the loaded scriptlet resource
+        // library into one injectable string. This is the general/list-driven
+        // path; the curated set above is a guaranteed baseline.
+        const svc = classifierService();
+        if (svc) {
+          try {
+            const hide = {};
+            const proc = {};
+            const exc = {};
+            const injected = {};
+            const generichide = {};
+            svc.getUrlCosmeticResources(url, hide, proc, exc, injected, generichide);
+            if (injected.value) {
+              out.push(injected.value);
+            }
+          } catch (e) {}
+        }
+        return out.length ? { scriptlets: out } : null;
       }
 
       case "Cosmetic:GetLazy": {

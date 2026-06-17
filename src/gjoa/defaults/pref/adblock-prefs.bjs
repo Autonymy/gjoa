@@ -15,11 +15,13 @@
 (pref "privacy.trackingprotection.content.protection.enabled" true)
 
 ;; Which stored lists the engine uses for BLOCKING. Each token must match a
-;; setFilterListData() name our overlay pushes: easylist + easyprivacy (the
-;; fetched lists) and gjoa-allow (the synthetic per-site exception list, always
-;; present so the allow engine exists even when empty). MUST be non-empty or the
-;; overlay is never invoked.
-(pref "privacy.trackingprotection.content.protection.list_names" "easylist,easyprivacy,gjoa-allow")
+;; setFilterListData() name our overlay pushes: easylist + easyprivacy + uBO's
+;; own filter set (the fetched lists — uBO's carry the `+js()` scriptlet rules)
+;; and gjoa-allow (the synthetic per-site exception list, always present so the
+;; allow engine exists even when empty). MUST be non-empty or the overlay is
+;; never invoked.
+(pref "privacy.trackingprotection.content.protection.list_names"
+  "easylist,easyprivacy,ublock-filters,ublock-badware,ublock-privacy,ublock-quick-fixes,ublock-unbreak,ublock-resource-abuse,gjoa-allow")
 
 ;; We want blocking, not annotation — keep the annotation pathway off (empty
 ;; annotation.list_names ⇒ no annotation engines regardless).

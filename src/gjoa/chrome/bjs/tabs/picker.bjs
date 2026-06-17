@@ -19,7 +19,17 @@
                    (.includes hay query)))
            (.add matched-set %)))
       (if (not preserve)
-        (.filter all-items #(.has matched-set %))
+        ;; Rank TITLE (.-display) matches above description-only (.-secondary)
+        ;; matches, so typing "space" selects `:space` — not `:history`, whose
+        ;; description ("…`:history space`…") merely mentions the word. Stable
+        ;; sort keeps the original order within each rank tier.
+        (let [qfirst (or (aget (.split (.toLowerCase (.trim query)) (RegExp. "\\s+")) 0) "")
+              title-rank (fn [it :- Any] :- Int
+                           (if (and (not= qfirst "")
+                                    (.includes (.toLowerCase (or (.-display it) "")) qfirst))
+                             0 1))]
+          (.sort (.filter all-items #(.has matched-set %))
+                 (fn [a b] (- (title-rank a) (title-rank b)))))
         (let [by-id (Map.)]
           (.forEach all-items
             #(when (and (not= (.-id %) nil) (not= (.-id %) js/undefined))

@@ -97,9 +97,14 @@ jobs:
         run: |
           set -x
           mkdir -p ~/win-cross
-          # wine — runs MIDL/widl during the build
-          aria2c "https://firefox-ci-tc.services.mozilla.com/api/index/v1/task/gecko.cache.level-1.toolchains.v3.linux64-wine.latest/artifacts/public%2Fbuild%2Fwine.tar.zst" -o /tmp/wine.tar.zst
-          tar --zstd -xf /tmp/wine.tar.zst -C ~/win-cross && rm /tmp/wine.tar.zst
+          # wine — runs MIDL/widl during the build. Download to an ABSOLUTE path:
+          # aria2c -o is relative to cwd (engine/ here), so `-o /tmp/...` wrote to
+          # engine/tmp/ and the tar then missed it. Use --dir + a bare filename,
+          # and don't mask a tar failure behind `&&` (bash -e ignores it).
+          aria2c --dir="$HOME" -o wine.tar.zst "https://firefox-ci-tc.services.mozilla.com/api/index/v1/task/gecko.cache.level-1.toolchains.v3.linux64-wine.latest/artifacts/public%2Fbuild%2Fwine.tar.zst"
+          tar --zstd -xf "$HOME/wine.tar.zst" -C ~/win-cross
+          rm -f "$HOME/wine.tar.zst"
+          test -x ~/win-cross/wine/bin/wine || { echo "::error::wine not at ~/win-cross/wine/bin/wine"; ls -R ~/win-cross/wine 2>/dev/null | head -20; exit 1; }
           # Visual Studio + Windows SDK (+ App SDK) via Mozilla's fetcher
           ./mach python --virtualenv build taskcluster/scripts/misc/get_vs.py build/vs/vs2026.yaml ~/win-cross/vs2026
           chmod -R +x ~/win-cross/vs2026 || true

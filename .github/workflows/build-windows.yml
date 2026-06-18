@@ -106,17 +106,15 @@ jobs:
           tar --zstd -xf "$HOME/wine.tar.zst" -C ~/win-cross
           rm -f "$HOME/wine.tar.zst"
           test -x ~/win-cross/wine/bin/wine || { echo "::error::wine not at ~/win-cross/wine/bin/wine"; ls -R ~/win-cross/wine 2>/dev/null | head -20; exit 1; }
-          # fxc2 — a working fxc replacement (+ real d3dcompiler_47.dll). The SDK's
-          # fxc.exe routes through wine's builtin vkd3d, which can't compile FF's
-          # HLSL ("E5000 syntax error"); Mozilla's cross uses fxc2 instead. We point
-          # $FXC at it in the mozconfig so configure picks it over the SDK fxc.exe.
-          aria2c --dir="$HOME" -o fxc2.tar.zst "https://firefox-ci-tc.services.mozilla.com/api/index/v1/task/gecko.cache.level-1.toolchains.v3.linux64-mingw-fxc2-x86.latest/artifacts/public%2Fbuild%2Ffxc2.tar.zst"
-          tar --zstd -xf "$HOME/fxc2.tar.zst" -C ~/win-cross
-          rm -f "$HOME/fxc2.tar.zst"
-          find ~/win-cross/fxc2 -name 'fxc2.exe' || { echo "::error::fxc2.exe not found after extract"; ls -R ~/win-cross/fxc2 2>/dev/null | head -20; exit 1; }
           # Visual Studio + Windows SDK (+ App SDK) via Mozilla's fetcher
           ./mach python --virtualenv build taskcluster/scripts/misc/get_vs.py build/vs/vs2026.yaml ~/win-cross/vs2026
           chmod -R +x ~/win-cross/vs2026 || true
+          # Put the NATIVE d3dcompiler_47.dll next to fxc.exe so wine (with the
+          # WINEDLLOVERRIDES in the mozconfig) loads it instead of builtin vkd3d.
+          FXC_DIR="$(dirname "$(find ~/win-cross/vs2026 -name fxc.exe -path '*x64*' | head -1)")"
+          DCDLL="$(find ~/win-cross/vs2026 -name d3dcompiler_47.dll -path '*x64*' | head -1)"
+          echo "fxc dir: $FXC_DIR ; d3dcompiler: $DCDLL"
+          test -n "$FXC_DIR" && test -n "$DCDLL" && cp "$DCDLL" "$FXC_DIR/" || { echo "::error::could not place d3dcompiler next to fxc"; exit 1; }
           ls ~/win-cross
 
       - name: Write mozconfig (cross)
@@ -137,8 +135,10 @@ jobs:
           export WINSYSROOT="$HOME/win-cross/vs2026"
           export WINE="$HOME/win-cross/wine/bin/wine"
           export WINEDEBUG=-all
-          # Use fxc2 (works under wine) instead of the SDK fxc.exe (→ broken vkd3d).
-          export FXC="$(find $HOME/win-cross/fxc2 -name fxc2.exe 2>/dev/null | head -1)"
+          # Force wine to load the NATIVE d3dcompiler_47.dll (copied next to fxc.exe
+          # in the setup step) instead of its builtin vkd3d, whose HLSL compiler
+          # can't build FF's shaders. With this, the SDK's fxc.exe works under wine.
+          export WINEDLLOVERRIDES="d3dcompiler_47=n"
           export CROSS_BUILD=1
           export MOZ_STUB_INSTALLER=1
           export WIN32_REDIST_DIR="$(ls -d $HOME/win-cross/vs2026/VC/Redist/MSVC/*/x64/Microsoft.VC*.CRT 2>/dev/null | head -1)"

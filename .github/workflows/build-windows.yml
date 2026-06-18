@@ -106,6 +106,15 @@ jobs:
           tar --zstd -xf "$HOME/wine.tar.zst" -C ~/win-cross
           rm -f "$HOME/wine.tar.zst"
           test -x ~/win-cross/wine/bin/wine || { echo "::error::wine not at ~/win-cross/wine/bin/wine"; ls -R ~/win-cross/wine 2>/dev/null | head -20; exit 1; }
+          # Headless wine: select the NULL display driver so fxc2 + d3dcompiler's
+          # window/OLE-apartment init succeeds with NO X server. The Mozilla wine
+          # artifact's winex11.drv can't load on a bare runner even with Xvfb up
+          # ("no driver could be loaded" → fxc2 dies); Mozilla's own builders only
+          # work because their docker ships a full X stack. null avoids X entirely.
+          # This first wine call also boots the default prefix (~/.wine) — the
+          # 'explorer failed to start' warning is non-fatal — and persists the key
+          # for the Build step (same HOME, same prefix).
+          WINEDEBUG=-all "$HOME/win-cross/wine/bin/wine" reg add 'HKCU\Software\Wine\Drivers' /v Graphics /d null /f 2>/dev/null || true
           # Visual Studio + Windows SDK (+ App SDK) via Mozilla's fetcher. This is
           # the SAME setup zen-browser uses (windows-release-build.yml:156-161):
           # fetch wine, get_vs.py → WINSYSROOT, chmod +x. No fxc/d3dcompiler hacks —
@@ -180,18 +189,9 @@ jobs:
         run: |
           export MOZBUILD_STATE_PATH="$HOME/.mozbuild"
           [ -f "$HOME/.cargo/env" ] && . "$HOME/.cargo/env" || true
-          # fxc2.exe runs under wine; initializing its first prefix + the
-          # d3dcompiler OLE apartment needs an X display (else "explorer process
-          # failed to start" / "no driver could be loaded"). Start Xvfb and WAIT
-          # for it to accept connections before building (a race here was why the
-          # earlier fxc2 attempt died in 0.13s).
-          Xvfb :2 -nolisten tcp -noreset -screen 0 1024x768x24 >/tmp/xvfb.log 2>&1 &
-          export DISPLAY=:2
-          for i in $(seq 1 15); do xdpyinfo -display :2 >/dev/null 2>&1 && break; sleep 1; done
-          xdpyinfo -display :2 >/dev/null 2>&1 && echo "Xvfb ready on :2" || { echo "WARN: Xvfb not ready"; cat /tmp/xvfb.log || true; }
-          # Pre-initialize the wine prefix once (with the display up) so the build's
-          # fxc2 invocations don't each pay the explorer/prefix-init window dance.
-          "$HOME/win-cross/wine/bin/wine" wineboot --init 2>/tmp/wineboot.log || true
+          # Headless: fxc2 runs under wine with the NULL display driver selected in
+          # Setup (~/.wine), so no X server is needed — its window/OLE init is a
+          # no-op and the shader compile proceeds.
           ./mach build -j2
 
       - name: Package

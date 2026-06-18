@@ -47,16 +47,19 @@ jobs:
         with:
           version: 'stable'
       # beagle has runtime/src/{dd,mk,pp}/con.clj — `con` is a Windows RESERVED
-      # device name, so a normal checkout dies (exit 128, "invalid path"). They're
-      # test fixtures beagle-build doesn't need, so clone without checkout and use
-      # sparse-checkout to populate everything EXCEPT them.
+      # device name (NUL/PRN/AUX-class), so the OS itself can't create the file and
+      # a normal checkout dies (exit 128, "invalid path"). They're test fixtures
+      # beagle-build doesn't need. Clone without a working tree, drop those 3 paths
+      # from the index, then materialize EVERYTHING ELSE via checkout-index.
       - name: Checkout beagle (sibling compiler)
         run: |
           git clone --no-checkout --depth 1 https://github.com/tompassarelli/beagle.git ../beagle
-          git -C ../beagle sparse-checkout set --no-cone '/*' \
-            '!/runtime/src/dd/con.clj' '!/runtime/src/mk/con.clj' '!/runtime/src/pp/con.clj'
-          test -f ../beagle/bin/beagle-build || { echo "beagle-build missing after sparse checkout"; exit 1; }
-          test -d ../beagle/beagle-lib || { echo "beagle-lib missing after sparse checkout"; exit 1; }
+          git -C ../beagle rm --cached -q --ignore-unmatch \
+            runtime/src/dd/con.clj runtime/src/mk/con.clj runtime/src/pp/con.clj
+          git -C ../beagle checkout-index -a -f
+          test -f ../beagle/bin/beagle-build || { echo "beagle-build missing"; exit 1; }
+          test -d ../beagle/beagle-lib || { echo "beagle-lib missing"; exit 1; }
+          echo "beagle checked out: $(find ../beagle -name '*.rkt' | wc -l) .rkt, $(ls ../beagle/bin | wc -l) bin entries"
       - name: Register beagle collection
         run: raco pkg install --link --batch --no-docs ../beagle/beagle-lib
 

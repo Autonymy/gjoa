@@ -25,6 +25,16 @@ export class GjoaDarkmodeChild extends JSWindowActorChild {
       if (this.browsingContext !== this.browsingContext.top) {
         return;
       }
+      // Reset any override INHERITED from the previous same-tab page, so this
+      // fresh document is measured from its AUTHORED colors — not the prior
+      // page's inverted result. Without this, a native-dark site entered from a
+      // themeless (inverted) one keeps "active", renders inverted, and the
+      // post-paint measurement reads the inverted (light) bg and stays inverted
+      // (circular). Tier b decides pre-paint at the engine level and removes the
+      // brief themeless re-measure flash this introduces.
+      try {
+        this.browsingContext.colorInversionOverride = "none";
+      } catch (e) {}
       await this.#maybeInject();
       return;
     }
@@ -65,13 +75,18 @@ export class GjoaDarkmodeChild extends JSWindowActorChild {
       return;
     }
     this._injected = true;
-    // Run in the page's MAIN world at document-start (before the app boots),
-    // same channel discipline as GjoaCosmeticChild.injectScriptlets.
+    // Run in the page's MAIN world at document-start (before the app boots) via a
+    // privileged Cu.Sandbox over the content window — NOT a <script> element,
+    // which the page CSP blocks (YouTube blocks inline scripts). Same channel
+    // discipline as GjoaCosmeticChild.injectScriptlets: sandboxPrototype=win +
+    // wantXrays=false so the scriptlet's writes (html[dark]) land on the page.
     try {
-      const script = doc.createElement("script");
-      script.textContent = resp.inject;
-      (doc.documentElement || doc).appendChild(script);
-      script.remove();
+      const sandbox = Cu.Sandbox(win, {
+        sandboxName: "gjoa-darkmode-inject",
+        sandboxPrototype: win,
+        wantXrays: false,
+      });
+      Cu.evalInSandbox(resp.inject, sandbox);
     } catch (e) {}
   }
 

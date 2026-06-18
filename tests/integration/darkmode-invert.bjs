@@ -46,8 +46,10 @@
 (js/export (def tests :- Any
   [(deftest "darkmode P0: engine inverts absolute colors at computed time" [mn ctx]
      (js/await (.setContext mn "chrome"))
+     ;; Isolate the GLOBAL-pref engine path: disable the hybrid actor so it never
+     ;; sets a per-document colorInversionOverride that would mask the pref.
      ;; Flag must be set BEFORE navigation — P0 reads it at presContext construction.
-     (chrome-eval "Services.prefs.setBoolPref('gjoa.darkmode.invert.enabled', true); return 'on';")
+     (chrome-eval "Services.prefs.setBoolPref('gjoa.darkmode.enabled', false); Services.prefs.setBoolPref('gjoa.darkmode.invert.enabled', true); return 'on';")
      (let [navOk (js/await (.executeAsyncScript mn NAV-JS [TOP]))]
        (expect navOk (str "fixture " TOP " did not load — is cosmetic-fixture-server.mjs on :8975?"))
        (js/await (.setContext mn "content"))
@@ -61,7 +63,7 @@
    ;; Control: with the flag OFF, the same box stays un-inverted.
    (deftest "darkmode P0: flag off leaves colors untouched" [mn ctx]
      (js/await (.setContext mn "chrome"))
-     (chrome-eval "Services.prefs.setBoolPref('gjoa.darkmode.invert.enabled', false); return 'off';")
+     (chrome-eval "Services.prefs.setBoolPref('gjoa.darkmode.enabled', false); Services.prefs.setBoolPref('gjoa.darkmode.invert.enabled', false); return 'off';")
      (let [navOk (js/await (.executeAsyncScript mn NAV-JS [TOP]))]
        (expect navOk (str "fixture " TOP " did not load"))
        (js/await (.setContext mn "content"))
@@ -74,7 +76,7 @@
    ;; (nsPresContext::UpdateColorInversion via the pref-change callback).
    (deftest "darkmode P1: live toggle restyles an already-loaded tab" [mn ctx]
      (js/await (.setContext mn "chrome"))
-     (chrome-eval "Services.prefs.setBoolPref('gjoa.darkmode.invert.enabled', false); return 'off';")
+     (chrome-eval "Services.prefs.setBoolPref('gjoa.darkmode.enabled', false); Services.prefs.setBoolPref('gjoa.darkmode.invert.enabled', false); return 'off';")
      (let [navOk (js/await (.executeAsyncScript mn NAV-JS [TOP]))]
        (expect navOk (str "fixture " TOP " did not load"))
        (js/await (.setContext mn "content"))
@@ -94,7 +96,7 @@
    ;; explicit colors. The hook covers the Color::System arm now.
    (deftest "darkmode P2: system colors invert under full engine mode" [mn ctx]
      (js/await (.setContext mn "chrome"))
-     (chrome-eval "Services.prefs.setIntPref('layout.css.prefers-color-scheme.content-override', 1); Services.prefs.setBoolPref('gjoa.darkmode.invert.enabled', true); return 'engine';")
+     (chrome-eval "Services.prefs.setBoolPref('gjoa.darkmode.enabled', false); Services.prefs.setIntPref('layout.css.prefers-color-scheme.content-override', 1); Services.prefs.setBoolPref('gjoa.darkmode.invert.enabled', true); return 'engine';")
      (expect (js/await (.executeAsyncScript mn NAV-JS [TOP])) (str "fixture " TOP " did not load"))
      (js/await (.setContext mn "content"))
      (let [r (chrome-eval (str "const c=document.createElement('div'); c.style.backgroundColor='Canvas'; document.body.appendChild(c);"

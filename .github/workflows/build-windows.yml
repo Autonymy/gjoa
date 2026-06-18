@@ -45,7 +45,7 @@ jobs:
             nasm yasm unzip zip \
             python3 python3-pip \
             aria2 msitools p7zip-full cabextract dos2unix \
-            xvfb mesa-utils libgl1-mesa-dri \
+            xvfb mesa-utils libgl1-mesa-dri libnvidia-egl-wayland1 x11-utils \
             pkg-config nodejs
 
       - name: Maximize build space
@@ -112,6 +112,16 @@ jobs:
           # the SDK's fxc.exe compiles the D3D shaders fine under this wine, headless.
           ./mach python --virtualenv build taskcluster/scripts/misc/get_vs.py build/vs/vs2026.yaml ~/win-cross/vs2026
           chmod -R +x ~/win-cross/vs2026 || true
+          # fxc2 — Mozilla's HLSL compiler for Linux→Windows cross. The SDK fxc.exe
+          # under wine falls back to builtin vkd3d, which can't parse FF's shaders
+          # (CompositorD3D11.hlsl E5000 syntax error). fxc2.exe bundles the REAL
+          # d3dcompiler_47.dll (build-mingw-fxc2-x86.sh:16-17) and is exactly what
+          # Mozilla's own cross build uses (browser/config/mozconfigs/win64/mingwclang).
+          aria2c --dir="$HOME" -o fxc2.tar.zst "https://firefox-ci-tc.services.mozilla.com/api/index/v1/task/gecko.cache.level-1.toolchains.v3.linux64-mingw-fxc2-x86.latest/artifacts/public%2Fbuild%2Ffxc2.tar.zst"
+          tar --zstd -xf "$HOME/fxc2.tar.zst" -C ~/win-cross
+          rm -f "$HOME/fxc2.tar.zst"
+          test -f ~/win-cross/fxc2/bin/fxc2.exe || { echo "::error::fxc2.exe missing after extract"; ls -R ~/win-cross/fxc2 2>/dev/null | head -20; exit 1; }
+          chmod -R +x ~/win-cross/fxc2 || true
           ls ~/win-cross
 
       - name: Write mozconfig (cross)
@@ -136,6 +146,10 @@ jobs:
           export WINSYSROOT="$HOME/win-cross/vs2026"
           export WINE="$HOME/win-cross/wine/bin/wine"
           export WINEDEBUG=-all
+          # Force the shader compiler to fxc2 (bundles the real d3dcompiler_47.dll),
+          # overriding moz.configure's check_prog which would pick the SDK fxc.exe
+          # → builtin vkd3d → can't compile FF's HLSL.
+          export FXC="$HOME/win-cross/fxc2/bin/fxc2.exe"
           export MOZ_STUB_INSTALLER=1
           export MOZ_PKG_FORMAT=TAR
           export CROSS_BUILD=1
@@ -166,10 +180,18 @@ jobs:
         run: |
           export MOZBUILD_STATE_PATH="$HOME/.mozbuild"
           [ -f "$HOME/.cargo/env" ] && . "$HOME/.cargo/env" || true
-          # Headless — NO Xvfb/DISPLAY. zen gates Xvfb behind !ZEN_CROSS_COMPILING
-          # (release-build.sh:22-27): it's only for the native Linux profile build.
-          # The SDK's fxc.exe is a CLI tool and compiles the D3D shaders under wine
-          # without a display; Mozilla's own taskcluster cross-build is headless too.
+          # fxc2.exe runs under wine; initializing its first prefix + the
+          # d3dcompiler OLE apartment needs an X display (else "explorer process
+          # failed to start" / "no driver could be loaded"). Start Xvfb and WAIT
+          # for it to accept connections before building (a race here was why the
+          # earlier fxc2 attempt died in 0.13s).
+          Xvfb :2 -nolisten tcp -noreset -screen 0 1024x768x24 >/tmp/xvfb.log 2>&1 &
+          export DISPLAY=:2
+          for i in $(seq 1 15); do xdpyinfo -display :2 >/dev/null 2>&1 && break; sleep 1; done
+          xdpyinfo -display :2 >/dev/null 2>&1 && echo "Xvfb ready on :2" || { echo "WARN: Xvfb not ready"; cat /tmp/xvfb.log || true; }
+          # Pre-initialize the wine prefix once (with the display up) so the build's
+          # fxc2 invocations don't each pay the explorer/prefix-init window dance.
+          "$HOME/win-cross/wine/bin/wine" wineboot --init 2>/tmp/wineboot.log || true
           ./mach build -j2
 
       - name: Package

@@ -197,14 +197,14 @@ jobs:
           export WINEPREFIX="$HOME/.wine"
           export WINEDLLOVERRIDES="d3dcompiler_47=n"
           W="$HOME/win-cross/wine/bin/wine"; F="$HOME/win-cross/fxc2/bin/fxc2.exe"
-          echo "=== files ==="; ls -l "$HOME/win-cross/fxc2/bin/"
-          file "$F" "$HOME/win-cross/fxc2/bin/d3dcompiler_47.dll" 2>/dev/null || true
-          echo "=== A: does fxc2 start at all? (no args) ==="
-          WINEDEBUG=fixme-all "$W" "$F" 2>&1 | head -25; echo "no-arg exit: $?"
-          echo "=== B: which d3dcompiler loads + module errors ==="
-          WINEDEBUG=+loaddll "$W" "$F" -nologo -Tvs_4_0_level_9_3 gfx/layers/d3d11/CompositorD3D11.hlsl -ELayerQuadVS -Fh/tmp/o.h 2>&1 | grep -iE "d3dcompiler|err:module|err:|cannot|Loaded" | head -40
-          echo "=== C: real compile output (default debug) ==="
-          WINEDEBUG=fixme-all "$W" "$F" -nologo -Tvs_4_0_level_9_3 gfx/layers/d3d11/CompositorD3D11.hlsl -ELayerQuadVS -Fh/tmp/o.h 2>&1 | head -30; echo "compile exit: $?"
+          # EXACT genshaders.py invocation (run_fxc): -Vn<name> -Vi -DVERTEX_SHADER -Fh
+          ARGS="-nologo -Tvs_4_0_level_9_3 gfx/layers/d3d11/CompositorD3D11.hlsl -ELayerQuadVS -VnLayerQuadVS -Vi -DVERTEX_SHADER -Fh/tmp/o.h"
+          echo "=== which d3dcompiler_47 does wine load? (native=fxc2 bundled / builtin=vkd3d) ==="
+          WINEDEBUG=+loaddll "$W" "$F" $ARGS 2>&1 | grep -iE "d3dcompiler" | head
+          echo "=== real compile: fxc2 output + exit ==="
+          WINEDEBUG=fixme-all "$W" "$F" $ARGS >/tmp/fxc.out 2>&1; echo "fxc2 exit: $?"
+          head -40 /tmp/fxc.out
+          echo "=== header produced? ==="; ls -l /tmp/o.h 2>&1 | head -2; head -2 /tmp/o.h 2>/dev/null
           true
 
       - name: Build

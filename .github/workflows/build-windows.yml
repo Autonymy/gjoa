@@ -46,8 +46,17 @@ jobs:
         uses: Bogdanp/setup-racket@v1.15
         with:
           version: 'stable'
+      # beagle has runtime/src/{dd,mk,pp}/con.clj — `con` is a Windows RESERVED
+      # device name, so a normal checkout dies (exit 128, "invalid path"). They're
+      # test fixtures beagle-build doesn't need, so clone without checkout and use
+      # sparse-checkout to populate everything EXCEPT them.
       - name: Checkout beagle (sibling compiler)
-        run: git clone --depth 1 https://github.com/tompassarelli/beagle.git ../beagle
+        run: |
+          git clone --no-checkout --depth 1 https://github.com/tompassarelli/beagle.git ../beagle
+          git -C ../beagle sparse-checkout set --no-cone '/*' \
+            '!/runtime/src/dd/con.clj' '!/runtime/src/mk/con.clj' '!/runtime/src/pp/con.clj'
+          test -f ../beagle/bin/beagle-build || { echo "beagle-build missing after sparse checkout"; exit 1; }
+          test -d ../beagle/beagle-lib || { echo "beagle-lib missing after sparse checkout"; exit 1; }
       - name: Register beagle collection
         run: raco pkg install --link --batch --no-docs ../beagle/beagle-lib
 

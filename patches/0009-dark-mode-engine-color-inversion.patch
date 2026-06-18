@@ -5,6 +5,7 @@
 #     - servo/components/style/device/gecko.rs
 #     - layout/base/nsPresContext.h
 #     - layout/base/nsPresContext.cpp
+#     - layout/base/PresShell.cpp
 #     - dom/chrome-webidl/BrowsingContext.webidl
 #     - docshell/base/BrowsingContext.h
 #     - docshell/base/BrowsingContext.cpp
@@ -28,6 +29,19 @@ style-resolution time (the performant successor to the compositor filter:invert)
 The "engine" dark-mode mode (src/gjoa chrome) forces prefers-color-scheme:light
 then flips this flag, so sites render light and the engine inverts to dark.
 
+Dark-mode-v2 Tier b (no flash-of-light in the per-site "hybrid" mode):
+- nsPresContext: mHybridDefaultInvert + ApplyHybridDefaultInvertIfThemeless().
+  In hybrid mode a top document starts UN-inverted, so its first cascade exposes
+  the page's AUTHORED background. PresShell::Initialize then reads that root
+  background (un-inverted = accurate) and, for a themeless page (light or
+  transparent), flips the whole document to inverted BEFORE first paint — so it
+  renders dark with no flash. A page that authored its own dark theme is left
+  native. Gated on pref gjoa.darkmode.hybrid.default-invert.
+- DefaultBackgroundColor(): when inverting a light-scheme document, the canvas /
+  inter-page backstop is luminance-inverted too, so no white frame flashes
+  between navigations or behind suppressed paints.
+- PresShell.cpp: the one call site (ApplyHybridDefaultInvertIfThemeless), placed
+  after the root frame is built and before painting is unsuppressed.
 diff --git a/docshell/base/BrowsingContext.cpp b/docshell/base/BrowsingContext.cpp
 index e8b50c6548..b5c5194ead 100644
 --- a/docshell/base/BrowsingContext.cpp
@@ -135,11 +149,44 @@ index d0508a8c29..da80d54f18 100644
    // Animation playbackRate multiplier, for Devtools
    [SetterThrows] attribute double animationsPlayBackRateMultiplier;
  
+diff --git a/layout/base/PresShell.cpp b/layout/base/PresShell.cpp
+index 9d651a17a9..fd2dfbc81a 100644
+--- a/layout/base/PresShell.cpp
++++ b/layout/base/PresShell.cpp
+@@ -1703,6 +1703,12 @@ nsresult PresShell::Initialize() {
+     NS_ENSURE_STATE(!mHaveShutDown);
+   }
+ 
++  // gjoa hybrid dark mode: the first (un-inverted) cascade has built the root
++  // frame, so its authored background is now readable. Flip a themeless document
++  // to inverted (dark) before painting is unsuppressed, so it renders dark from
++  // the first paint with no flash; native-dark pages are left untouched.
++  mPresContext->ApplyHybridDefaultInvertIfThemeless();
++
+   mDocument->MaybeScheduleRendering();
+ 
+   NS_ASSERTION(rootFrame, "How did that happen?");
 diff --git a/layout/base/nsPresContext.cpp b/layout/base/nsPresContext.cpp
-index b2394c6106..ce3725d676 100644
+index b2394c6106..d4cdbe4398 100644
 --- a/layout/base/nsPresContext.cpp
 +++ b/layout/base/nsPresContext.cpp
-@@ -327,6 +327,7 @@ nsPresContext::nsPresContext(dom::Document* aDocument, nsPresContextType aType)
+@@ -33,6 +33,7 @@
+ #include "mozilla/Preferences.h"
+ #include "mozilla/PresShell.h"
+ #include "mozilla/PresShellInlines.h"
++#include "mozilla/RelativeLuminanceUtils.h"
+ #include "mozilla/RestyleManager.h"
+ #include "mozilla/SMILAnimationController.h"
+ #include "mozilla/ServoBindings.h"
+@@ -70,6 +71,7 @@
+ #include "nsCOMPtr.h"
+ #include "nsCRT.h"
+ #include "nsCSSFrameConstructor.h"
++#include "nsCSSRendering.h"
+ #include "nsContentUtils.h"
+ #include "nsDeviceContext.h"
+ #include "nsDocShell.h"
+@@ -327,6 +329,7 @@ nsPresContext::nsPresContext(dom::Document* aDocument, nsPresContextType aType)
  
    UpdateFontVisibility();
    UpdateForcedColors(/* aNotify = */ false);
@@ -147,7 +194,7 @@ index b2394c6106..ce3725d676 100644
  }
  
  static const char* gExactCallbackPrefs[] = {
-@@ -340,6 +341,7 @@ static const char* gExactCallbackPrefs[] = {
+@@ -340,6 +343,7 @@ static const char* gExactCallbackPrefs[] = {
      "layout.css.text-autospace.enabled",
      "layout.css.text-transform.uppercase-eszett.enabled",
      "privacy.trackingprotection.enabled",
@@ -155,7 +202,7 @@ index b2394c6106..ce3725d676 100644
      nullptr,
  };
  
-@@ -532,6 +534,11 @@ void nsPresContext::PreferenceChanged(const char* aPrefName) {
+@@ -532,6 +536,11 @@ void nsPresContext::PreferenceChanged(const char* aPrefName) {
    }
  
    nsDependentCString prefName(aPrefName);
@@ -167,7 +214,7 @@ index b2394c6106..ce3725d676 100644
    if (prefName.EqualsLiteral("layout.css.dpi") ||
        prefName.EqualsLiteral("layout.css.devPixelsPerPx")) {
      int32_t oldAppUnitsPerDevPixel = mDeviceContext->AppUnitsPerDevPixel();
-@@ -775,6 +782,37 @@ void nsPresContext::UpdateForcedColors(bool aNotify) {
+@@ -775,6 +784,82 @@ void nsPresContext::UpdateForcedColors(bool aNotify) {
    }
  }
  
@@ -193,6 +240,14 @@ index b2394c6106..ce3725d676 100644
 +        return false;
 +      }
 +    }
++    // gjoa hybrid: a themeless top document is classified pre-paint by
++    // ApplyHybridDefaultInvertIfThemeless() (PresShell::Initialize), AFTER the
++    // first un-inverted cascade exposes the page's AUTHORED colors. That sets
++    // mHybridDefaultInvert and re-derives this flag; the bit is durable so later
++    // re-derives keep inverting the page.
++    if (mHybridDefaultInvert) {
++      return true;
++    }
 +    return Preferences::GetBool("gjoa.darkmode.invert.enabled", false);
 +  }();
 +  if (aNotify && mColorInversion != old) {
@@ -202,10 +257,47 @@ index b2394c6106..ce3725d676 100644
 +  }
 +}
 +
++// gjoa hybrid: called from PresShell::Initialize after the FIRST (un-inverted)
++// cascade has built the root frame, so the background we read here is the page's
++// AUTHORED color, not an inverted one (in hybrid mode this document starts
++// un-inverted; only ApplyHybridDefaultInvertIfThemeless flips it). If the page
++// did NOT author a dark theme -- background is light or transparent (the UA white
++// canvas shows through) -- flip the whole document to inverted pre-paint so it
++// renders dark from the first paint with no flash. A native-dark page (authored
++// luminance < 0.22, matching the JS actor's #luminance threshold) is left alone
++// and keeps its own theme. The decision is recorded in mHybridDefaultInvert so it
++// survives later UpdateColorInversion re-derives (durable).
++void nsPresContext::ApplyHybridDefaultInvertIfThemeless() {
++  if (mColorInversion || mHybridDefaultInvert) {
++    return;  // already inverting: explicit override, global pref, or prior call
++  }
++  if (!Preferences::GetBool("gjoa.darkmode.hybrid.default-invert", false)) {
++    return;
++  }
++  // An explicit actor/fix override (Active/Inactive) has already decided.
++  if (auto* bc = mDocument->GetBrowsingContext()) {
++    if (bc->Top()->ColorInversionOverride() != ColorInversionOverride::None) {
++      return;
++    }
++  }
++  nsIFrame* frame = FrameConstructor()->GetRootElementStyleFrame();
++  if (!frame) {
++    return;
++  }
++  auto bg = nsCSSRendering::FindEffectiveBackgroundColor(
++      frame, /* aStopAtThemed = */ true, /* aPreferBodyToCanvas = */ true);
++  const bool themeless = NS_GET_A(bg.mColor) == 0 ||
++                         RelativeLuminanceUtils::Compute(bg.mColor) >= 0.22f;
++  if (themeless) {
++    mHybridDefaultInvert = true;
++    UpdateColorInversion(/* aNotify = */ true);  // mColorInversion=true + restyle
++  }
++}
++
  bool nsPresContext::ForcingColors() const {
    return mForcedColors == StyleForcedColors::Active;
  }
-@@ -927,6 +965,7 @@ void nsPresContext::RecomputeBrowsingContextDependentData() {
+@@ -927,6 +1012,7 @@ void nsPresContext::RecomputeBrowsingContextDependentData() {
    }());
  
    UpdateForcedColors();
@@ -213,8 +305,30 @@ index b2394c6106..ce3725d676 100644
  
    SetInRDMPane(top->GetInRDMPane());
  
+@@ -1638,9 +1724,18 @@ nscolor nsPresContext::DefaultBackgroundColor() const {
+   if (!GetBackgroundColorDraw()) {
+     return NS_RGB(255, 255, 255);
+   }
+-  return PrefSheetPrefs()
+-      .ColorsFor(DefaultBackgroundColorScheme())
+-      .mDefaultBackground;
++  ColorScheme scheme = DefaultBackgroundColorScheme();
++  nscolor bg = PrefSheetPrefs().ColorsFor(scheme).mDefaultBackground;
++  // gjoa engine dark mode: when this document is being inverted but its default
++  // scheme is light, the canvas backstop / inter-page blank must be dark too, or
++  // a white frame flashes between navigations and behind suppressed paints.
++  // Mirror the servo luminance inversion (Y -> 1 - Y); alpha is preserved (the
++  // pref default background is opaque).
++  if (mColorInversion && scheme == ColorScheme::Light) {
++    bg = RelativeLuminanceUtils::Adjust(bg,
++                                        1.0f - RelativeLuminanceUtils::Compute(bg));
++  }
++  return bg;
+ }
+ 
+ nsDocShell* nsPresContext::GetDocShell() const {
 diff --git a/layout/base/nsPresContext.h b/layout/base/nsPresContext.h
-index 13aa7141c8..2794d77dda 100644
+index 13aa7141c8..b6ffd4b24d 100644
 --- a/layout/base/nsPresContext.h
 +++ b/layout/base/nsPresContext.h
 @@ -362,6 +362,10 @@ class nsPresContext : public nsISupports,
@@ -228,20 +342,31 @@ index 13aa7141c8..2794d77dda 100644
    bool ForcingColors() const;
  
    mozilla::ColorScheme DefaultBackgroundColorScheme() const;
-@@ -565,6 +569,7 @@ class nsPresContext : public nsISupports,
+@@ -565,8 +569,14 @@ class nsPresContext : public nsISupports,
    void SetInRDMPane(bool aInRDMPane);
    void UpdateInnerSizeSpoofedForRFP();
    void UpdateForcedColors(bool aNotify = true);
 +  void UpdateColorInversion(bool aNotify = true);
  
   public:
++  // gjoa hybrid dark mode: pre-paint, flip a themeless document to inverted
++  // (dark) after its first un-inverted cascade exposes the authored background.
++  // Native-dark pages are left untouched. Called from PresShell::Initialize.
++  void ApplyHybridDefaultInvertIfThemeless();
++
    float GetFullZoom() { return mFullZoom; }
-@@ -1440,6 +1445,8 @@ class nsPresContext : public nsISupports,
+   /**
+    * Device full zoom differs from full zoom because it gets the zoom from
+@@ -1440,6 +1450,12 @@ class nsPresContext : public nsISupports,
    FontVisibility mFontVisibility = FontVisibility::Unknown;
    mozilla::dom::PrefersColorSchemeOverride mOverriddenOrEmbedderColorScheme;
    mozilla::StyleForcedColors mForcedColors;
 +  // gjoa engine-level dark mode flag (content-only). See UpdateColorInversion.
 +  bool mColorInversion = false;
++  // gjoa hybrid: a themeless document classified pre-paint by
++  // ApplyHybridDefaultInvertIfThemeless. Durable per-document input to
++  // UpdateColorInversion so the flip survives later re-derives.
++  bool mHybridDefaultInvert = false;
  
   protected:
    virtual ~nsPresContext();

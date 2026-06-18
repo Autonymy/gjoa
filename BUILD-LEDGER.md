@@ -446,3 +446,36 @@ Folded the 1-line `serde_json` dependency edge into `patches/0008` (forward-appl
 on a pristine tree). New gate idea (K): preflight should `cargo metadata
 --frozen` (or grep that every Cargo.toml dep edge exists in Cargo.lock) so a
 crate added without a lock update fails preflight, not a 30-min CI build.
+
+## 2026-06-18 — Lane 3 mach build: dark-mode-v2 Tier b (no-FOUC hybrid)
+
+**Type:** incremental `./mach build` in `nix develop .#mach`, 1820 s (~30 min), 8
+warnings (all pre-existing / third-party). **Trigger:** Tier b — engine
+color-inversion polarity flip (`nsPresContext` + `PresShell::Initialize`) + the
+reworked `GjoaDarkmode` actors. **Outcome:** GREEN, first try. The dev binary
+loads the actors via `dist/bin/modules/*.sys.mjs` symlinks into the source tree
+(so edits are live without repacking omni.ja).
+
+**Validation:** darkmode suite **7/7 in isolation** — P0/P1/P2 global invert;
+legacy hybrid actor-invert; tier-b engine default-invert darkens a themeless
+`/light` page; tier-b native-dark `/dark` page keeps its theme. Full-suite 59/68
+with 9 fails, **all pre-existing, none Tier b**: 7 darkmode are a cascade from the
+real-network youtube player-prune test discarding the BC (pass 7/7 alone), 1
+youtube network flake, 1 adblock `content.protection` (fails identically on the
+pre-Tier-b `result/` binary — task #50).
+
+**Design pivot (pre-build):** the planned "default-invert-then-retract" was
+scrapped — the luminance inversion `Y -> 1-Y` is NOT losslessly reversible once
+channels clamp (saturated darks), so recovering authored luminance from an
+inverted read misclassifies them. Shipped the **polarity flip**: hybrid docs start
+un-inverted (first cascade = authored colors), `PresShell::Initialize` reads the
+authored root bg *directly* and flips themeless pages to inverted pre-paint;
+native-dark pages are left alone. A 4-dimension pre-build review caught **5
+blockers** (missing `PresShell.cpp` hunk in patch 0009, stale chrome bundle, the
+lossy math, a same-tab override clobber, an explicit-vs-refiner async race) — all
+fixed before the build, which then passed first try.
+
+**Fixture lesson:** a no-CSS page under hybrid's forced `prefers-color-scheme:dark`
+renders with the UA *dark* canvas — correctly NOT inverted. A real themeless-light
+site hardcodes a light bg; added a `/light` fixture for the invert assertion (the
+plain `/` no-bg page is not a valid themeless-light case under hybrid).

@@ -2,6 +2,7 @@
   "youtube.com": {
     "mode": "native",
     "override": "inactive",
+    "css": "html,body{background-color:#0f0f0f!important}",
     "inject": "(function(){\"use strict\";var d=document,D=d.documentElement;function m(){try{if(D&&!D.hasAttribute(\"dark\"))D.setAttribute(\"dark\",\"\");}catch(e){}}m();try{new MutationObserver(m).observe(D,{attributes:true,attributeFilter:[\"dark\"]});}catch(e){}})();"
   },
   "news.ycombinator.com": {

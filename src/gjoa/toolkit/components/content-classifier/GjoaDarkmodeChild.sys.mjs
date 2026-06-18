@@ -3,59 +3,72 @@
  * file, You can obtain one at https://mozilla.org/MPL/2.0/. */
 
 // Content half of the gjoa per-site dark-mode HYBRID actor (top documents only).
-// In "hybrid" mode the chrome module forces prefers-color-scheme:dark, so sites
-// with a native dark theme render it. This actor, one cascade behind (after
-// first paint), reads the EFFECTIVE page background; if the site stayed light
-// (no native dark theme) it sets browsingContext.colorInversionOverride =
-// "active", which nsPresContext reads to luminance-invert just this document.
-// Native-dark sites get "inactive" — kept native, never double-darkened.
+//
+// In hybrid mode the engine (gjoa.darkmode.hybrid.default-invert) classifies the
+// document pre-paint: a themeless page is flipped to inverted (dark) before first
+// paint, a page that authored its own dark theme is left native — so there is no
+// flash-of-light. This actor does two things on top of that:
+//
+//   document-start (DOMWindowCreated): ask the parent for an EXPLICIT curated
+//     decision (fix registry / user per-site pref) and apply its override + css
+//     + inject immediately, so curated sites (e.g. YouTube html[dark]) are
+//     correct from frame 1.
+//   post-paint (DOMContentLoaded): for sites with no explicit decision, a
+//     best-effort refiner — it samples the body/root background (probing the live
+//     inversion state to read it the right way round) and retracts the engine's
+//     invert for a site that turned out dark via LATE JS/CSS theming, which the
+//     engine's pre-paint root check ran too early to see.
 
 export class GjoaDarkmodeChild extends JSWindowActorChild {
   constructor() {
     super();
     this._sheetUri = null;
-    this._injected = false;
+    this._explicitApplied = false;
+    this._explicitPromise = null;
   }
 
   async handleEvent(event) {
+    if (this.browsingContext !== this.browsingContext.top) {
+      return; // subframes inherit the top document's decision (bc->Top())
+    }
     if (event.type === "DOMWindowCreated") {
-      // document-start: before the page reads its theme config, ask the parent
-      // for a per-site inject scriptlet (e.g. YouTube's html[dark]) and run it
-      // in the page main world so the FIRST cascade is native-dark.
-      if (this.browsingContext !== this.browsingContext.top) {
-        return;
-      }
-      // Reset any override INHERITED from the previous same-tab page, so this
-      // fresh document is measured from its AUTHORED colors — not the prior
-      // page's inverted result. Without this, a native-dark site entered from a
-      // themeless (inverted) one keeps "active", renders inverted, and the
-      // post-paint measurement reads the inverted (light) bg and stays inverted
-      // (circular). Tier b decides pre-paint at the engine level and removes the
-      // brief themeless re-measure flash this introduces.
+      // Reset any override INHERITED from the previous same-tab page so this
+      // fresh document starts from the engine's pre-paint default, then apply
+      // the curated/user decision (if any) at document-start. Store the promise
+      // SYNCHRONOUSLY so a DOMContentLoaded that fires before the IPC round-trip
+      // resolves can await it (else the refiner races the curated decision).
       try {
         this.browsingContext.colorInversionOverride = "none";
       } catch (e) {}
-      await this.#maybeInject();
+      this._explicitPromise = this.#applyExplicit();
+      await this._explicitPromise;
       return;
     }
     if (event.type !== "DOMContentLoaded") {
       return;
     }
-    const win = this.contentWindow;
-    if (!win || this.browsingContext !== this.browsingContext.top) {
-      return; // subframes inherit the top document's decision (bc->Top())
+    // Serialize against the document-start curated decision before deciding the
+    // refiner runs at all — otherwise both could write colorInversionOverride.
+    if (this._explicitPromise) {
+      try {
+        await this._explicitPromise;
+      } catch (e) {}
     }
-    // Decide one cascade behind: read the already-resolved background after the
-    // first two frames so the page's own (possibly dark) theme has applied.
+    if (this._explicitApplied) {
+      return; // a curated fix / user pref already decided at document-start
+    }
+    const win = this.contentWindow;
+    if (!win) {
+      return;
+    }
+    // Refine one cascade behind: read the resolved background after two frames
+    // so any late page theming has applied, then ask the parent to decide.
     win.requestAnimationFrame(() =>
-      win.requestAnimationFrame(() => this.#measureAndApply())
+      win.requestAnimationFrame(() => this.#measureAndRefine())
     );
   }
 
-  async #maybeInject() {
-    if (this._injected) {
-      return;
-    }
+  async #applyExplicit() {
     const win = this.contentWindow;
     const doc = this.document;
     if (!win || !doc) {
@@ -71,26 +84,43 @@ export class GjoaDarkmodeChild extends JSWindowActorChild {
     } catch (e) {
       return;
     }
-    if (!resp || !resp.inject) {
-      return;
+    if (!resp || !resp.explicit) {
+      return; // no curated fix / user pref — engine default-invert + auto decide
     }
-    this._injected = true;
-    // Run in the page's MAIN world at document-start (before the app boots) via a
-    // privileged Cu.Sandbox over the content window — NOT a <script> element,
-    // which the page CSP blocks (YouTube blocks inline scripts). Same channel
-    // discipline as GjoaCosmeticChild.injectScriptlets: sandboxPrototype=win +
-    // wantXrays=false so the scriptlet's writes (html[dark]) land on the page.
+    this._explicitApplied = true;
+    // Apply the curated decision at document-start, before first paint: the
+    // inject scriptlet (page main world), the curated USER_SHEET css, and the
+    // inversion override — together, so the site is correct from frame 1.
+    if (resp.inject) {
+      this.#runInject(win, resp.inject);
+    }
+    if (resp.css) {
+      this.#injectSheet(win, resp.css);
+    }
+    if (resp.override && resp.override !== "none") {
+      try {
+        this.browsingContext.colorInversionOverride = resp.override;
+      } catch (e) {}
+    }
+  }
+
+  // Run a per-site scriptlet in the page's MAIN world at document-start via a
+  // privileged Cu.Sandbox over the content window — NOT a <script> element,
+  // which the page CSP blocks (YouTube blocks inline scripts). sandboxPrototype
+  // = win + wantXrays = false so the scriptlet's writes (html[dark]) land on the
+  // page (same channel discipline as GjoaCosmeticChild.injectScriptlets).
+  #runInject(win, code) {
     try {
       const sandbox = Cu.Sandbox(win, {
         sandboxName: "gjoa-darkmode-inject",
         sandboxPrototype: win,
         wantXrays: false,
       });
-      Cu.evalInSandbox(resp.inject, sandbox);
+      Cu.evalInSandbox(code, sandbox);
     } catch (e) {}
   }
 
-  async #measureAndApply() {
+  async #measureAndRefine() {
     const doc = this.document;
     const win = this.contentWindow;
     if (!doc || !win || !doc.documentElement) {
@@ -100,9 +130,6 @@ export class GjoaDarkmodeChild extends JSWindowActorChild {
     if (!/^https?:/.test(url)) {
       return;
     }
-    // Measure up front (cheap sync getComputedStyle). The parent IGNORES it when
-    // a fix or pref matches (those branches return before reading hasNativeDark),
-    // so "skip measurement when a fix exists" holds with a SINGLE round-trip.
     const hasNativeDark = this.#pageIsDark(win, doc);
     let resp;
     try {
@@ -113,8 +140,6 @@ export class GjoaDarkmodeChild extends JSWindowActorChild {
     if (!resp) {
       return;
     }
-    // Fix CSS (Tier 1/2): inject as a page-CSS-proof USER_SHEET, same mechanism
-    // as GjoaCosmeticChild.rebuildSheet.
     if (resp.css) {
       this.#injectSheet(win, resp.css);
     }
@@ -152,8 +177,16 @@ export class GjoaDarkmodeChild extends JSWindowActorChild {
     }
   }
 
-  // Effective page background: body, then documentElement; first OPAQUE color
-  // wins. All transparent ⇒ the UA canvas (white) shows through ⇒ not dark.
+  // Coarse "is this page's AUTHORED background dark?" check for the refiner. The
+  // effective bg is body, then documentElement; first OPAQUE color wins (all
+  // transparent ⇒ the UA canvas shows ⇒ not dark). When the engine is currently
+  // inverting this document, the measured bg is the inverted authored color, so we
+  // flip the luminance (the inversion is a luminance map ~Y -> 1 - Y) to read it
+  // the right way round — without this, an inverted themeless page would read dark
+  // and be misclassified native-dark. This is a THRESHOLD test, not an exact
+  // recovery (channel clamping makes the flip approximate near the boundary); the
+  // engine's pre-paint check is the precise classifier, this only catches the
+  // late-theme tail.
   #pageIsDark(win, doc) {
     const read = el => {
       try {
@@ -171,9 +204,13 @@ export class GjoaDarkmodeChild extends JSWindowActorChild {
       // Skip only FULLY-transparent backgrounds. Gecko serializes opaque colors
       // as 3-arg `rgb(r, g, b)` and transparent as 4-arg `rgba(r, g, b, 0)`, so
       // the alpha test must require a real 4th channel — anchoring on the last
-      // comma alone would match the blue channel of `rgb(0, 0, 0)` (opaque
-      // black, the most common dark bg) and wrongly treat it as transparent.
-      if (c && c !== "transparent" && !/^rgba?\([^,)]*,[^,)]*,[^,)]*,\s*0(?:\.0+)?\s*\)$/.test(c)) {
+      // comma alone would match the blue channel of `rgb(0, 0, 0)` (opaque black,
+      // the most common dark bg) and wrongly treat it as transparent.
+      if (
+        c &&
+        c !== "transparent" &&
+        !/^rgba?\([^,)]*,[^,)]*,[^,)]*,\s*0(?:\.0+)?\s*\)$/.test(c)
+      ) {
         bg = c;
         break;
       }
@@ -181,7 +218,36 @@ export class GjoaDarkmodeChild extends JSWindowActorChild {
     if (!bg) {
       return false;
     }
-    return this.#luminance(bg) < 0.22;
+    let lum = this.#luminance(bg);
+    if (this.#inversionActive(win, doc)) {
+      lum = 1 - lum;
+    }
+    return lum < 0.22;
+  }
+
+  // Detect whether the engine is luminance-inverting this document by probing
+  // known swatches: under inversion white computes to black AND black to white.
+  // Requiring BOTH flips avoids a false positive from a stray user-!important /
+  // leftover USER_SHEET background spoofing a single swatch.
+  #inversionActive(win, doc) {
+    const read = bg => {
+      try {
+        const probe = doc.createElement("div");
+        probe.style.cssText =
+          "position:fixed;top:-9999px;left:-9999px;width:1px;height:1px;" +
+          "background-color:" + bg;
+        (doc.body || doc.documentElement).appendChild(probe);
+        const c = win.getComputedStyle(probe).backgroundColor;
+        probe.remove();
+        return c;
+      } catch (e) {
+        return "";
+      }
+    };
+    return (
+      read("rgb(255,255,255)") === "rgb(0, 0, 0)" &&
+      read("rgb(0,0,0)") === "rgb(255, 255, 255)"
+    );
   }
 
   #luminance(rgbStr) {

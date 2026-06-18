@@ -1,110 +1,99 @@
-# Dark-mode-v2 Tier b — no-FOUC + smarter engine (implementation-ready)
+# Dark-mode-v2 Tier b — no-flash hybrid (AS BUILT)
 
-Tier 1 (curated registry + YouTube native-dark) is shipped. Tier b removes the
-flash-of-white and raises the engine floor. **Lane 3 (engine rebuild).** It is
-**all-or-nothing**: change (A) alone breaks the actor (see "Why all-or-nothing").
+Tier 1 (curated registry + YouTube native-dark) shipped first. Tier b removes the
+flash-of-light in the per-site **hybrid** mode by moving the dark/native decision
+*before the first paint*, at the engine. **Lane 3 (engine rebuild).**
 
-## The flash today (after Tier 1)
-In hybrid mode a themeless page renders LIGHT, then ~2 frames later the actor
-sets `colorInversionOverride="active"` and it goes dark. Tier 1's actor reset (to
-`"none"` at document-start) made this re-measure happen on every navigation, so
-themeless pages flash light→dark consistently. Native-dark pages are fine (they
-render dark from frame 1).
+> This document was rewritten after implementation. The original plan was
+> "default every page to inverted at construction, then *retract* native-dark
+> pages by reading their (already-inverted) background and un-inverting it." A
+> pre-build review killed that: the luminance inversion `Y -> 1-Y` is **not**
+> losslessly reversible once channels clamp (saturated darks like navy/maroon),
+> so recovering the authored luminance from an inverted read misclassifies them.
+> The shipped design **flips the polarity** to avoid any recovery — see below.
 
-## The core insight (dissolves the chicken-and-egg)
-The servo color hook runs UPSTREAM of inversion: the pre-inversion AUTHORED color
-flows through `Color::to_computed_color` before `invert_color_luminance`. So the
-engine can sample the root/canvas background's *un-inverted* luminance at the
-exact place it decides whether to invert — no circularity (it reads the input to
-the hook, not its output). The JS actor cannot do this (getComputedStyle is
-post-inversion); the engine can.
+## The flash, and why pre-paint is the only cure
+A dark mode that may flash is easy (paint light, measure after paint, invert).
+That is exactly Tier 1, and you see the white frames. "No flash" forces the
+decision *before* the first paint — but whether a page is "already dark" is only
+knowable *after* it has styled itself. We resolve that paradox inside Firefox's
+existing **paint-suppression window** (the page is laid out but not yet revealed):
+classify there, commit, then reveal. One render, no clone, no wait-for-settle.
 
-## The five coordinated changes
+## The core move (polarity flip — dissolves the chicken-and-egg)
+In hybrid mode a top content document **starts un-inverted**. Its first cascade
+therefore computes the page's **AUTHORED** colors (accurate — nothing went through
+the inversion hook yet). At `PresShell::Initialize`, after the root frame exists
+but before paint is unsuppressed, we read the authored root background:
+- **themeless** (light or transparent ⇒ the UA white canvas shows) → flip the
+  whole document to inverted, pre-paint, so it renders dark from frame 1.
+- **native-dark** (authored luminance < 0.22) → leave it; it keeps its own theme.
 
-### (A) Hybrid defaults to inverted at the engine — `nsPresContext::UpdateColorInversion` (`nsPresContext.cpp:789`)
-After the `Inactive` check, before the global-pref fallback: if the override is
-`None` and `Preferences::GetBool("gjoa.darkmode.hybrid.default-invert", false)`,
-return `true`. So a themeless top http(s) doc has `mColorInversion=true` at
-construction — before first paint. "Start dark, maybe back off."
+No inverted-value recovery anywhere on the engine path: we read the authored color
+directly because the first cascade was never inverted.
 
-### (B) Pre-paint native-dark classification — `PresShell::Initialize` (`PresShell.cpp:1643`, after `ContentInserted` at `:1696`, before the paint-suppression block at `:1737`)
-Call a new `nsPresContext::ClassifyAuthoredRootDarkness()`:
-- Reads `FrameConstructor()->GetRootElementStyleFrame()` (exists here; same frame
-  `DefaultBackgroundColorScheme` reads at `nsPresContext.cpp:1670`).
-- Computes the **specified/authored** `background-color` (NOT the computed/
-  inverted one — the specified value never went through `to_computed_color`).
-- WCAG luminance test (`LookAndFeel::IsDarkColor`-style; threshold 0.22 to match
-  the JS `#luminance`). Returns tri-state dark / light / unknown.
-- If **dark** → set `mColorInversion=false` (retract; native-dark keeps its
-  theme). If **unknown** → leave the default-invert (themeless-safe).
+## The engine changes (patch `0009-dark-mode-engine-color-inversion.patch`)
 
-This runs BEFORE the paint-suppression timer arms, so the retraction lands before
-the first cascade is painted — native-dark sites never have an inverted frame.
+### `nsPresContext` — the flip + a durable bit
+- `mHybridDefaultInvert` (member): the pre-paint classification result. Durable so
+  it survives later `UpdateColorInversion` re-derives (BC field changes, etc.).
+- `UpdateColorInversion` precedence (unchanged head, new tail): override `Active`
+  → invert; override `Inactive` → don't; else `if (mHybridDefaultInvert) invert`;
+  else the global `gjoa.darkmode.invert.enabled` pref. The hybrid pref does **not**
+  force inversion at construction — that is what keeps the first cascade authored.
+- `ApplyHybridDefaultInvertIfThemeless()` (new): returns early if already inverting
+  / pref off / an explicit override already decided; reads
+  `nsCSSRendering::FindEffectiveBackgroundColor(rootStyleFrame, /*stopAtThemed*/true,
+  /*preferBodyToCanvas*/true)`; if transparent or `RelativeLuminanceUtils::Compute
+  (bg) >= 0.22` (themeless) sets `mHybridDefaultInvert=true` and calls
+  `UpdateColorInversion(true)` → flips `mColorInversion` + restyles pre-paint.
+- `DefaultBackgroundColor()`: when inverting a light-scheme document, returns the
+  luminance-inverted canvas background (`RelativeLuminanceUtils::Adjust(bg,
+  1-Compute(bg))`) so the canvas backstop / inter-page blank is dark, not white.
 
-### (C) Canvas backstop honors inversion — `nsPresContext::DefaultBackgroundColor()` (`nsPresContext.cpp:1676`)
-Currently returns `PrefSheetPrefs().ColorsFor(DefaultBackgroundColorScheme()).mDefaultBackground`.
-Gate: when `ColorInversion()` is true AND `DefaultBackgroundColorScheme()==ColorScheme::Light`,
-return the luminance-inverted light background (reuse the `RelativeLuminanceUtils::Adjust`
-math from the servo `invert_color_luminance`, `color.rs:279`) — opaque (the
-`LoadColors` opaque-force + `nsCanvasFrame` opacity assert require it). This one
-function feeds `GetDefaultBackgroundColorToDraw` / `ComputeCanvasBackground` /
-`ComputeBackstopColor`, covering both the suppressed-paint backstop and the
-inter-page blank. `mColorInversion` is already correct here (UpdateColorInversion
-runs in `nsPresContext::Init` before `Initialize`).
+### `PresShell::Initialize`
+One call: `mPresContext->ApplyHybridDefaultInvertIfThemeless()`, placed after the
+root `ContentInserted` block, before `MaybeScheduleRendering` and the paint-
+suppression setup. The restyle it posts flushes before the first paint (Gecko
+flushes style before paint within a refresh tick; paint is also suppressed here).
 
-### (D) Share the invert math — `color.rs:279`
-Factor `invert_color_luminance` so the C++ backstop (C) calls byte-identical math
-(shared `RelativeLuminanceUtils::Adjust` / a small FFI). No behavior change to the
-END-hook.
+## The chrome arm (`src/gjoa/chrome/bjs/dark-mode/index.bjs`)
+The `hybrid` mode arm sets `gjoa.darkmode.hybrid.default-invert` true (plus
+`prefers-color-scheme: dark` via content-override 0, so native-dark sites that key
+on the media query activate). Every other mode (`off`/`engine`/`filter`/`auto`)
+sets it false, so the engine flip never leaks outside hybrid.
 
-### (E) Chrome arm — `src/gjoa/chrome/bjs/dark-mode/index.bjs:70-86`
-Add a real `hybrid` arm to `apply!`: `set-chrome-scheme! true`, `set-content-override! 0`,
-`set-invert! false`, AND `set-pref-bool! "gjoa.darkmode.hybrid.default-invert" true`.
-EVERY other arm (`off`/`engine`/`filter`/`:else auto`) must set it `false` so the
-engine default never leaks into non-hybrid modes. Add the pref const near
-`PREF-INVERT` (`:23`).
+## The actor (refiner, not decider) — `GjoaDarkmode{Parent,Child}.sys.mjs`
+The engine is the primary classifier now. The actor does two things on top:
+- **document-start (DOMWindowCreated):** ask the parent for an EXPLICIT curated
+  decision (fix registry / user per-site pref) and apply its `override` + `css` +
+  `inject` immediately, so curated sites (YouTube `html[dark]` + a `#0f0f0f` USER
+  sheet) are correct from frame 1. The reset-to-`none` here clears any inherited
+  override so a fresh same-tab navigation re-classifies cleanly. The explicit work
+  is stored as a promise the DOMContentLoaded path awaits, so the refiner can never
+  race the curated decision.
+- **post-paint (DOMContentLoaded), refiner:** only for non-explicit sites. Samples
+  the body/root background, probing the live inversion state (white→black AND
+  black→white swatches) to read it the right way round, and retracts the engine's
+  invert (`override:"inactive"`) for a site that turned out dark via **late**
+  JS/CSS theming the pre-paint check ran too early to see. Best-effort, threshold-
+  based — the engine is the precise classifier.
 
-## Why all-or-nothing (do NOT ship A without B)
-With (A) default-invert + Tier 1's actor reset: a native-dark page resets to
-`none` → (A) makes `none`→invert → it renders inverted (light) → the actor
-measures the inverted (light) result → decides `active` → stays inverted. So (A)
-WITHOUT (B) inverts native-dark sites. (B) retracts pre-paint by reading the
-AUTHORED bg, which the actor cannot. Ship A+B+C+D+E together.
+## Known limitations / follow-ups
+- **Curated attribute-gated sites (e.g. YouTube)**: a ~1-IPC window where the
+  engine flip runs before the child's async `override:"inactive"` lands → a brief,
+  self-correcting double-dark. Fix: seed the curated override pre-layout from a
+  parent-process host check (task #49).
+- **Late-theme non-curated sites**: handled by the post-paint refiner with a brief
+  flash (same as Tier 1, no regression); the refiner's luminance flip is a coarse
+  threshold, not exact.
+- **Policy layer (task #48)**: discrete modes should become escape hatches; the
+  default should follow the system theme (system dark → hybrid engages). This sits
+  on top of the Tier-b mechanism.
 
-## The actor's new role (refiner, not decider) — the LOAD-BEARING subtlety
-The post-paint actor STAYS but is demoted to a refiner for cases the engine's
-root-only classifier misses (dark bg on an inner wrapper, late JS theming,
-per-site user overrides). CRITICAL: when the engine default is invert-on, the
-actor must read the AUTHORED root luminance, NOT the inverted computed style, or
-its detection breaks. Expose the engine's pre-inversion root luminance to the
-actor via a readonly `BrowsingContext` field set during (B)'s classification, so
-the actor never has to un-invert a computed read. Without this, flipping the
-default to invert breaks the actor (research pitfall 2).
-
-## Smarter algorithm (separable, also Lane 3)
-Skip inverting images/video/canvas in the servo invert path (the blunt invert
-currently mangles photos — the legacy filter path already counter-inverts media).
-Lower-risk than the FOUC; can ship independently to raise Tier 0's floor.
-
-## Build + validate
-1. `bun run import` (engine compiles from `engine/`, not `src/gjoa`).
-2. `bun run preflight` (gates A–I; the `gjoa preflight` wrapper currently points
-   at a stale `.ts` path — use `bun run preflight`).
-3. Full `./mach build` inside `nix develop .#mach`. Append outcome to BUILD-LEDGER.
-4. Tests — extend `tests/integration/darkmode-hybrid.bjs` (the `/dark` fixture
-   route already exists; the "actor keeps native-dark" assertion lands here, now
-   deterministic because (B) decides pre-paint, no cross-nav circularity):
-   - themeless paints inverted on FIRST paint (probe immediately, no rAF) — proves
-     (A)+(C) at construction/Initialize, not the actor.
-   - native-dark stays dark on first paint — proves (B) retracted pre-paint.
-   - canvas/Canvas system-color backstop is dark for a themeless doc — proves (C).
-   - actor refiner retracts an inner-wrapper-dark site the root classifier missed.
-5. `nix build .#gjoa --impure` for the native binary.
-
-## Runner-up (if `ClassifyAuthoredRootDarkness` proves unreliable at Initialize)
-Keep (A)+(C), drop (B), extend the paint-suppression window by one style flush
-(`nglayout.initialpaint.delay`) to do a synchronous pre-inversion root-bg check
-before unsuppressing. Adds first-paint latency on the hot path; the recommended
-approach decides within the existing pre-paint window with no added latency.
-
-Full research: session workflow `wf_dabd653c` (FOUC) + `wf_ea21f849` (quality).
+## Validation
+`tests/integration/darkmode-hybrid.bjs`: (1) engine default-invert darkens a
+themeless page; (2) a native-dark (`/dark`, authored `#111`) page keeps its theme
+(root stays dark + an injected white box stays white ⇒ inversion was not applied).
+Plus the P0/P1/P2 global-invert tests in `darkmode-invert.bjs` (unaffected:
+`default-invert` defaults off).

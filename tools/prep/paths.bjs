@@ -13,6 +13,9 @@
 ;; Source overlays (committed). Layered onto engine/ during import.
 (js/export (def SRC-DIR :- String (join REPO-ROOT "src" "gjoa")))
 
+;; Committed configs (branding assets, pinned tarball checksums, …).
+(js/export (def CONFIGS-DIR :- String (join REPO-ROOT "configs")))
+
 ;; Branding source (icons live here; text derived from mozilla `unofficial`).
 (js/export (def BRANDING-SRC :- String (join REPO-ROOT "configs" "branding" "gjoa")))
 

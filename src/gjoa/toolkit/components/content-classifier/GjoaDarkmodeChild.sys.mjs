@@ -187,6 +187,17 @@ export class GjoaDarkmodeChild extends JSWindowActorChild {
   // which the page CSP blocks (YouTube blocks inline scripts). sandboxPrototype
   // = win + wantXrays = false so the scriptlet's writes (html[dark]) land on the
   // page (same channel discipline as GjoaCosmeticChild.injectScriptlets).
+  //
+  // SECURITY INVARIANT (F7): with sandboxPrototype=win + wantXrays=false the
+  // scriptlet reads the page's RAW globals (w.JSON, w.Object, w.Element), so a
+  // hostile page can pre-plant getters/Proxies to observe or defeat it. This is
+  // the inherent uBO-style residual and is NOT an escalation — everything here
+  // runs with the CONTENT principal. The HARD rule: injected scriptlet code must
+  // NEVER be handed any privileged value (chrome object, Services, Cu/Cc/Ci, the
+  // actor's IPC handle) — the page can intercept every property access in this
+  // sandbox, so a leaked privileged ref would cross the content/chrome boundary.
+  // Only opaque code strings are evaluated here; never add chrome-side bindings
+  // onto the sandbox.
   #runInject(win, code) {
     try {
       const sandbox = Cu.Sandbox(win, {
@@ -194,6 +205,21 @@ export class GjoaDarkmodeChild extends JSWindowActorChild {
         sandboxPrototype: win,
         wantXrays: false,
       });
+      // Defensive intrinsic capture (F7): snapshot the page's native intrinsics
+      // ONCE at injection time so a scriptlet that closes over `__gjoaNative.*`
+      // reads the reference captured here rather than re-deref'ing the bare
+      // global, which a later page turn could swap. These are the page's own
+      // content-principal globals handed straight through (the sandbox already
+      // shares win's prototype) — NOT cloned, and never a chrome value. This
+      // narrows, does not close, the residual (a trap planted before
+      // document-start is still observed).
+      try {
+        sandbox.__gjoaNative = {
+          JSON: win.JSON,
+          Object: win.Object,
+          Element: win.Element,
+        };
+      } catch (e) {}
       Cu.evalInSandbox(code, sandbox);
     } catch (e) {}
   }

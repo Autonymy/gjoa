@@ -61,6 +61,25 @@ jobs:
             "https://archive.mozilla.org/pub/firefox/releases/${FF_VERSION}/source/firefox-${FF_VERSION}.source.tar.xz"
           ls -lh ~/.cache/gjoa/sources/firefox-${FF_VERSION}.source.tar.xz
 
+      # F9 hardening: verify the downloaded tarball against the IN-REPO pinned
+      # SHA-256 (configs/firefox-${FF_VERSION}.sha256) BEFORE extracting. The
+      # pin is committed + reviewed, so unlike a same-origin SHA256SUMS it can't
+      # be swapped by an origin/TLS compromise. Compare the computed hash to the
+      # pinned value (first field of the pin file) — path-independent.
+      - name: Verify tarball checksum (pinned)
+        run: |
+          PIN="configs/firefox-${FF_VERSION}.sha256"
+          test -f "$PIN" || { echo "missing pinned checksum: $PIN"; exit 1; }
+          expected=$(grep -v '^#' "$PIN" | awk 'NF{print $1; exit}')
+          actual=$(sha256sum ~/.cache/gjoa/sources/firefox-${FF_VERSION}.source.tar.xz | awk '{print $1}')
+          echo "expected: $expected"
+          echo "actual:   $actual"
+          if [ "$expected" != "$actual" ]; then
+            echo "::error::Firefox tarball SHA-256 does not match pinned value in $PIN"
+            exit 1
+          fi
+          echo "tarball checksum OK (matches pinned $PIN)"
+
       - name: Extract source
         run: |
           mkdir -p engine

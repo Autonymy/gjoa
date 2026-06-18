@@ -3,14 +3,29 @@
 ;; Mirrors Mozilla's release URL convention, checks SHA256 against the published
 ;; SHA256SUMS, caches under SOURCES_CACHE, and strips the firefox-VERSION/ level
 ;; so engine/ holds the source tree directly.
+;;
+;; Trust model (F9 hardening): the live SHA256SUMS is fetched from the SAME
+;; origin as the tarball, so on its own it is a single trust anchor — an
+;; origin/TLS compromise could serve a backdoored tarball + matching SHA256SUMS.
+;; We close that by anchoring on an IN-REPO pinned hash (configs/firefox-
+;; <version>.sha256, committed + reviewed) and asserting the live SHA256SUMS
+;; entry against it; the attacker can't change the committed file. When gpg is
+;; available we ALSO verify SHA256SUMS.asc against Mozilla's release-signing key
+;; (fingerprint pinned below) as defense-in-depth.
 (ns gjoa.tools.prep.download
-  (:require [fs :refer [existsSync mkdirSync statSync]]
+  (:require [fs :refer [existsSync mkdirSync readFileSync statSync]]
             [path :refer [join]]
             [gjoa.tools.prep.config :refer [load-config!]]
-            [gjoa.tools.prep.paths :refer [ENGINE-DIR REPO-ROOT SOURCES-CACHE]]
+            [gjoa.tools.prep.paths :refer [ENGINE-DIR REPO-ROOT SOURCES-CACHE CONFIGS-DIR]]
             [gjoa.tools.prep.log :refer [log]]))
 (define-mode strict)
 (declare-extern [Bun fetch Number Error] Any)
+
+;; Mozilla "Software Releases" signing key fingerprint (rsa4096, pub 2015-07-17,
+;; uid <release@mozilla.com>). Pinned in-repo so a GPG verify of SHA256SUMS.asc
+;; trusts THIS key and nothing else, regardless of what a keyring is seeded with.
+(def MOZILLA-SIGNING-FPR :- String
+  "14F26682D0916CDD81E37B6D61B7B526D98F0353")
 
 ;; Mirrors Mozilla's release URL convention. Used for both .source.tar.xz and
 ;; the SHA256SUMS file that publishes its hash.
@@ -21,8 +36,96 @@
 (defn checksumUrl [version :- String] :- String
   (str "https://archive.mozilla.org/pub/firefox/releases/" version "/SHA256SUMS"))
 
+(defn signatureUrl [version :- String] :- String
+  (str "https://archive.mozilla.org/pub/firefox/releases/" version "/SHA256SUMS.asc"))
+
+;; In-repo pinned-hash file for a given version (the F9 trust anchor).
+(defn pinnedHashPath [version :- String] :- String
+  (join CONFIGS-DIR (str "firefox-" version ".sha256")))
+
 (defn tarballName [version :- String] :- String
   (str "firefox-" version ".source.tar.xz"))
+
+;; Parse a SHA256SUMS body for the tarball's hash. Mozilla lists files with
+;; subdirectory prefixes, e.g. `source/firefox-150.0.source.tar.xz` — match by
+;; basename. Returns nil if the tarball isn't listed.
+(defn hashFromSums [text :- String version :- String] :- Any
+  (let [want (tarballName version)
+        lines (.split text "\n")]
+    (loop [i 0]
+      (if (>= i (.-length lines))
+        nil
+        (let [parts (.split (.trim (aget lines i)) (RegExp. "\\s+"))
+              hash (aget parts 0)
+              file (aget parts 1)]
+          (if (and file (or (= file want) (.endsWith file (str "/" want))))
+            hash
+            (recur (+ i 1))))))))
+
+;; Read the in-repo pinned hash for this version (the F9 trust anchor). The
+;; committed file is `sha256sum -c`-shaped (`<hash>  <path>`); the same parser
+;; that reads SHA256SUMS reads it. Throws if the version isn't pinned — bumping
+;; FF_VERSION MUST add a configs/firefox-<version>.sha256 (see that file's
+;; header for how to derive it safely).
+(defn pinnedSha256 [version :- String] :- String
+  (let [p (pinnedHashPath version)]
+    (if (not (existsSync p))
+      (throw (Error. (str "no pinned checksum for firefox " version
+                          ".\n  expected: " p
+                          "\n  add it from the GPG-verified SHA256SUMS (see that file's header)."))))
+    (let [text (readFileSync p "utf8")
+          hash (hashFromSums text version)]
+      (if (not hash)
+        (throw (Error. (str "pinned checksum file does not list " (tarballName version) ": " p)))
+        hash))))
+
+;; Best-effort GPG verification of SHA256SUMS.asc against Mozilla's pinned
+;; release-signing key. Defense-in-depth on top of the in-repo pinned hash: if
+;; gpg isn't installed we log and skip (the pinned-hash assertion below is the
+;; load-bearing check, so absence of gpg never weakens the happy path). Returns
+;; true if verified, false if skipped/unavailable; throws on an actual bad sig.
+(defn verifySignature [version :- String sumsText :- String] :- Any
+  (let [probe (.spawnSync Bun ["gpg" "--version"] {:stdout "ignore" :stderr "ignore"})]
+    (if (not (.-success probe))
+      (do
+        (.warn log "gpg not available; skipping SHA256SUMS.asc signature check (pinned in-repo hash still enforced)")
+        false)
+      (let [ascRes (js/await (fetch (signatureUrl version)))]
+        (if (not (.-ok ascRes))
+          (throw (Error. (str "failed to fetch SHA256SUMS.asc: " (.-status ascRes))))
+          nil)
+        (let [asc (js/await (.text ascRes))
+              tmpDir (join SOURCES-CACHE ".gpg-verify")
+              keyPath (join tmpDir "mozilla.key")
+              sumsPath (join tmpDir "SHA256SUMS")
+              ascPath (join tmpDir "SHA256SUMS.asc")
+              keyRes (js/await (fetch (str "https://archive.mozilla.org/pub/firefox/releases/" version "/KEY")))]
+          (if (not (.-ok keyRes))
+            (throw (Error. (str "failed to fetch Mozilla KEY: " (.-status keyRes))))
+            nil)
+          (mkdirSync tmpDir {:recursive true})
+          (js/await (.write Bun keyPath (js/await (.text keyRes))))
+          (js/await (.write Bun sumsPath sumsText))
+          (js/await (.write Bun ascPath asc))
+          ;; Import the published KEY into an ephemeral keyring, then assert the
+          ;; signature was made by the PINNED fingerprint before trusting it.
+          (let [kr (join tmpDir "keyring.gpg")
+                imp (.spawnSync Bun ["gpg" "--no-default-keyring" "--keyring" kr "--import" keyPath]
+                                {:stdout "ignore" :stderr "ignore"})]
+            (if (not (.-success imp))
+              (throw (Error. "gpg: failed to import Mozilla KEY"))
+              nil)
+            ;; --status-fd 1 prints machine-readable VALIDSIG <fpr> ... lines.
+            (let [ver (.spawnSync Bun ["gpg" "--no-default-keyring" "--keyring" kr
+                                       "--status-fd" "1" "--verify" ascPath sumsPath]
+                                  {:stdout "pipe" :stderr "ignore"})
+                  out (.toString (.-stdout ver))]
+              (if (not (.includes out (str "VALIDSIG " MOZILLA-SIGNING-FPR)))
+                (throw (Error. (str "SHA256SUMS.asc not signed by pinned Mozilla key "
+                                    MOZILLA-SIGNING-FPR "\n  gpg --status output:\n" out)))
+                nil)
+              (.ok log (str "SHA256SUMS.asc GPG-verified against pinned Mozilla key " MOZILLA-SIGNING-FPR))
+              true)))))))
 
 (defn fetchSha256 [version :- String] :- Any
   (.step log (str "fetching upstream SHA256SUMS for firefox " version))
@@ -31,19 +134,24 @@
       (throw (Error. (str "failed to fetch SHA256SUMS: " (.-status res))))
       nil)
     (let [text (js/await (.text res))
-          ;; Mozilla's SHA256SUMS lists files with subdirectory prefixes, e.g.
-          ;; `source/firefox-150.0.source.tar.xz`. Match by basename.
-          want (tarballName version)
-          lines (.split text "\n")]
-      (loop [i 0]
-        (if (>= i (.-length lines))
-          (throw (Error. (str "SHA256SUMS does not list " want)))
-          (let [parts (.split (.trim (aget lines i)) (RegExp. "\\s+"))
-                hash (aget parts 0)
-                file (aget parts 1)]
-            (if (and file (or (= file want) (.endsWith file (str "/" want))))
-              hash
-              (recur (+ i 1)))))))))
+          liveHash (hashFromSums text version)]
+      (if (not liveHash)
+        (throw (Error. (str "SHA256SUMS does not list " (tarballName version))))
+        nil)
+      ;; F9 trust anchor: the live SHA256SUMS comes from the SAME origin as the
+      ;; tarball, so it can't be the sole authority. Assert it against the
+      ;; in-repo pinned hash — a backdoored tarball + matching same-origin
+      ;; SHA256SUMS can't move this committed value.
+      (let [pinned (pinnedSha256 version)]
+        (if (not= liveHash pinned)
+          (throw (Error. (str "live SHA256SUMS disagrees with pinned checksum for firefox " version
+                              ".\n  pinned: " pinned
+                              "\n  live:   " liveHash
+                              "\n  refusing to trust same-origin checksum over the committed pin.")))
+          nil))
+      ;; Defense-in-depth: verify the detached signature when gpg is present.
+      (js/await (verifySignature version text))
+      liveHash)))
 
 (defn sha256OfFile [path :- String] :- Any
   (let [file (.file Bun path)

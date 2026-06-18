@@ -1,0 +1,14 @@
+# Pinned SHA-256 of the Firefox source tarball for FF_VERSION 152.0.
+#
+# This is an in-repo trust anchor (committed, reviewed) that is INDEPENDENT of
+# the live SHA256SUMS Mozilla serves from the same origin as the tarball. The
+# download/verify path asserts the live checksum against THIS pinned value, so
+# an origin/TLS compromise that serves a backdoored tarball + matching
+# SHA256SUMS still fails verification (the attacker cannot change this file).
+#
+# Format is `sha256sum -c` compatible: `<hash>  <path-as-listed-in-SHA256SUMS>`.
+# To bump FF_VERSION: add a configs/firefox-<version>.sha256 with the value from
+# https://archive.mozilla.org/pub/firefox/releases/<version>/SHA256SUMS, after
+# verifying that file's GPG signature (SHA256SUMS.asc) against Mozilla's
+# release-signing key fingerprint 14F26682D0916CDD81E37B6D61B7B526D98F0353.
+5e5f9acb550d065a43934e0fcd11ed3ec22f7266fc9ad63df757406b432a5127  source/firefox-152.0.source.tar.xz

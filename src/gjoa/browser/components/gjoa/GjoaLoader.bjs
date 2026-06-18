@@ -19,7 +19,7 @@
 ;;   chrome JS. No user-writable script directory exists; no hash-pinning
 ;;   needed because there's nothing to tamper with.
 ;;
-;; DEV MODE (<install_root>/gjoa-dev/ directory present):
+;; DEV MODE (opt-in via GJOA_DEV_LOADER=1 AND <install_root>/gjoa-dev/ present):
 ;;   The loader reads .uc.js / .uc.css files from <install_root>/gjoa-dev/
 ;;   directly at startup. Used for sub-second iteration on chrome JS without
 ;;   re-running mach build. Trust boundary: anyone who can write to the
@@ -28,11 +28,23 @@
 ;;   root can replace the binary" — same threat boundary, no new attack
 ;;   surface.
 ;;
-;; PRODUCTION HARDENING (deferred — see Stretch goal):
-;;   For shipped release builds, dev mode should be compiled out via a
-;;   build flag (e.g. MOZ_GJOA_DEV_LOADER=0). Even though the dev path
-;;   only triggers when <install_root>/gjoa-dev/ exists, defense-in-depth
-;;   says don't compile in code paths your release doesn't need.
+;;   F4 HARDENING (this file): the dev path is gated so it cannot activate by
+;;   accident or via a dropped directory in a RELEASE build:
+;;     1. OPT-IN — `dev-mode-dir` returns nil unless GJOA_DEV_LOADER=1 is set
+;;        in the environment, EVEN IF gjoa-dev/ exists. A dropped directory
+;;        alone is inert.
+;;     2. DEFENSE-IN-DEPTH — when the dir IS used, it must be a real (non-
+;;        symlink) directory that is NOT group- or other-writable
+;;        (permissions & 0o022 == 0). A symlinked or world/group-writable
+;;        gjoa-dev/ is refused (return nil → production fallback), so another
+;;        local user cannot drop or redirect scripts into a dev tree.
+;;
+;; PRODUCTION HARDENING (deferred — full belt is the compile-out):
+;;   The complete fix is to compile the dev path out of shipped release
+;;   builds entirely via a build flag (MOZ_GJOA_DEV_LOADER=0), so the code
+;;   path does not exist in the binary at all — defense-in-depth says don't
+;;   compile in code paths your release doesn't need. The runtime gate above
+;;   is the interim guard until that compile-out lands.
 ;;
 ;; =============================================================================
 ;; IMPLEMENTATION
@@ -79,13 +91,46 @@
 
 ;; --- Source resolution -------------------------------------------------------
 
-;; Returns the dev-mode source directory if it exists, else nil.
+;; Reads an environment variable, returning "" if unset or on any failure.
+;; Matches the gjoa.security pattern; nsIEnvironment.get never throws for a
+;; missing var but we stay defensive.
+(defn dev-env [name :- String] :- String
+  (try
+    (or (.get (.-env Services) name) "")
+    (catch Any _e "")))
+
+;; F4 defense-in-depth: a dev-source dir is trustworthy only if it is NOT group-
+;; or other-writable, so another local user can't drop/redirect scripts into the
+;; dev tree. The mach dev loop deliberately makes gjoa-dev a user-owned SYMLINK
+;; to dist/chrome (tools/chrome-bundle/install.bjs), so we must not reject
+;; symlinks outright — instead we check both the resolved target's mode (STAT, via
+;; .permissions) AND the link node's own mode (LSTAT, via .permissionsOfLink), so
+;; an attacker-writable symlink node is refused even if its current target looks
+;; safe. nsIFile exposes no scriptable owner uid, so we approximate "owned by the
+;; running user" by refusing any non-user-writable mode bits. Any read throwing →
+;; treat as unsafe. (Full belt = the deferred MOZ_GJOA_DEV_LOADER compile-out.)
+(defn dev-dir-safe? [dir :- Any] :- Boolean
+  (try
+    ;; 0o022 = group-write | other-write.
+    (and (= (bit-and (.-permissions dir) 0o022) 0)        ;; resolved target (STAT)
+         (= (bit-and (.-permissionsOfLink dir) 0o022) 0)) ;; link node itself (LSTAT)
+    (catch Any _e false)))
+
+;; Returns the dev-mode source directory if dev loading is explicitly enabled
+;; AND the dir exists AND passes the safety check, else nil.
 ;; Convention: <install_root>/gjoa-dev/{JS,CSS}/*.uc.{js,css}
 (defn dev-mode-dir [] :- Any
-  ;; GreD = Gecko runtime directory = the install root containing the binary.
-  (let [dir (.get (.-dirsvc Services) "GreD" (.-nsIFile Ci))]
-    (.append dir "gjoa-dev")
-    (if (and (.exists dir) (.isDirectory dir)) dir nil)))
+  ;; OPT-IN GATE: never source dev chrome unless GJOA_DEV_LOADER=1. A dropped
+  ;; gjoa-dev/ directory is inert without this env var, so the full-chrome-
+  ;; privilege dev path cannot activate by accident in a release build. The
+  ;; deferred full belt is the MOZ_GJOA_DEV_LOADER compile-out (see SECURITY
+  ;; MODEL above); this runtime gate is the interim guard.
+  (if (not= (dev-env "GJOA_DEV_LOADER") "1")
+    nil
+    ;; GreD = Gecko runtime directory = the install root containing the binary.
+    (let [dir (.get (.-dirsvc Services) "GreD" (.-nsIFile Ci))]
+      (.append dir "gjoa-dev")
+      (if (and (.exists dir) (.isDirectory dir) (dev-dir-safe? dir)) dir nil))))
 
 (defn list-files [dir :- Any suffix :- String] :- Any
   (let [out []]

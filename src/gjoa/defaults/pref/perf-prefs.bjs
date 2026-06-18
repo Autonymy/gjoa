@@ -40,7 +40,6 @@
 (pref "browser.discovery.enabled" false)
 (pref "app.normandy.enabled" false)
 (pref "app.shield.optoutstudies.enabled" false)
-(pref "browser.safebrowsing.downloads.remote.enabled" false)
 
 ;; --- Networking: SPEED-positive ---
 ;; Firefox ships prefetch / DNS-prefetch / speculative-connect ON. They were

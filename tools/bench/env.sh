@@ -16,7 +16,15 @@ fi
 # Persistent state file: the prepare and --restore invocations are separate
 # processes, so in-memory snapshots don't survive. Stash the pre-run values
 # here on the forward path and read them back on --restore.
-STATE_FILE="${GJOA_BENCH_STATE:-/var/tmp/gjoa-bench-env.state}"
+#
+# SECURITY: we run as root and read this file back, so it must live in a
+# root-only directory (NOT a world-writable one like /var/tmp, where an
+# unprivileged user could pre-create it). Default to a 0700 dir under /run,
+# owned by root. The override is honored but the same ownership/permission
+# checks below still apply before we trust the contents.
+STATE_DIR="${GJOA_BENCH_STATE_DIR:-/run/gjoa-bench}"
+mkdir -m700 -p "$STATE_DIR"
+STATE_FILE="${GJOA_BENCH_STATE:-$STATE_DIR/gjoa-bench-env.state}"
 
 GOV_FILE="/sys/devices/system/cpu/cpu0/cpufreq/scaling_governor"
 
@@ -102,12 +110,66 @@ snapshot_state() {
   fi
   local aslr
   aslr="$(cat /proc/sys/kernel/randomize_va_space)"
-  {
-    echo "TURBO=$(read_turbo)"
-    echo "GOVERNOR=$gov"
-    echo "ASLR=$aslr"
-  } > "$STATE_FILE"
+  # Create root-only (0600) and refuse to clobber a pre-existing file we did
+  # not create (set -C / noclobber), so an attacker can't seed it first.
+  rm -f "$STATE_FILE"
+  (
+    umask 077
+    set -C
+    {
+      echo "TURBO=$(read_turbo)"
+      echo "GOVERNOR=$gov"
+      echo "ASLR=$aslr"
+    } > "$STATE_FILE"
+  )
   echo "Saved pre-run state to $STATE_FILE (governor=$gov, aslr=$aslr)"
+}
+
+# Validate that STATE_FILE is safe to read back as root: a real regular file
+# (not a symlink), owned by root (uid 0), and not group/other-writable. Refuse
+# otherwise — a file an unprivileged user can control must never be trusted by
+# a root process. Returns non-zero on any failure.
+validate_state_file() {
+  local f="$1"
+  # -O: exists and is owned by the effective uid (root here). -L excludes
+  # symlinks; -f requires a regular file.
+  if [[ -L "$f" ]]; then
+    echo "ERROR: state file $f is a symlink; refusing to read." >&2
+    return 1
+  fi
+  if [[ ! -f "$f" ]]; then
+    echo "ERROR: state file $f is not a regular file; refusing to read." >&2
+    return 1
+  fi
+  if [[ ! -O "$f" ]]; then
+    echo "ERROR: state file $f is not owned by root; refusing to read." >&2
+    return 1
+  fi
+  # Reject group- or other-writable files (mode bits 0022).
+  local mode
+  mode="$(stat -c '%a' "$f")"
+  if (( 0$mode & 0022 )); then
+    echo "ERROR: state file $f is group/other-writable (mode $mode); refusing to read." >&2
+    return 1
+  fi
+  return 0
+}
+
+# Safely load the known keys from a validated state file WITHOUT sourcing it,
+# so arbitrary shell embedded in the file can never execute. Only TURBO,
+# GOVERNOR, and ASLR are recognized; everything else is ignored. Sets the
+# corresponding shell variables in the caller's scope.
+load_state_file() {
+  local f="$1"
+  local line key val
+  TURBO=""; GOVERNOR=""; ASLR=""
+  while IFS='=' read -r key val; do
+    case "$key" in
+      TURBO)    TURBO="$val" ;;
+      GOVERNOR) GOVERNOR="$val" ;;
+      ASLR)     ASLR="$val" ;;
+    esac
+  done < "$f"
 }
 
 # --- ASLR ---
@@ -152,9 +214,18 @@ print_state() {
 
 if $RESTORE; then
   echo "Restoring pre-run settings..."
-  if [[ -f "$STATE_FILE" ]]; then
-    # shellcheck source=/dev/null
-    source "$STATE_FILE"
+  if [[ -e "$STATE_FILE" ]]; then
+    if ! validate_state_file "$STATE_FILE"; then
+      echo "WARN: state file failed safety checks; applying safe defaults." >&2
+      enable_turbo
+      set_governor schedutil
+      enable_aslr
+      print_state
+      echo "Done. Machine restored to normal operation."
+      exit 0
+    fi
+    # Parse only the known keys; never source (no arbitrary shell execution).
+    load_state_file "$STATE_FILE"
     write_turbo "${TURBO:-}"
     set_governor "${GOVERNOR:-schedutil}"
     if [[ -n "${ASLR:-}" ]]; then

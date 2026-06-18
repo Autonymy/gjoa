@@ -10,6 +10,10 @@
 
 const ENABLED_PREF = "gjoa.contentblock.enabled";
 const ALLOW_HOSTS_PREF = "gjoa.contentblock.user.allow-hosts";
+// gjoa policy is curated-only scriptlets. The engine's general/list-driven
+// `+js()` expansion is opt-in and DEFAULTS OFF; only the curated baseline
+// (e.g. YOUTUBE_PRUNE) runs unless the user explicitly flips this pref.
+const LIST_SCRIPTLETS_PREF = "gjoa.contentblock.scriptlets.listDriven.enabled";
 
 // --- Curated scriptlets ------------------------------------------------------
 // gjoa's "curated-only scriptlets" policy: a small, hand-maintained set of JS
@@ -183,9 +187,12 @@ export class GjoaCosmeticParent extends JSWindowActorParent {
 
       // Document-start scriptlets for this URL's host. Returned separately from
       // the cosmetic CSS because they must run BEFORE page scripts (the cosmetic
-      // path fires on DOMContentLoaded, too late for a player pre-roll). Today
-      // this serves the curated set; once the engine's scriptlet resources are
-      // wired it will also fold in `injected` from getUrlCosmeticResources.
+      // path fires on DOMContentLoaded, too late for a player pre-roll). By
+      // default this serves ONLY the curated set (gjoa policy: curated-only
+      // scriptlets). The engine's list-driven `injected` scriptlet IS wired, but
+      // gated behind LIST_SCRIPTLETS_PREF (default OFF): an arbitrary list-driven
+      // `+js()` rule injecting unaudited JS into the page's main world is exactly
+      // what the curated-only policy excludes, so it stays opt-in.
       case "Cosmetic:GetScriptlets": {
         const url = this.trustedUrl();
         if (!blockingActive(url)) {
@@ -195,20 +202,24 @@ export class GjoaCosmeticParent extends JSWindowActorParent {
         // Engine-produced scriptlets: adblock-rust expands this URL's `+js()`
         // rules (from the uBO lists) against the loaded scriptlet resource
         // library into one injectable string. This is the general/list-driven
-        // path; the curated set above is a guaranteed baseline.
-        const svc = classifierService();
-        if (svc) {
-          try {
-            const hide = {};
-            const proc = {};
-            const exc = {};
-            const injected = {};
-            const generichide = {};
-            svc.getUrlCosmeticResources(url, hide, proc, exc, injected, generichide);
-            if (injected.value) {
-              out.push(injected.value);
-            }
-          } catch (e) {}
+        // path; the curated set above is a guaranteed baseline. Per gjoa's
+        // curated-only policy this list-driven injection is DISABLED by default
+        // and only folded in when LIST_SCRIPTLETS_PREF is explicitly enabled.
+        if (Services.prefs.getBoolPref(LIST_SCRIPTLETS_PREF, false)) {
+          const svc = classifierService();
+          if (svc) {
+            try {
+              const hide = {};
+              const proc = {};
+              const exc = {};
+              const injected = {};
+              const generichide = {};
+              svc.getUrlCosmeticResources(url, hide, proc, exc, injected, generichide);
+              if (injected.value) {
+                out.push(injected.value);
+              }
+            } catch (e) {}
+          }
         }
         return out.length ? { scriptlets: out } : null;
       }
@@ -222,12 +233,21 @@ export class GjoaCosmeticParent extends JSWindowActorParent {
         if (!svc) {
           return null;
         }
+        // Clamp the child-supplied arrays before handing them to the
+        // synchronous, globally-locked native call. A compromised content
+        // process could otherwise send huge arrays of huge strings to stall the
+        // parent main thread and contend the cross-tab engine lock (DoS). Drop
+        // non-strings, cap per-element length and total count.
+        const clamp = a =>
+          (Array.isArray(a) ? a : [])
+            .filter(s => typeof s === "string" && s.length <= 256)
+            .slice(0, 4096);
         const selectors = {};
         try {
           svc.getHiddenClassIdSelectors(
-            msg.data?.classes || [],
-            msg.data?.ids || [],
-            msg.data?.exceptions || [],
+            clamp(msg.data?.classes),
+            clamp(msg.data?.ids),
+            clamp(msg.data?.exceptions),
             selectors
           );
         } catch (e) {

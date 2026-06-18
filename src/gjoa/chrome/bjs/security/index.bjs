@@ -2,7 +2,7 @@
 (ns gjoa.security.index)
 (define-mode strict)
 
-(declare-extern [Services console fetch AbortSignal setTimeout setInterval parseInt RegExp Error] Any)
+(declare-extern [Services console fetch AbortSignal setTimeout setInterval parseInt RegExp Error Date] Any)
 
 (def PRODUCT-DETAILS-URL :- String
   "https://product-details.mozilla.org/1.0/firefox_versions.json")
@@ -10,6 +10,11 @@
 (def RECHECK-INTERVAL-MS :- Int (* 60 60 1000))
 
 (def FETCH-TIMEOUT-MS :- Int 8000)
+
+;; Shape guard for the upstream LATEST_FIREFOX_VERSION field: a bare dotted
+;; numeric (e.g. "152", "152.0", "152.0.1"). Anything else (HTML error page,
+;; "152.0esr", garbage) is rejected before it reaches parse-version / newer?.
+(def VERSION-RE :- Any (RegExp. "^\\d+(\\.\\d+){0,2}$"))
 
 (defn parse-version [v :- String] :- Any
   (let [cleaned (.trim (.replace v (RegExp. "esr$" "i") ""))
@@ -30,7 +35,12 @@
     (or (.get (.-env Services) name) "")
     (catch Any _e "")))
 
-(def state :- Any {:quitting false})
+;; :confirmed-at — epoch-ms of the last probe that actually read a well-formed
+;; LATEST_FIREFOX_VERSION from upstream (0 = never since launch). Lets the
+;; fail-open offline path distinguish "transiently offline after a good probe"
+;; from "never once confirmed this session" — a persistently-suppressed probe
+;; that would otherwise be silently indistinguishable from being up to date.
+(def state :- Any {:quitting false :confirmed-at 0})
 
 (defn quit-stale! [my-version :- String latest-version :- String] :- Any
   (when (not (.-quitting state))
@@ -67,10 +77,21 @@
           (.json r)))
         (.then (fn [j]
           (let [latest (or (.-LATEST_FIREFOX_VERSION j) nil)]
-            (when latest
-              (if (not (newer? my-version latest))
-                (.log console (str "[security] OK — " my-version
-                                   " matches or exceeds latest stable " latest))
+            (cond
+              (not latest)
+              (.warn console "[security] probe response missing LATEST_FIREFOX_VERSION — ignoring")
+
+              (not (.test VERSION-RE latest))
+              (.warn console
+                (str "[security] probe returned malformed LATEST_FIREFOX_VERSION ("
+                     latest ") — ignoring (expected bare dotted numeric)"))
+
+              :else
+              (do
+                (set! (.-confirmed-at state) (.now Date))
+                (if (not (newer? my-version latest))
+                  (.log console (str "[security] OK — " my-version
+                                     " matches or exceeds latest stable " latest))
                 (let [my (parse-version my-version)
                       up (parse-version latest)
                       major-behind (- (aget up 0) (aget my 0))]
@@ -84,9 +105,14 @@
                     (.warn console
                       (str "[security] STALE: running " my-version
                            ", latest is " latest
-                           " (same major, point behind) — gjoa status will show STALE; queue a rebuild for next Sunday")))))))))
+                           " (same major, point behind) — gjoa status will show STALE; queue a rebuild for next Sunday"))))))))))
         (.catch (fn [e]
-          (.log console "[security] probe failed — fail-open (offline?):" (.-message e)))))))
+          (if (= (.-confirmed-at state) 0)
+            (.warn console
+              (str "[security] probe failed and has NEVER confirmed current since launch"
+                   " — staleness is UNVERIFIED, not known-good (fail-open):")
+              (.-message e))
+            (.log console "[security] probe failed — fail-open (offline?, last confirmed current earlier this session):" (.-message e))))))))
 
 ;; init
 (defn init-! [] :- Any

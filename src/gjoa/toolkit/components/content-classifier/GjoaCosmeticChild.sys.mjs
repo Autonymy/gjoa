@@ -128,6 +128,19 @@ export class GjoaCosmeticChild extends JSWindowActorChild {
   // sandboxPrototype=win + wantXrays=false the scriptlet's writes to JSON.parse
   // / Response.json land on the page's real globals — exactly what a player
   // json-prune needs.
+  //
+  // SECURITY INVARIANT (F7): this sandbox shares the page's prototype chain
+  // (sandboxPrototype=win, wantXrays=false), so the page sees the scriptlet's
+  // RAW globals — w.JSON, w.Response, w.Object are all interceptable. A hostile
+  // page can pre-plant getters/Proxies to observe or defeat the scriptlet. This
+  // is the inherent uBO-style residual and is NOT an escalation: everything here
+  // runs with the CONTENT principal, so the worst case is the page tampering
+  // with content it already controls. The HARD rule: injected scriptlet code
+  // (resp.scriptlets) must NEVER be handed any privileged value (chrome object,
+  // Services, Cu/Cc/Ci, IPC handle) — the page can intercept every property
+  // access in this sandbox, so a leaked privileged ref would cross the
+  // content/chrome boundary. We only ever evalInSandbox opaque code strings here;
+  // do not add bindings onto the sandbox that expose anything chrome-side.
   async injectScriptlets() {
     const doc = this.document;
     const url = doc?.documentURI || "";
@@ -157,6 +170,29 @@ export class GjoaCosmeticChild extends JSWindowActorChild {
     } catch (e) {
       return;
     }
+    // Defensive intrinsic capture (F7). Snapshot the native intrinsics curated
+    // scriptlets (e.g. YOUTUBE_PRUNE's json-prune over JSON.parse/Response.json)
+    // read, ONCE at injection time, before any page script in a later turn can
+    // re-plant a getter/Proxy. A scriptlet that closes over `__gjoaNative.JSON`
+    // / `.Response` / `.Object` reads the reference captured here rather than
+    // re-deref'ing `w.JSON` on every call, so a page that swaps a global mid-run
+    // can't redirect it. These are the page's OWN content-principal globals
+    // (the sandbox already shares win's prototype) handed straight through — we
+    // deliberately do NOT cloneInto (that would drop the function intrinsics and
+    // break the scriptlet); per the invariant above, nothing chrome-side is ever
+    // placed on the sandbox. This NARROWS, does not CLOSE, the residual: a page
+    // that planted its trap BEFORE document-start is still observed (the inherent
+    // uBO-style residual), and the snapshot only helps scriptlets that opt into
+    // reading __gjoaNative instead of the bare global.
+    try {
+      sandbox.__gjoaNative = {
+        JSON: win.JSON,
+        Response: win.Response,
+        Object: win.Object,
+        Array: win.Array,
+        Promise: win.Promise,
+      };
+    } catch (e) {}
     for (const code of resp.scriptlets) {
       try {
         Cu.evalInSandbox(code, sandbox);

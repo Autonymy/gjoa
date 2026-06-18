@@ -91,7 +91,7 @@ index 8ea4179418..c69193e525 100644
  NS_IMETHODIMP ContentClassifierService::RemoveFilterList(
      const nsACString& aName) {
    MOZ_ASSERT(NS_IsMainThread());
-@@ -554,6 +585,97 @@ NS_IMETHODIMP ContentClassifierService::ApplyFilterLists() {
+@@ -554,6 +585,109 @@ NS_IMETHODIMP ContentClassifierService::ApplyFilterLists() {
    return NS_OK;
  }
  
@@ -106,6 +106,12 @@ index 8ea4179418..c69193e525 100644
 +  aExceptions.Clear();
 +  aInjectedScript.Truncate();
 +  *aGenericHide = false;
++
++  // GetSingleton() (the JS-facing component-manager constructor) does not gate
++  // on the enabled pref the way GetInstance() does, so re-check it here.
++  if (!IsEnabled()) {
++    return NS_ERROR_NOT_INITIALIZED;
++  }
 +
 +  MutexAutoLock lock(mLock);
 +  if (mInitPhase != InitPhase::InitSucceeded) {
@@ -162,6 +168,12 @@ index 8ea4179418..c69193e525 100644
 +    const nsTArray<nsCString>& aClasses, const nsTArray<nsCString>& aIds,
 +    const nsTArray<nsCString>& aExceptions, nsTArray<nsCString>& aSelectors) {
 +  aSelectors.Clear();
++
++  // GetSingleton() (the JS-facing component-manager constructor) does not gate
++  // on the enabled pref the way GetInstance() does, so re-check it here.
++  if (!IsEnabled()) {
++    return NS_ERROR_NOT_INITIALIZED;
++  }
 +
 +  MutexAutoLock lock(mLock);
 +  if (mInitPhase != InitPhase::InitSucceeded) {

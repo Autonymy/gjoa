@@ -10,9 +10,16 @@
 ;;
 ;; WORKFLOW (snapshot → print → eyeball → --write)
 ;;   1. SNAPSHOT — the tool reads a LOCAL snapshot (tools/prep/darkreader-fixes.snapshot)
-;;      so runs are reproducible, not network-dependent. Refresh it with:
-;;        curl -sL https://raw.githubusercontent.com/darkreader/darkreader/main/src/config/dynamic-theme-fixes.config \
+;;      so runs are reproducible, not network-dependent. The fetch is PINNED to a
+;;      tagged Dark Reader release (never `main`) so the corpus can't drift under
+;;      us, and its SHA-256 is recorded in EXPECTED-SNAPSHOT-SHA256 below. Refresh
+;;      it (then update DARKREADER-PIN + EXPECTED-SNAPSHOT-SHA256 to match) with:
+;;        curl -sL https://raw.githubusercontent.com/darkreader/darkreader/v4.9.127/src/config/dynamic-theme-fixes.config \
 ;;          -o tools/prep/darkreader-fixes.snapshot
+;;        sha256sum tools/prep/darkreader-fixes.snapshot   # paste into EXPECTED-SNAPSHOT-SHA256
+;;      --write REFUSES to run unless the on-disk snapshot's SHA-256 matches the
+;;      pinned hash — a tampered or silently-updated corpus is rejected before any
+;;      generated CSS reaches the USER_SHEET.
 ;;   2. PRINT — `bun .beagle-tools/gjoa/tools/prep/darkmode-registry.js <host> [host...]`
 ;;      parses the snapshot, finds each host's block (matching the host against the
 ;;      block's URL-pattern lines), extracts + resolves its CSS section, and prints
@@ -57,7 +64,7 @@
             [gjoa.tools.prep.paths :refer [REPO-ROOT]]
             [gjoa.tools.prep.log :refer [log]]))
 (define-mode strict)
-(declare-extern [process console Math JSON RegExp Error Number isNaN parseInt parseFloat] Any)
+(declare-extern [process console Math JSON RegExp Error Number isNaN parseInt parseFloat Bun] Any)
 
 ;; ---------------------------------------------------------------------------
 ;; Paths
@@ -66,6 +73,24 @@
 (def SNAPSHOT-PATH :- String (join REPO-ROOT "tools" "prep" "darkreader-fixes.snapshot"))
 (def REGISTRY-PATH :- String
   (join REPO-ROOT "src" "gjoa" "toolkit" "components" "content-classifier" "darkmode-fixes.json"))
+
+;; The Dark Reader release the committed snapshot was pulled from. The refresh
+;; curl pins this tag (NOT `main`) so the upstream corpus can't shift under us.
+(def DARKREADER-PIN :- String "v4.9.127")
+
+;; SHA-256 of the committed snapshot at DARKREADER-PIN. --write verifies the
+;; on-disk snapshot against this before generating any USER_SHEET CSS; a mismatch
+;; (tampered / silently-refreshed corpus, or a refresh that forgot to update this
+;; constant) aborts the write. Recompute with `sha256sum tools/prep/darkreader-fixes.snapshot`.
+(def EXPECTED-SNAPSHOT-SHA256 :- String
+  "0e6d82b4df349edeb789e4dbb346f427caff4861f071020525fd81e6f50e638f")
+
+;; Hex SHA-256 of a string, synchronously (Bun runtime — same hasher download.bjs uses).
+;; Pure (no effect), so no `!` suffix.
+(defn sha256 [text :- String] :- String
+  (let [hash (Bun.CryptoHasher. "sha256")]
+    (.update hash text)
+    (.digest hash "hex")))
 
 ;; ---------------------------------------------------------------------------
 ;; Color model: an [r g b a] tuple with r/g/b in 0..255 and a in 0..1.
@@ -390,8 +415,18 @@
                       ;; fall back to neutral background so the rule still resolves
                       "#181a1b"))))))
 
+;; Constructs that must NEVER reach the generated USER_SHEET: url() can pull /
+;; exfiltrate remote resources, @import pulls a remote stylesheet, and the legacy
+;; expression() runs script. Dark Reader's color-correction CSS doesn't need any
+;; of them, so finding one means the corpus carried something we won't ship — we
+;; REJECT the entry (fail closed) rather than silently strip and emit a maybe-
+;; broken rule. Matching is case-insensitive; whitespace is allowed before the '('.
+(def FORBIDDEN-CSS :- Any
+  (RegExp. "url\\s*\\(|@import\\b|expression\\s*\\(" "i"))
+
 ;; Build the gjoa registry entry for a block's CSS section. Returns
-;; {:css ... :unresolved [...] :unmapped-vars [...]} or nil if no CSS section.
+;; {:css ... :unresolved [...] :unmapped-vars [...]}, {:rejected "reason"} if the
+;; resolved CSS contains a forbidden construct, or nil if no CSS section.
 (defn build-entry [block :- Any] :- Any
   (let [css (get (.-sections block) "CSS")]
     (if (or (not css) (= (.trim css) ""))
@@ -403,10 +438,12 @@
             ;; existing registry entries' style (one rule run, spaces normalized).
             compact (.trim (.replace (.replace resolved (RegExp. "\\s*\\n\\s*" "g") " ")
                                      (RegExp. "  +" "g") " "))]
-        {:css compact
-         :entry {:mode "css" :override "active" :css compact}
-         :unresolved unresolved
-         :unmapped-vars unmapped}))))
+        (if (.test FORBIDDEN-CSS compact)
+          {:rejected "resolved CSS contains a forbidden construct (url()/@import/expression()) — not safe for a USER_SHEET"}
+          {:css compact
+           :entry {:mode "css" :override "active" :css compact}
+           :unresolved unresolved
+           :unmapped-vars unmapped})))))
 
 ;; ---------------------------------------------------------------------------
 ;; Self-test: the flip on known values.
@@ -469,7 +506,10 @@ Reads the local snapshot at tools/prep/darkreader-fixes.snapshot.
   (when (not (existsSync SNAPSHOT-PATH))
     (let [err (.-error log)]
       (err (str "snapshot not found at " SNAPSHOT-PATH))
-      (err "refresh it: curl -sL https://raw.githubusercontent.com/darkreader/darkreader/main/src/config/dynamic-theme-fixes.config -o tools/prep/darkreader-fixes.snapshot")
+      (err (str "refresh it (pinned): curl -sL https://raw.githubusercontent.com/darkreader/darkreader/"
+                DARKREADER-PIN
+                "/src/config/dynamic-theme-fixes.config -o tools/prep/darkreader-fixes.snapshot"))
+      (err "then update EXPECTED-SNAPSHOT-SHA256 (sha256sum tools/prep/darkreader-fixes.snapshot)")
       (.exit process 1)))
   (readFileSync SNAPSHOT-PATH "utf8"))
 
@@ -480,8 +520,14 @@ Reads the local snapshot at tools/prep/darkreader-fixes.snapshot.
     (if (not block)
       {:host host :missing true :reason "no matching DR block"}
       (let [built (build-entry block)]
-        (if (not built)
+        (cond
+          (not built)
           {:host host :missing true :reason "matched block has no CSS section (INVERT/IGNORE only)"}
+
+          (.-rejected built)
+          {:host host :missing true :reason (.-rejected built)}
+
+          :else
           {:host host
            :entry (.-entry built)
            :unresolved (.-unresolved built)
@@ -522,6 +568,19 @@ Reads the local snapshot at tools/prep/darkreader-fixes.snapshot.
             generated (.filter results (fn [r] (not (.-missing r))))]
         (doseq [r results] (print-result! r))
         (when write?
+          ;; Pin gate: refuse to write generated CSS into the registry unless the
+          ;; on-disk snapshot matches the SHA-256 recorded at DARKREADER-PIN. This
+          ;; closes the unpinned-corpus path — a tampered or silently-refreshed
+          ;; snapshot can be printed/eyeballed but never merged into the USER_SHEET.
+          (let [actual (sha256 snapshot)]
+            (when (not= actual EXPECTED-SNAPSHOT-SHA256)
+              (let [err (.-error log)]
+                (err (str "snapshot SHA-256 does not match the pinned hash for Dark Reader " DARKREADER-PIN ".\n"
+                          "  expected: " EXPECTED-SNAPSHOT-SHA256 "\n"
+                          "  got:      " actual "\n"
+                          "  --write refused. Re-pin deliberately: refresh from the pinned tag, eyeball the diff,\n"
+                          "  then update DARKREADER-PIN + EXPECTED-SNAPSHOT-SHA256 to match."))
+                (.exit process 1))))
           (if (= (.-length generated) 0)
             (let [warn (.-warn log)] (warn "nothing to write (no hosts produced entries)"))
             (let [existing (if (existsSync REGISTRY-PATH)

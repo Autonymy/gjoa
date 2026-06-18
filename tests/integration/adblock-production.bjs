@@ -61,7 +61,18 @@
                          "    await IOUtils.makeDirectory(cache, { ignoreExisting: true });\n"
                          "    for (const [name, src] of [['easylist','/tmp/gjoa-easylist.txt'],['easyprivacy','/tmp/gjoa-easyprivacy.txt']]) {\n"
                          "      const bytes = await IOUtils.read(src);\n"
-                         "      await IOUtils.write(PathUtils.join(cache, name + '.txt'), bytes);\n"
+                         "      const dst = PathUtils.join(cache, name + '.txt');\n"
+                         "      await IOUtils.write(dst, bytes);\n"
+                         ;; F1: the overlay now verifies a SHA-256 sidecar before trusting the
+                         ;; cache, so the seed must write <name>.txt.sha256 (lowercase hex,
+                         ;; matching #sha256Hex) or the cache is rejected and the list re-fetches.
+                         "      const h = Cc['@mozilla.org/security/hash;1'].createInstance(Ci.nsICryptoHash);\n"
+                         "      h.init(Ci.nsICryptoHash.SHA256);\n"
+                         "      h.update(bytes, bytes.length);\n"
+                         "      const d = h.finish(false);\n"
+                         "      let hex = '';\n"
+                         "      for (let i = 0; i < d.length; i++) { hex += d.charCodeAt(i).toString(16).padStart(2, '0'); }\n"
+                         "      await IOUtils.writeUTF8(dst + '.sha256', hex);\n"
                          "    }\n"
                          "    resolve(JSON.stringify({ testing, enabled, names }));\n"
                          "  })().catch(e => resolve('ERR:' + e));\n")))]

@@ -1,0 +1,29 @@
+#lang beagle/js
+;; #47: the gjoa custom new-tab page is also the home / startup page, so the
+;; first tab on launch and the home button land on the same page as new tabs
+;; (not Firefox's default about:home). GjoaLoader sets the home page default to
+;; "about:newtab", which resolves to BROWSER_NEW_TAB_URL — itself pointed at
+;; chrome://gjoa-newtab via AboutNewTab.newTabURL. We assert both ends of that
+;; chain from chrome (deterministic; no navigation/render timing).
+(ns gjoa.tests.integration.newtab-home
+  (:require [gjoa.tests.dsl :refer [deftest chrome-eval expect-eq]]))
+(define-mode strict)
+
+(def NEWTAB-URL :- String "chrome://gjoa-newtab/content/newtab.html")
+
+(js/export (def tests :- Any
+  [(deftest "newtab: the gjoa new-tab page is the home page too" [mn ctx]
+     (js/await (.setContext mn "chrome"))
+     ;; GjoaLoader.set-defaults pointed the home page at about:newtab ...
+     (let [home (chrome-eval
+                  "return Services.prefs.getDefaultBranch('').getCharPref('browser.startup.homepage', '');")]
+       (expect-eq home "about:newtab"
+                  "browser.startup.homepage default should be about:newtab"))
+     ;; ... and about:newtab resolves to the gjoa custom new-tab page.
+     (let [ntu (chrome-eval
+                 (str "const {AboutNewTab}=ChromeUtils.importESModule('resource:///modules/AboutNewTab.sys.mjs');"
+                      " return AboutNewTab.newTabURL;"))]
+       (expect-eq ntu NEWTAB-URL
+                  "AboutNewTab.newTabURL should be the gjoa new-tab page")))]))
+
+(js/export-default tests)

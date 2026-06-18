@@ -164,7 +164,13 @@
       (.setCharPref d "browser.toolbars.bookmarks.visibility" "never")
       (.setBoolPref d "sidebar.verticalTabs" true)
       (.setBoolPref d "gjoa.sidebar.menuBar" false)
-      (.setBoolPref d "gjoa.toolbar.newTabButton" false))
+      (.setBoolPref d "gjoa.toolbar.newTabButton" false)
+      ;; Use the gjoa new-tab page as the home/startup page too: "about:newtab"
+      ;; resolves to BROWSER_NEW_TAB_URL (set to chrome://gjoa-newtab via
+      ;; AboutNewTab.newTabURL above), so the home button, new windows, and a
+      ;; home-based startup all land on the same custom page as new tabs — instead
+      ;; of Firefox's default about:home on first load.
+      (.setCharPref d "browser.startup.homepage" "about:newtab"))
     (catch Any e
       (.error console "gjoa-loader: setDefaults failed" e))))
 
@@ -205,7 +211,7 @@
     (catch Any e
       (.error console "gjoa-loader: registerDarkmodeActor failed" e))))
 
-(defn set-new-tab-url [] :- Any
+(defn set-new-tab-url! [] :- Any
   (try
     (set! (.-newTabURL (.-AboutNewTab lazy)) NEW-TAB-URL)
     (.log console (str "gjoa-loader: new tab URL set to " NEW-TAB-URL))
@@ -217,7 +223,7 @@
     (when (not (.-observer-registered st))
       (set! (.-observer-registered st) true)
       (set-defaults)
-      (set-new-tab-url)
+      (set-new-tab-url!)
       (register-cosmetic-actor)
       (register-darkmode-actor)
       (.addObserver (.-obs Services) observer "chrome-document-loaded")

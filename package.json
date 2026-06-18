@@ -5,7 +5,7 @@
   "type": "module",
   "description": "Gjoa — a Firefox fork.",
   "scripts": {
-    "tools:compile": "(test -f .beagle-tools/.boot/build-tools.js && test -z \"$(find tools -name '*.bjs' -newer .beagle-tools/.boot/build-tools.js -print -quit 2>/dev/null)\" || ../beagle/bin/beagle-build tools/build-tools.bjs .beagle-tools/.boot/build-tools.js) && bun .beagle-tools/.boot/build-tools.js",
+    "tools:compile": "(test -f .beagle-tools/.boot/build-tools.js && test -z \"$(find tools -name '*.bjs' -newer .beagle-tools/.boot/build-tools.js -print -quit 2>/dev/null)\" || bash ../beagle/bin/beagle-build tools/build-tools.bjs .beagle-tools/.boot/build-tools.js) && bun .beagle-tools/.boot/build-tools.js",
     "init": "bun run download && bun run import",
     "download": "bun run tools:compile && bun .beagle-tools/gjoa/tools/prep/cli.js download",
     "import": "bun run tools:compile && bun .beagle-tools/gjoa/tools/prep/cli.js import",

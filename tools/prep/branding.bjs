@@ -19,7 +19,11 @@
 ;; beagle-build compiles the pref .bjs sources to pref() JS at import time (same
 ;; resolution as tools/build-tools.bjs). The pref files are the one source-tree
 ;; artifact that must reach the engine as emitted JS rather than running under Bun.
-(def BEAGLE-BUILD :- String (resolve REPO-ROOT ".." "beagle" "bin" "beagle-build"))
+;; It's a bash script (no Windows shebang support) — launched via `bash` at the
+;; :cmd site; forward-slash the path for bash on Windows. (.fromCharCode String 92)
+;; is a backslash; no-op on *nix.
+(def BEAGLE-BUILD :- String
+  (.replaceAll (resolve REPO-ROOT ".." "beagle" "bin" "beagle-build") (.fromCharCode String 92) "/"))
 
 ;; Files we string-substitute. Anything else (binary icons, archive formats,
 ;; platform-specific blobs) is copied as-is from the unofficial template.
@@ -181,7 +185,7 @@
             ;; Compile the pref .bjs → pref() JS. Sync spawn keeps this in the
             ;; (now sync) branding pipeline; a nonzero exit is fatal so a broken
             ;; pref source can't silently ship empty defaults.
-            (let [proc (.spawnSync Bun {:cmd [BEAGLE-BUILD src out]
+            (let [proc (.spawnSync Bun {:cmd ["bash" BEAGLE-BUILD src out]
                                         :cwd REPO-ROOT
                                         :stdout "pipe"
                                         :stderr "pipe"})]

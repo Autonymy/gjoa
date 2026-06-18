@@ -15,7 +15,12 @@
 
 (def REPO-ROOT :- String (.cwd process))
 (def OUT-ROOT :- String (join REPO-ROOT ".beagle-tools" "gjoa"))
-(def BEAGLE-BUILD :- String (resolve REPO-ROOT ".." "beagle" "bin" "beagle-build"))
+;; beagle-build is a `#!/usr/bin/env bash` script. Windows has no shebang support,
+;; so it can't be exec'd directly there — it's launched via `bash` (Git Bash on the
+;; runner) at every :cmd site below. Normalize the path to forward slashes so bash
+;; accepts it on Windows; (.fromCharCode String 92) is a backslash. No-op on *nix.
+(def BEAGLE-BUILD :- String
+  (.replaceAll (resolve REPO-ROOT ".." "beagle" "bin" "beagle-build") (.fromCharCode String 92) "/"))
 (def SRC-DIRS :- Any ["tools" "tests"])
 
 ;; Recursively collect every *.bjs path under `dir` (synchronous — small tree).
@@ -51,7 +56,7 @@
     (if (not (stale? src out))
       {:rel rel :code 0 :skipped true}
       (let [_ (js/await (mkdir (join out "..") {:recursive true}))
-            proc (.spawn Bun {:cmd [BEAGLE-BUILD src out]
+            proc (.spawn Bun {:cmd ["bash" BEAGLE-BUILD src out]
                               :cwd REPO-ROOT
                               :stdout "pipe"
                               :stderr "pipe"})

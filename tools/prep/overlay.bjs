@@ -16,8 +16,12 @@
 (declare-extern [Bun] Any)
 
 ;; beagle-build compiles the chrome loader (.bjs) to the .sys.mjs that jar.mn
-;; packages into omni.ja. Same resolution as tools/build-tools.bjs.
-(def BEAGLE-BUILD :- String (resolve REPO-ROOT ".." "beagle" "bin" "beagle-build"))
+;; packages into omni.ja. Same resolution as tools/build-tools.bjs. It's a bash
+;; script (no Windows shebang support), so it's launched via `bash` at the :cmd
+;; site; forward-slash the path for bash on Windows. (.fromCharCode String 92) is
+;; a backslash; no-op on *nix.
+(def BEAGLE-BUILD :- String
+  (.replaceAll (resolve REPO-ROOT ".." "beagle" "bin" "beagle-build") (.fromCharCode String 92) "/"))
 
 (defn count-files [dir :- String] :- Any
   (reduce
@@ -51,7 +55,7 @@
                 loader-out (join ENGINE-DIR "browser" "components" "gjoa" "GjoaLoader.sys.mjs")
                 stray (join ENGINE-DIR "browser" "components" "gjoa" "GjoaLoader.bjs")]
             (when (existsSync loader-src)
-              (let [proc (.spawnSync Bun {:cmd [BEAGLE-BUILD loader-src loader-out]
+              (let [proc (.spawnSync Bun {:cmd ["bash" BEAGLE-BUILD loader-src loader-out]
                                           :cwd REPO-ROOT
                                           :stdout "pipe"
                                           :stderr "pipe"})]

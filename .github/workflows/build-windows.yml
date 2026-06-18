@@ -1,33 +1,33 @@
 name: Windows build (x86_64)
 
-# First-attempt Windows build. Firefox on Windows is the finickiest target
-# (clang-cl / MSVC / Windows SDK), so expect to iterate on the first runs — the
-# point of this workflow is to surface the real blockers, not to be green on day
-# one. Mirrors build-linux.yml (mach-based, NOT nix — nix has no native Windows).
+# CROSS-COMPILED FROM LINUX — not native on a Windows runner. This is how
+# zen-browser and librewolf actually ship Windows builds, and it sidesteps the
+# entire native-Windows failure class (reserved `con.clj` checkout, the
+# beagle-build bash shebang, CRLF line endings, MozillaBuild, "Windows App SDK
+# dir not present") because the host OS is Linux — which gjoa already builds
+# green. We add the Windows cross toolchain (Visual Studio + SDK via Mozilla's
+# get_vs.py + WINSYSROOT, wine for MIDL/widl, the win rust target) and a cross
+# mozconfig (--target=x86_64-pc-windows-msvc). Recipe adapted from
+# zen-browser/.github/workflows/windows-release-build.yml + configs/windows/mozconfig.
 on:
   workflow_dispatch:
 
 jobs:
   build:
-    runs-on: windows-2022
+    runs-on: ubuntu-24.04
     timeout-minutes: 360
     env:
       FF_VERSION: "152.0"
-    defaults:
-      run:
-        shell: bash
     steps:
-      # Windows git defaults to autocrlf=true, which rewrites LF→CRLF on checkout.
-      # That breaks `git apply` of our LF patches (context mismatch) and feeds CRLF
-      # into the build. Force LF BEFORE checkout so both the gjoa repo and (later)
-      # the tar-extracted engine source stay LF. .gitattributes (eol=lf) is the
-      # committed belt; this covers engine/, which has no .gitattributes of ours.
-      - name: Force LF line endings (Windows git defaults to autocrlf)
-        run: |
-          git config --global core.autocrlf false
-          git config --global core.eol lf
-
       - uses: actions/checkout@v4
+
+      - name: Free disk space
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc \
+            /opt/hostedtoolcache/CodeQL /usr/local/share/boost \
+            /usr/lib/jvm /usr/share/swift "${AGENT_TOOLSDIRECTORY:-/opt/hostedtoolcache}" || true
+          sudo docker image prune --all --force || true
+          df -h /
 
       - name: Install bun
         uses: oven-sh/setup-bun@v2
@@ -37,6 +37,25 @@ jobs:
       - name: Install dependencies
         run: bun install
 
+      - name: Install system deps (host + Windows cross)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential clang lld llvm m4 \
+            nasm yasm unzip zip \
+            python3 python3-pip \
+            aria2 msitools p7zip-full cabextract dos2unix \
+            pkg-config nodejs
+
+      - name: Maximize build space
+        run: |
+          sudo swapoff -a
+          sudo rm -f /swapfile
+          sudo fallocate -l 16G /swapfile
+          sudo chmod 600 /swapfile
+          sudo mkswap /swapfile
+          sudo swapon /swapfile
+
       - name: Download Firefox source
         run: |
           mkdir -p ~/.cache/gjoa/sources
@@ -44,69 +63,56 @@ jobs:
             "https://archive.mozilla.org/pub/firefox/releases/${FF_VERSION}/source/firefox-${FF_VERSION}.source.tar.xz"
           ls -lh ~/.cache/gjoa/sources/firefox-${FF_VERSION}.source.tar.xz
 
-      # F9 hardening: verify the downloaded tarball against the IN-REPO pinned
-      # SHA-256 (configs/firefox-${FF_VERSION}.sha256) BEFORE extracting. The
-      # pin is committed + reviewed, so unlike a same-origin SHA256SUMS it can't
-      # be swapped by an origin/TLS compromise. The job runs under Git-bash,
-      # which provides sha256sum; compare to the pinned value.
       - name: Verify tarball checksum (pinned)
         run: |
           PIN="configs/firefox-${FF_VERSION}.sha256"
           test -f "$PIN" || { echo "missing pinned checksum: $PIN"; exit 1; }
           expected=$(grep -v '^#' "$PIN" | awk 'NF{print $1; exit}')
           actual=$(sha256sum ~/.cache/gjoa/sources/firefox-${FF_VERSION}.source.tar.xz | awk '{print $1}')
-          echo "expected: $expected"
-          echo "actual:   $actual"
           if [ "$expected" != "$actual" ]; then
-            echo "::error::Firefox tarball SHA-256 does not match pinned value in $PIN"
-            exit 1
+            echo "::error::Firefox tarball SHA-256 does not match pinned $PIN"; exit 1
           fi
-          echo "tarball checksum OK (matches pinned $PIN)"
+          echo "tarball checksum OK"
 
       - name: Extract source
         run: |
           mkdir -p engine
-          # bsdtar (built into Windows) handles .tar.xz natively.
-          tar -xf ~/.cache/gjoa/sources/firefox-${FF_VERSION}.source.tar.xz -C engine --strip-components=1
+          tar -xJf ~/.cache/gjoa/sources/firefox-${FF_VERSION}.source.tar.xz -C engine --strip-components=1
 
-      # gjoa's build tooling is beagle (a Racket compiler) at ../beagle. Same as
-      # the Linux/macOS jobs: without it `bun run import` dies (exit 127).
       - name: Install Racket (beagle compiler runtime)
         uses: Bogdanp/setup-racket@v1.15
         with:
           version: 'stable'
-      # beagle has runtime/src/{dd,mk,pp}/con.clj — `con` is a Windows RESERVED
-      # device name (NUL/PRN/AUX-class), so the OS itself can't create the file and
-      # a normal checkout dies (exit 128, "invalid path"). They're test fixtures
-      # beagle-build doesn't need. Clone with NO working tree (which also leaves the
-      # index empty), then check out everything EXCEPT those 3 paths straight from
-      # HEAD via :(exclude) pathspecs — git never tries to write the reserved names.
       - name: Checkout beagle (sibling compiler)
-        run: |
-          git clone --no-checkout --depth 1 https://github.com/tompassarelli/beagle.git ../beagle
-          git -C ../beagle checkout HEAD -- . \
-            ':(exclude)runtime/src/dd/con.clj' \
-            ':(exclude)runtime/src/mk/con.clj' \
-            ':(exclude)runtime/src/pp/con.clj'
-          test -f ../beagle/bin/beagle-build || { echo "beagle-build missing"; exit 1; }
-          test -d ../beagle/beagle-lib || { echo "beagle-lib missing"; exit 1; }
-          echo "beagle checked out: $(find ../beagle -name '*.rkt' | wc -l) .rkt, $(ls ../beagle/bin | wc -l) bin entries"
+        run: git clone --depth 1 https://github.com/tompassarelli/beagle.git ../beagle
       - name: Register beagle collection
         run: raco pkg install --link --batch --no-docs ../beagle/beagle-lib
 
       - name: Apply overlays and patches
         run: bun run import
 
-      - name: Write mozconfig
+      # --- Windows cross toolchain (adapted from zen windows-release-build.yml) ---
+      - name: Setup Windows cross toolchain
+        working-directory: engine
+        run: |
+          set -x
+          mkdir -p ~/win-cross
+          # wine — runs MIDL/widl during the build
+          aria2c "https://firefox-ci-tc.services.mozilla.com/api/index/v1/task/gecko.cache.level-1.toolchains.v3.linux64-wine.latest/artifacts/public%2Fbuild%2Fwine.tar.zst" -o /tmp/wine.tar.zst
+          tar --zstd -xf /tmp/wine.tar.zst -C ~/win-cross && rm /tmp/wine.tar.zst
+          # Visual Studio + Windows SDK (+ App SDK) via Mozilla's fetcher
+          ./mach python --virtualenv build taskcluster/scripts/misc/get_vs.py build/vs/vs2026.yaml ~/win-cross/vs2026
+          chmod -R +x ~/win-cross/vs2026 || true
+          ls ~/win-cross
+
+      - name: Write mozconfig (cross)
         run: |
           cat > engine/mozconfig <<'MOZCONFIG'
           ac_add_options --with-branding=browser/branding/gjoa
           ac_add_options --with-distribution-id=org.gjoa
           ac_add_options --with-app-name=gjoa
           ac_add_options --with-app-basename=Gjoa
-          # Auto-fetch missing Mozilla toolchains (Windows App SDK, nasm, clang,
-          # …) instead of hand-installing each one — bootstrap_path() in
-          # build/moz.configure/bootstrap.configure pulls them on demand.
+          ac_add_options --target=x86_64-pc-windows-msvc
           ac_add_options --enable-bootstrap
           ac_add_options --without-wasm-sandboxed-libraries
           ac_add_options --disable-updater
@@ -114,55 +120,38 @@ jobs:
           ac_add_options --enable-optimize
           ac_add_options --enable-release
           ac_add_options --disable-debug-symbols
+          export WINSYSROOT="$HOME/win-cross/vs2026"
+          export WINE="$HOME/win-cross/wine/bin/wine"
+          export WINEDEBUG=-all
+          export CROSS_BUILD=1
+          export MOZ_STUB_INSTALLER=1
+          export WIN32_REDIST_DIR="$(ls -d $HOME/win-cross/vs2026/VC/Redist/MSVC/*/x64/Microsoft.VC*.CRT 2>/dev/null | head -1)"
           MOZCONFIG
           sed -i 's/^          //' engine/mozconfig
           cat engine/mozconfig
 
-      # mach bootstrap installs the Windows toolchain bits (clang-cl, the build
-      # tools, rust) on top of the runner's preinstalled Visual Studio 2022 +
-      # Windows SDK. `|| true` so a partial bootstrap doesn't fail the job before
-      # we see the build error (mirrors the Linux job).
-      - name: Bootstrap mach
+      - name: Bootstrap mach (+ clang Windows LIB)
         working-directory: engine
         run: |
           export MOZBUILD_STATE_PATH="$HOME/.mozbuild"
           echo 1 | ./mach bootstrap --application-choice=browser 2>&1 || true
+          # clang's Windows runtime lib dir must be on LIB for the cross link
+          # (zen windows-release-build.yml:184). Append after bootstrap fetches clang.
+          LIBDIR="$(ls -d $HOME/.mozbuild/clang/lib/clang/*/lib/windows 2>/dev/null | head -1)"
+          echo "export LIB=\"$LIBDIR\"" >> mozconfig
+          tail -4 mozconfig
 
-      # Firefox's `mach build` on Windows hard-requires MozillaBuild (the MSYS2
-      # environment with make + the unix build tools) at C:\mozilla-build. The
-      # windows-2022 runner doesn't ship it. Use PowerShell + Start-Process -Wait
-      # so the NSIS `/S` silent install actually runs synchronously to completion
-      # (the bash `//S` form hangs on the installer UI in CI).
-      - name: Install MozillaBuild
-        shell: pwsh
+      - name: Add Rust Windows target
         run: |
-          $url = "https://ftp.mozilla.org/pub/mozilla/libraries/win32/MozillaBuildSetup-Latest.exe"
-          $exe = Join-Path $env:RUNNER_TEMP "MozillaBuildSetup.exe"
-          Invoke-WebRequest -Uri $url -OutFile $exe
-          Start-Process -FilePath $exe -ArgumentList '/S' -Wait -NoNewWindow
-          if (Test-Path 'C:\mozilla-build\start-shell.bat') {
-            Write-Host "MozillaBuild installed at C:\mozilla-build"
-          } else {
-            Get-ChildItem 'C:\mozilla-build' -ErrorAction SilentlyContinue
-            throw "MozillaBuild install failed"
-          }
-
-      # mach build needs nasm (assembler for AV1/FFVPX/JPEG/VPX) — the runner
-      # doesn't ship it and MozillaBuild doesn't put it on mach's PATH. Install
-      # via chocolatey and add it to PATH for the Build step.
-      - name: Install nasm
-        shell: pwsh
-        run: |
-          choco install nasm -y --no-progress
-          "C:\Program Files\NASM" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+          [ -f "$HOME/.cargo/env" ] && . "$HOME/.cargo/env" || true
+          rustup target add x86_64-pc-windows-msvc
 
       - name: Build
         working-directory: engine
         run: |
           export MOZBUILD_STATE_PATH="$HOME/.mozbuild"
-          export MOZILLABUILD="C:\\mozilla-build"
-          export PATH="/c/Program Files/NASM:$PATH"
-          ./mach build
+          [ -f "$HOME/.cargo/env" ] && . "$HOME/.cargo/env" || true
+          ./mach build -j2
 
       - name: Package
         working-directory: engine
@@ -176,5 +165,5 @@ jobs:
           name: gjoa-windows-x86_64
           path: |
             engine/obj-*/dist/gjoa-*.zip
-            engine/obj-*/dist/install/**/*.exe
-          if-no-files-found: warn
+            engine/obj-*/dist/gjoa-*.tar.*
+          if-no-files-found: error

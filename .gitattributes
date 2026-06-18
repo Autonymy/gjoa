@@ -1,0 +1,11 @@
+# gjoa is authored on Linux/macOS — everything is LF. Force LF on checkout on
+# every platform so the Windows CI build never gets CRLF: CRLF breaks `git apply`
+# of our LF patches (patch context mismatch → "patch does not apply") and would
+# feed CRLF line endings into the Firefox build. Binary files (icons, archives)
+# are auto-detected by `text=auto` and left untouched.
+* text=auto eol=lf
+
+# Belt-and-suspenders for the files that MUST stay LF for the build to work.
+*.patch  text eol=lf
+*.bjs    text eol=lf
+*.sh     text eol=lf

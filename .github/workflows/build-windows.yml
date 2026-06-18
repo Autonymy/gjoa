@@ -17,6 +17,16 @@ jobs:
       run:
         shell: bash
     steps:
+      # Windows git defaults to autocrlf=true, which rewrites LF→CRLF on checkout.
+      # That breaks `git apply` of our LF patches (context mismatch) and feeds CRLF
+      # into the build. Force LF BEFORE checkout so both the gjoa repo and (later)
+      # the tar-extracted engine source stay LF. .gitattributes (eol=lf) is the
+      # committed belt; this covers engine/, which has no .gitattributes of ours.
+      - name: Force LF line endings (Windows git defaults to autocrlf)
+        run: |
+          git config --global core.autocrlf false
+          git config --global core.eol lf
+
       - uses: actions/checkout@v4
 
       - name: Install bun

@@ -1,0 +1,103 @@
+name: Windows build (x86_64)
+
+# First-attempt Windows build. Firefox on Windows is the finickiest target
+# (clang-cl / MSVC / Windows SDK), so expect to iterate on the first runs — the
+# point of this workflow is to surface the real blockers, not to be green on day
+# one. Mirrors build-linux.yml (mach-based, NOT nix — nix has no native Windows).
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: windows-2022
+    timeout-minutes: 360
+    env:
+      FF_VERSION: "152.0"
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Install dependencies
+        run: bun install
+
+      - name: Download Firefox source
+        run: |
+          mkdir -p ~/.cache/gjoa/sources
+          curl -L -o ~/.cache/gjoa/sources/firefox-${FF_VERSION}.source.tar.xz \
+            "https://archive.mozilla.org/pub/firefox/releases/${FF_VERSION}/source/firefox-${FF_VERSION}.source.tar.xz"
+          ls -lh ~/.cache/gjoa/sources/firefox-${FF_VERSION}.source.tar.xz
+
+      - name: Extract source
+        run: |
+          mkdir -p engine
+          # bsdtar (built into Windows) handles .tar.xz natively.
+          tar -xf ~/.cache/gjoa/sources/firefox-${FF_VERSION}.source.tar.xz -C engine --strip-components=1
+
+      # gjoa's build tooling is beagle (a Racket compiler) at ../beagle. Same as
+      # the Linux/macOS jobs: without it `bun run import` dies (exit 127).
+      - name: Install Racket (beagle compiler runtime)
+        uses: Bogdanp/setup-racket@v1.15
+        with:
+          version: 'stable'
+      - name: Checkout beagle (sibling compiler)
+        run: git clone --depth 1 https://github.com/tompassarelli/beagle.git ../beagle
+      - name: Register beagle collection
+        run: raco pkg install --link --batch --no-docs ../beagle/beagle-lib
+
+      - name: Apply overlays and patches
+        run: bun run import
+
+      - name: Write mozconfig
+        run: |
+          cat > engine/mozconfig <<'MOZCONFIG'
+          ac_add_options --with-branding=browser/branding/gjoa
+          ac_add_options --with-distribution-id=org.gjoa
+          ac_add_options --with-app-name=gjoa
+          ac_add_options --with-app-basename=Gjoa
+          ac_add_options --without-wasm-sandboxed-libraries
+          ac_add_options --disable-updater
+          ac_add_options --disable-tests
+          ac_add_options --enable-optimize
+          ac_add_options --enable-release
+          ac_add_options --disable-debug-symbols
+          MOZCONFIG
+          sed -i 's/^          //' engine/mozconfig
+          cat engine/mozconfig
+
+      # mach bootstrap installs the Windows toolchain bits (clang-cl, the build
+      # tools, rust) on top of the runner's preinstalled Visual Studio 2022 +
+      # Windows SDK. `|| true` so a partial bootstrap doesn't fail the job before
+      # we see the build error (mirrors the Linux job).
+      - name: Bootstrap mach
+        working-directory: engine
+        run: |
+          export MOZBUILD_STATE_PATH="$HOME/.mozbuild"
+          echo 1 | ./mach bootstrap --application-choice=browser 2>&1 || true
+
+      - name: Build
+        working-directory: engine
+        run: |
+          export MOZBUILD_STATE_PATH="$HOME/.mozbuild"
+          ./mach build
+
+      - name: Package
+        working-directory: engine
+        run: |
+          export MOZBUILD_STATE_PATH="$HOME/.mozbuild"
+          ./mach package
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: gjoa-windows-x86_64
+          path: |
+            engine/obj-*/dist/gjoa-*.zip
+            engine/obj-*/dist/install/**/*.exe
+          if-no-files-found: warn

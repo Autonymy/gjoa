@@ -8,6 +8,6 @@
   "news.ycombinator.com": {
     "mode": "css",
     "override": "inactive",
-    "css": ":root{--darkmode-bg:#181a1b;--darkmode-fg:#e8e6e3}html,body{background:#181a1b!important;color:#e8e6e3!important}body{background:#181a1b!important}td{color:#e8e6e3!important}a:link{color:#9aa7b3!important}a:visited{color:#7e8a96!important}.title a:link,.title a:visited{color:#d3cfc9!important}td.subtext,td.subtext a:link,td.subtext a:visited,.comhead,.pagetop a{color:#9b958c!important}.hnname a,.pagetop b a{color:#e8e6e3!important}input,textarea{background:#2a2c2e!important;color:#e8e6e3!important;border-color:#3a3d3f!important}"
+    "css": ":root{color-scheme:dark}html,body{background:#1a1a1a!important}#hnmain{background:#1a1a1a!important}table,tr,td{background-color:transparent!important}td[bgcolor=\"#ff6600\"],.pagetop{background:#ff6600!important}.pagetop,.pagetop a,.pagetop a:link,.pagetop a:visited,.hnname a{color:#1a1a1a!important}td{color:#c9c6c1!important}.titleline a:link,.title a:link{color:#e8e6e3!important}.titleline a:visited,.title a:visited{color:#a39e97!important}.rank,.score,.age,.age a,.hnuser,.subtext,.subtext a:link,.subtext a:visited,.comhead,.sitebit,.sitestr,.yclinks,.yclinks a{color:#8f8b85!important}.titleline a:hover,.subtext a:hover{color:#fff!important}.comment,.commtext,.commtext a:link{color:#c9c6c1!important}.votearrow{filter:invert(0.8) hue-rotate(180deg)}input,textarea,select{background:#2a2c2e!important;color:#e8e6e3!important;border:1px solid #3a3d3f!important}.comhead a:hover{color:#bbb!important}"
   }
 }

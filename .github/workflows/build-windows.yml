@@ -126,18 +126,22 @@ jobs:
 
       # Firefox's `mach build` on Windows hard-requires MozillaBuild (the MSYS2
       # environment with make + the unix build tools) at C:\mozilla-build. The
-      # windows-2022 runner doesn't ship it, so mach asserts and dies. Install it
-      # silently (NSIS `/S` → default C:\mozilla-build). The `//S` double-slash
-      # stops Git Bash from rewriting `/S` into a path.
+      # windows-2022 runner doesn't ship it. Use PowerShell + Start-Process -Wait
+      # so the NSIS `/S` silent install actually runs synchronously to completion
+      # (the bash `//S` form hangs on the installer UI in CI).
       - name: Install MozillaBuild
+        shell: pwsh
         run: |
-          curl -L -o "$RUNNER_TEMP/MozillaBuildSetup.exe" \
-            https://ftp.mozilla.org/pub/mozilla/libraries/win32/MozillaBuildSetup-Latest.exe
-          MSYS2_ARG_CONV_EXCL='*' "$RUNNER_TEMP/MozillaBuildSetup.exe" //S
-          for i in $(seq 1 30); do [ -f /c/mozilla-build/start-shell.bat ] && break; sleep 2; done
-          test -f /c/mozilla-build/start-shell.bat \
-            && echo "MozillaBuild installed at C:\\mozilla-build" \
-            || { echo "MozillaBuild install failed"; ls -la /c/mozilla-build 2>&1 || true; exit 1; }
+          $url = "https://ftp.mozilla.org/pub/mozilla/libraries/win32/MozillaBuildSetup-Latest.exe"
+          $exe = Join-Path $env:RUNNER_TEMP "MozillaBuildSetup.exe"
+          Invoke-WebRequest -Uri $url -OutFile $exe
+          Start-Process -FilePath $exe -ArgumentList '/S' -Wait -NoNewWindow
+          if (Test-Path 'C:\mozilla-build\start-shell.bat') {
+            Write-Host "MozillaBuild installed at C:\mozilla-build"
+          } else {
+            Get-ChildItem 'C:\mozilla-build' -ErrorAction SilentlyContinue
+            throw "MozillaBuild install failed"
+          }
 
       - name: Build
         working-directory: engine

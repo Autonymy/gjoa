@@ -104,3 +104,15 @@
   `(.querySelector ,el ,sel))
 (defmacro qa [el sel]
   `(.querySelectorAll ,el ,sel))
+;; ---- error handling ----
+;; guard!: run body, log+swallow any throw. quiet!: run body, swallow silently
+;; and return `fallback`. Both expand to primitives (try/do/catch) — `console`
+;; resolves at the USE SITE (non-hygienic syntax-quote; see the mi/sep note
+;; above), so the calling fn must have `console` in scope. The wrapping fn stays
+;; effectful — keep its `!` (E019).
+(defmacro guard! [label & body]
+  `(try (do ,@body)
+        (catch Any _e (.error console ,label _e))))
+(defmacro quiet! [fallback & body]
+  `(try (do ,@body)
+        (catch Any _e ,fallback)))

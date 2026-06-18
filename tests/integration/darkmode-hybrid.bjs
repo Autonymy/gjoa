@@ -18,7 +18,8 @@
 (define-mode strict)
 (declare-extern [JSON] Any)
 
-(def TOP :- String "http://127.0.0.1:8975/") ;; themeless light fixture
+(def TOP :- String "http://127.0.0.1:8975/") ;; no-bg page (UA-dark under hybrid)
+(def LIGHT-TOP :- String "http://127.0.0.1:8975/light") ;; hardcoded-light themeless site
 
 (def NAV-JS :- String
   (str "\n"
@@ -47,11 +48,34 @@
        " d.style.backgroundColor='rgb(255,255,255)'; d.style.color='rgb(0,0,0)';"
        " document.body.appendChild(d); return 'injected';"))
 
+;; Tier b: hybrid + the engine pre-paint default-invert. A themeless top doc is
+;; inverted by the ENGINE at construction (no actor round-trip); a native-dark
+;; page is retracted pre-paint (PresShell::Initialize) and keeps its theme.
+(def HYBRID-B-JS :- String
+  (str "Services.prefs.setBoolPref('gjoa.darkmode.enabled', true);"
+       " Services.prefs.setStringPref('gjoa.darkmode.mode', 'hybrid');"
+       " Services.prefs.setBoolPref('gjoa.darkmode.invert.enabled', false);"
+       " Services.prefs.setBoolPref('gjoa.darkmode.hybrid.default-invert', true);"
+       " return 'hybrid-b';"))
+
+(def DARK-TOP :- String "http://127.0.0.1:8975/dark") ;; authored-dark (#111) fixture
+
+;; Inject a plain white box (no explicit text color) to probe inversion state.
+(def INJECT-WHITE :- String
+  (str "const d=document.createElement('div'); d.id='dm-w';"
+       " d.style.backgroundColor='rgb(255,255,255)';"
+       " document.body.appendChild(d); return 'injected';"))
+
+;; Chrome-side settle so the post-paint actor refiner has a chance to (wrongly)
+;; re-invert before we assert it did not. Marionette has no content setTimeout.
+(def SETTLE-JS :- String
+  "const r=arguments[arguments.length-1]; setTimeout(()=>r(1), 700);")
+
 (js/export (def tests :- Any
   [(deftest "darkmode hybrid: actor inverts a themeless (light) page per-document" [mn ctx]
      (js/await (.setContext mn "chrome"))
      (chrome-eval HYBRID-JS)
-     (let [navOk (js/await (.executeAsyncScript mn NAV-JS [TOP]))]
+     (let [navOk (js/await (.executeAsyncScript mn NAV-JS [LIGHT-TOP]))]
        (expect navOk "light fixture loaded")
        ;; The actor measures light -> decides 'active'; poll until the engine has
        ;; inverted an explicit white box in that document (covers the full chain:
@@ -61,6 +85,42 @@
        (js/await (await-true
                    (str "const d=document.getElementById('dm-hy'); const cs=d&&getComputedStyle(d);"
                         " return !!(cs && cs.backgroundColor==='rgb(0, 0, 0)' && cs.color==='rgb(255, 255, 255)');")
-                   6000))))]))
+                   6000))))
+   ;; Tier b: the ENGINE default-invert darkens a themeless page at cascade time,
+   ;; without any actor round-trip. Inject a white box and assert it computes
+   ;; black — proving (A) sets mColorInversion at construction.
+   (deftest "darkmode tier-b: engine default-invert darkens a themeless page" [mn ctx]
+     (js/await (.setContext mn "chrome"))
+     (chrome-eval HYBRID-B-JS)
+     (let [navOk (js/await (.executeAsyncScript mn NAV-JS [LIGHT-TOP]))]
+       (expect navOk "light fixture loaded")
+       (js/await (.setContext mn "content"))
+       (chrome-eval INJECT-WHITE)
+       (js/await (await-true
+                   (str "const d=document.getElementById('dm-w'); const cs=d&&getComputedStyle(d);"
+                        " return !!(cs && cs.backgroundColor==='rgb(0, 0, 0)');")
+                   4000))))
+   ;; Tier b: a native-dark page (authored #111) is RETRACTED pre-paint by
+   ;; PresShell::Initialize -> MaybeRetractColorInversionForNativeDark, so it keeps
+   ;; its theme. After a settle (refiner could otherwise re-invert), the root stays
+   ;; dark AND an injected white box stays white (inversion is off for this doc).
+   (deftest "darkmode tier-b: native-dark page keeps its theme (no invert)" [mn ctx]
+     (js/await (.setContext mn "chrome"))
+     (chrome-eval HYBRID-B-JS)
+     (let [navOk (js/await (.executeAsyncScript mn NAV-JS [DARK-TOP]))]
+       (expect navOk "dark fixture loaded")
+       (js/await (.executeAsyncScript mn SETTLE-JS []))
+       (js/await (.setContext mn "content"))
+       ;; root background did NOT invert: #111 (sum 51) stays dark, not ~light.
+       (js/await (await-true
+                   (str "const m=getComputedStyle(document.documentElement).backgroundColor.match(/[0-9]+/g);"
+                        " return !!(m && (+m[0] + +m[1] + +m[2]) < 180);")
+                   4000))
+       (chrome-eval INJECT-WHITE)
+       ;; a freshly-injected white box stays white -> mColorInversion was retracted.
+       (js/await (await-true
+                   (str "const d=document.getElementById('dm-w'); const cs=d&&getComputedStyle(d);"
+                        " return !!(cs && cs.backgroundColor==='rgb(255, 255, 255)');")
+                   4000))))]))
 
 (js/export-default tests)

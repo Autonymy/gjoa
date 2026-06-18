@@ -4,14 +4,27 @@
 
 // Parent half of the gjoa per-site dark-mode HYBRID actor. Decides the
 // per-document colorInversionOverride from trusted parent-process state: the
-// dark-mode mode, the per-site override prefs, and the child's measurement of
-// whether the page rendered dark on its own.
+// dark-mode mode, the per-site override prefs, and (for the auto refiner) the
+// child's measurement of whether the page authored itself dark.
+//
+// Two decision surfaces:
+//   #explicit() — the curated fix registry + user per-site prefs. Returned at
+//     document-start (Darkmode:GetInject) so curated sites apply their override
+//     + css + inject BEFORE first paint (no flash).
+//   #auto()     — the post-paint refiner (Darkmode:Decide). Only runs for sites
+//     with no explicit decision. With the engine's pre-paint default-invert
+//     (gjoa.darkmode.hybrid.default-invert) on, it defers to the engine for
+//     themeless pages and only retracts ("inactive") sites whose AUTHORED
+//     background is dark but the engine's root-only pre-paint check missed.
 
 const ENABLED_PREF = "gjoa.darkmode.enabled";
 const MODE_PREF = "gjoa.darkmode.mode";
 const FORCE_NATIVE_PREF = "gjoa.darkmode.user.force-native";
 const FORCE_INVERT_PREF = "gjoa.darkmode.user.force-invert";
 const OFF_PREF = "gjoa.darkmode.user.off";
+// Engine default-invert (read by nsPresContext::UpdateColorInversion); when on,
+// the engine darkens themeless pages pre-paint and the actor only refines.
+const DEFAULT_INVERT_PREF = "gjoa.darkmode.hybrid.default-invert";
 
 // Curated per-site dark-mode fix registry (Dark-Reader-derived, MIT). Packaged
 // to resource://gre/modules/darkmode-fixes.json (FINAL_TARGET_FILES.modules).
@@ -90,73 +103,91 @@ export class GjoaDarkmodeParent extends JSWindowActorParent {
     }
   }
 
-  // Returns { override, css, inject } for this document.
-  //   override: BrowsingContext.colorInversionOverride to set
-  //     ("active" invert / "inactive" never / "none" defer to the global pref).
-  //   css: optional USER_SHEET body the fix owns (Tier-1 curated colors).
-  //   inject: optional document-start scriptlet (e.g. YouTube html[dark]).
-  // Precedence: fix registry > user.* prefs > auto measurement.
-  async #decide(hasNativeDark) {
-    // Per-document overrides are a HYBRID-mode concern. In every other mode the
-    // global pref drives inversion uniformly, so defer ("none").
-    if (
-      !Services.prefs.getBoolPref(ENABLED_PREF, false) ||
-      Services.prefs.getStringPref(MODE_PREF, "auto") !== "hybrid"
-    ) {
-      return { override: "none", css: "", inject: "" };
+  #hybridActive() {
+    return (
+      Services.prefs.getBoolPref(ENABLED_PREF, false) &&
+      Services.prefs.getStringPref(MODE_PREF, "auto") === "hybrid"
+    );
+  }
+
+  // The explicit (non-measured) decision: curated fix registry, then user
+  // per-site prefs. Returns { override, css, inject } or null when nothing
+  // explicit applies (the engine default-invert + auto refiner then decide).
+  async #explicit() {
+    if (!this.#hybridActive()) {
+      return null;
     }
     const host = hostOf(this.trustedUrl());
-    if (host) {
-      // (1) Fix registry — highest precedence; owns override + css + inject.
-      const fix = fixForHost(await loadFixes(), host);
-      if (fix) {
-        let css = fix.css || "";
-        if (fix.invertSelectors && fix.invertSelectors.length) {
-          css +=
-            "\n" +
-            fix.invertSelectors.join(",") +
-            "{filter:invert(1) hue-rotate(180deg)!important}\n";
-        }
-        return {
-          override: fix.override || "inactive",
-          css,
-          inject: fix.inject || "",
-        };
-      }
-      // (2) User per-site prefs (unchanged order/behavior).
-      if (hostInPref(host, OFF_PREF)) {
-        return { override: "inactive", css: "", inject: "" };
-      }
-      if (hostInPref(host, FORCE_INVERT_PREF)) {
-        return { override: "active", css: "", inject: "" };
-      }
-      if (hostInPref(host, FORCE_NATIVE_PREF)) {
-        return { override: "inactive", css: "", inject: "" };
-      }
+    if (!host) {
+      return null;
     }
-    // (3) Auto: invert only sites that did NOT render dark on their own.
-    return { override: hasNativeDark ? "inactive" : "active", css: "", inject: "" };
+    // (1) Fix registry — highest precedence; owns override + css + inject.
+    const fix = fixForHost(await loadFixes(), host);
+    if (fix) {
+      let css = fix.css || "";
+      if (fix.invertSelectors && fix.invertSelectors.length) {
+        css +=
+          "\n" +
+          fix.invertSelectors.join(",") +
+          "{filter:invert(1) hue-rotate(180deg)!important}\n";
+      }
+      return {
+        override: fix.override || "inactive",
+        css,
+        inject: fix.inject || "",
+      };
+    }
+    // (2) User per-site prefs.
+    if (hostInPref(host, OFF_PREF)) {
+      return { override: "inactive", css: "", inject: "" };
+    }
+    if (hostInPref(host, FORCE_INVERT_PREF)) {
+      return { override: "active", css: "", inject: "" };
+    }
+    if (hostInPref(host, FORCE_NATIVE_PREF)) {
+      return { override: "inactive", css: "", inject: "" };
+    }
+    return null;
+  }
+
+  // The auto refiner, post-paint. hasNativeDark is the child's AUTHORED-darkness
+  // measurement (already un-inverted by the child when inversion is active).
+  #auto(hasNativeDark) {
+    if (!this.#hybridActive()) {
+      return { override: "none", css: "", inject: "" };
+    }
+    // With the engine's pre-paint default-invert active, a themeless page is
+    // already dark; defer to the engine ("none") instead of re-asserting. Only a
+    // site whose AUTHORED background is dark (one the engine's pre-paint check
+    // ran too early to see — late CSS/JS theming) needs retracting.
+    if (Services.prefs.getBoolPref(DEFAULT_INVERT_PREF, false)) {
+      return {
+        override: hasNativeDark ? "inactive" : "none",
+        css: "",
+        inject: "",
+      };
+    }
+    // default-invert off: the actor is the sole decider (legacy hybrid path).
+    return {
+      override: hasNativeDark ? "inactive" : "active",
+      css: "",
+      inject: "",
+    };
   }
 
   async receiveMessage(msg) {
     if (msg.name === "Darkmode:GetInject") {
-      // document-start fast-path: the child asks ONLY for the inject scriptlet,
-      // before the page reads its theme config, so the first cascade is correct.
-      const host = hostOf(this.trustedUrl());
-      if (
-        host &&
-        Services.prefs.getBoolPref(ENABLED_PREF, false) &&
-        Services.prefs.getStringPref(MODE_PREF, "auto") === "hybrid"
-      ) {
-        const fix = fixForHost(await loadFixes(), host);
-        if (fix && fix.inject) {
-          return { inject: fix.inject };
-        }
+      // document-start: return the explicit curated/user decision so the child
+      // applies override + css + inject BEFORE first paint. `explicit:false`
+      // tells the child to fall through to the post-paint auto refiner.
+      const explicit = await this.#explicit();
+      if (explicit) {
+        return { explicit: true, ...explicit };
       }
-      return { inject: "" };
+      return { explicit: false, override: "none", css: "", inject: "" };
     }
     if (msg.name === "Darkmode:Decide") {
-      return await this.#decide(!!msg.data?.hasNativeDark);
+      return this.#auto(!!msg.data?.hasNativeDark);
     }
     return null;
   }

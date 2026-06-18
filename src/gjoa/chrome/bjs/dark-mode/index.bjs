@@ -25,6 +25,10 @@
 (def PREF-FORCE-NATIVE :- String "gjoa.darkmode.user.force-native")
 (def PREF-FORCE-INVERT :- String "gjoa.darkmode.user.force-invert")
 (def PREF-SITE-OFF :- String "gjoa.darkmode.user.off")
+;; Engine pre-paint default-invert (hybrid mode only); read by nsPresContext so a
+;; themeless page renders dark from frame 1 (no flash), retracted pre-paint for
+;; sites that authored their own dark theme.
+(def PREF-DEFAULT-INVERT :- String "gjoa.darkmode.hybrid.default-invert")
 
 (def FILTER-CSS-ID :- String "gjoa-darkmode-filter-style")
 (def FILTER-CSS :- String
@@ -42,6 +46,10 @@
 ;; Toggle the engine-level luminance-inversion flag (read by nsPresContext).
 (defn set-invert! [on :- Boolean] :- Any
   (set-pref-bool! PREF-INVERT on))
+
+;; Toggle the engine pre-paint default-invert flag (hybrid mode only).
+(defn set-default-invert! [on :- Boolean] :- Any
+  (set-pref-bool! PREF-DEFAULT-INVERT on))
 
 (defn apply-filter! [] :- Any
   (when (not (.-filter-el state))
@@ -72,18 +80,23 @@
         m (mode-)]
     (cond
       (or (not en) (= m "off"))
-        (do (set-chrome-scheme! false) (set-content-override! 2) (set-invert! false) (remove-filter!))
+        (do (set-chrome-scheme! false) (set-content-override! 2) (set-invert! false) (set-default-invert! false) (remove-filter!))
       ;; "engine": force LIGHT so sites render their light theme, then the engine
       ;; inverts every absolute color to dark at style-resolution time — cached,
       ;; raster-safe, no per-frame compositor filter.
       (= m "engine")
-        (do (set-chrome-scheme! true) (set-content-override! 1) (set-invert! true) (remove-filter!))
+        (do (set-chrome-scheme! true) (set-content-override! 1) (set-invert! true) (set-default-invert! false) (remove-filter!))
       ;; "filter": legacy compositor invert (Lane-1 fallback, superseded by engine).
       (= m "filter")
-        (do (set-chrome-scheme! true) (set-content-override! 0) (set-invert! false) (apply-filter!))
-      ;; "auto": native dark via prefers-color-scheme: dark.
+        (do (set-chrome-scheme! true) (set-content-override! 0) (set-invert! false) (set-default-invert! false) (apply-filter!))
+      ;; "hybrid": force prefers-color-scheme: dark so native-dark sites activate;
+      ;; the engine pre-paint default-inverts themeless pages (no flash) and the
+      ;; GjoaDarkmode actor refines per-site (curated fixes + auto retraction).
+      (= m "hybrid")
+        (do (set-chrome-scheme! true) (set-content-override! 0) (set-invert! false) (set-default-invert! true) (remove-filter!))
+      ;; "auto": native dark via prefers-color-scheme: dark only.
       :else
-        (do (set-chrome-scheme! true) (set-content-override! 0) (set-invert! false) (remove-filter!)))))
+        (do (set-chrome-scheme! true) (set-content-override! 0) (set-invert! false) (set-default-invert! false) (remove-filter!)))))
 
 ;; Public toggle API (for a future toolbar button), exposed on window.
 (defn toggle [] :- Boolean

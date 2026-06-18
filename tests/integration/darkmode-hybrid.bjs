@@ -14,7 +14,7 @@
 ;; the authored bg pre-paint and dissolves that circularity; the "inactive"
 ;; assertion lands there.
 (ns gjoa.tests.integration.darkmode-hybrid
-  (:require [gjoa.tests.dsl :refer [deftest chrome-eval await-true wait-for expect]]))
+  (:require [gjoa.tests.dsl :refer [deftest chrome-eval await-true wait-for expect expect-eq]]))
 (define-mode strict)
 (declare-extern [JSON] Any)
 
@@ -140,6 +140,47 @@
      (chrome-eval "Services.prefs.setIntPref('ui.systemUsesDarkTheme', 0); return 'os-light';")
      (js/await (await-true
                  "return Services.prefs.getBoolPref('gjoa.darkmode.hybrid.default-invert', false) === false;"
-                 4000)))]))
+                 4000)))
+   ;; #49: an explicit per-site override (here a user.off entry for the fixture
+   ;; host; the curated registry mirror works identically) is applied SYNCHRONOUSLY
+   ;; at document-start — before PresShell::Initialize — so the engine's pre-paint
+   ;; flip is pre-empted with no IPC round-trip. Validated via RESTART so the prefs
+   ;; are in the content process's startup snapshot (set-then-navigate races the
+   ;; parent->content pref propagation; production sets these at startup so it does
+   ;; not). The themeless /light page must then NOT invert: a white box stays white.
+   (deftest "darkmode #49: explicit override pre-empts the engine flip (sync, pre-paint)" [mn ctx]
+     (js/await (.setContext mn "chrome"))
+     (chrome-eval (str "Services.prefs.setBoolPref('gjoa.darkmode.enabled', true);"
+                       " Services.prefs.setStringPref('gjoa.darkmode.mode', 'hybrid');"
+                       " Services.prefs.setBoolPref('gjoa.darkmode.invert.enabled', false);"
+                       " Services.prefs.setBoolPref('gjoa.darkmode.hybrid.default-invert', true);"
+                       " Services.prefs.setStringPref('gjoa.darkmode.user.off', '127.0.0.1');"
+                       " Services.prefs.savePrefFile(null);"
+                       " return 'seeded';"))
+     (let [client (js/await (.restartGjoa ctx))]
+       (js/await (.setContext client "chrome"))
+       (js/await (.executeAsyncScript client "const [r]=arguments; setTimeout(()=>r(1), 1500);" []))
+       (let [navOk (js/await (.executeAsyncScript client NAV-JS [LIGHT-TOP]))]
+         (expect navOk "light fixture loaded after restart")
+         (js/await (.executeAsyncScript client SETTLE-JS []))
+         (js/await (.setContext client "content"))
+         (let [box (js/await (.executeAsyncScript client
+                     (str "const [resolve]=arguments;"
+                          " const d=document.createElement('div'); d.id='dm-w';"
+                          " d.style.backgroundColor='rgb(255,255,255)';"
+                          " document.body.appendChild(d);"
+                          " setTimeout(()=>resolve(getComputedStyle(d).backgroundColor), 300);")
+                     []))]
+           (expect-eq box "rgb(255, 255, 255)"
+                      (str "explicit override (inactive) did not pre-empt the engine flip; box=" box))))
+       (js/await (.setContext client "chrome"))
+       (js/await (.executeScript client
+         (str "Services.prefs.clearUserPref('gjoa.darkmode.user.off');"
+              " Services.prefs.clearUserPref('gjoa.darkmode.hybrid.default-invert');"
+              " Services.prefs.clearUserPref('gjoa.darkmode.mode');"
+              " Services.prefs.clearUserPref('gjoa.darkmode.enabled');"
+              " Services.prefs.clearUserPref('gjoa.darkmode.invert.enabled');"
+              " Services.prefs.savePrefFile(null);")
+         []))))]))
 
 (js/export-default tests)

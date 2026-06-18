@@ -49,9 +49,27 @@ async function loadFixes() {
     } catch (e) {
       gFixes = {}; // never retry-loop; missing data = no fixes
     }
+    mirrorOverridesPref(gFixes);
     return gFixes;
   })();
   return gFixesLoading;
+}
+
+// Mirror the registry's host -> override into a pref the CONTENT-process actor
+// reads SYNCHRONOUSLY at document-start (before PresShell::Initialize), so a
+// curated site's override lands pre-paint with no IPC round-trip — eliminating
+// the brief double-dark on attribute-gated sites (e.g. YouTube's html[dark]).
+function mirrorOverridesPref(fixes) {
+  try {
+    const overrides = {};
+    for (const host of Object.keys(fixes || {})) {
+      overrides[host] = fixes[host].override || "inactive";
+    }
+    Services.prefs.setStringPref(
+      "gjoa.darkmode.fix-overrides",
+      JSON.stringify(overrides)
+    );
+  } catch (e) {}
 }
 
 // Most-specific host match: exact host, then walk parent domains.

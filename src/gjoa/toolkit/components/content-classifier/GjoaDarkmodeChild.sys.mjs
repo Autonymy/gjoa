@@ -40,6 +40,11 @@ export class GjoaDarkmodeChild extends JSWindowActorChild {
       try {
         this.browsingContext.colorInversionOverride = "none";
       } catch (e) {}
+      // Sync, pre-layout: apply the explicit override (curated registry mirror +
+      // user per-site prefs) BEFORE PresShell::Initialize reads it, so an
+      // attribute-gated curated site (YouTube) never transiently flips. The
+      // css/inject still come via the async #applyExplicit.
+      this.#syncExplicitOverride();
       this._explicitPromise = this.#applyExplicit();
       await this._explicitPromise;
       return;
@@ -102,6 +107,79 @@ export class GjoaDarkmodeChild extends JSWindowActorChild {
         this.browsingContext.colorInversionOverride = resp.override;
       } catch (e) {}
     }
+  }
+
+  // Synchronous, pre-layout explicit-override decision (no IPC). Mirrors the
+  // parent's #explicit precedence (curated registry > user per-site prefs) but
+  // reads everything from prefs the parent keeps in sync, so the override lands
+  // BEFORE PresShell::Initialize. Gated on the engine's default-invert being on
+  // (otherwise no pre-paint flip exists to pre-empt).
+  #syncExplicitOverride() {
+    try {
+      if (
+        !Services.prefs.getBoolPref("gjoa.darkmode.hybrid.default-invert", false)
+      ) {
+        return;
+      }
+      const url = this.document?.documentURI || "";
+      if (!/^https?:/.test(url)) {
+        return;
+      }
+      let host = "";
+      try {
+        host = Services.io.newURI(url).host.toLowerCase();
+      } catch (e) {}
+      if (!host) {
+        return;
+      }
+      const override = this.#explicitOverrideForHost(host);
+      if (override && override !== "none") {
+        this.browsingContext.colorInversionOverride = override;
+      }
+    } catch (e) {}
+  }
+
+  #explicitOverrideForHost(host) {
+    // (1) curated fix registry mirror (host -> override JSON).
+    try {
+      const raw = Services.prefs.getStringPref("gjoa.darkmode.fix-overrides", "");
+      if (raw) {
+        const map = JSON.parse(raw);
+        let h = host;
+        let v = map[h];
+        let i;
+        while (v === undefined && (i = h.indexOf(".")) !== -1) {
+          h = h.slice(i + 1);
+          v = map[h];
+        }
+        if (v) {
+          return v;
+        }
+      }
+    } catch (e) {}
+    // (2) user per-site prefs (same precedence/behavior as the parent).
+    if (this.#hostInPref(host, "gjoa.darkmode.user.off")) {
+      return "inactive";
+    }
+    if (this.#hostInPref(host, "gjoa.darkmode.user.force-invert")) {
+      return "active";
+    }
+    if (this.#hostInPref(host, "gjoa.darkmode.user.force-native")) {
+      return "inactive";
+    }
+    return null;
+  }
+
+  #hostInPref(host, pref) {
+    let raw = "";
+    try {
+      raw = Services.prefs.getStringPref(pref, "");
+    } catch (e) {}
+    return raw
+      .split(",")
+      .map(h => h.trim().toLowerCase())
+      .filter(Boolean)
+      .some(h => host === h || host.endsWith("." + h));
   }
 
   // Run a per-site scriptlet in the page's MAIN world at document-start via a

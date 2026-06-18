@@ -3,7 +3,7 @@
   (:require [gjoa.macros :refer [q qa by-id attr! on! xul htm has? toggle! rmattr! bool tabs!]]))
 (define-mode strict)
 
-(declare-extern [gBrowser Promise String Array requestAnimationFrame INDENT has-children is-horizontal level-of level-of-row tree-data! data-of! all-rows create-logger! hz-display moving-tabs row-of state] Any)
+(declare-extern [gBrowser Promise String Array requestAnimationFrame cancelAnimationFrame INDENT has-children is-horizontal level-of level-of-row tree-data! data-of! all-rows create-logger! hz-display moving-tabs row-of state] Any)
 
 ;; From sibling modules — no import, declare-extern only.
 ;; --- reset-style!: clear all 7 grid/position style properties ---
@@ -23,7 +23,7 @@
         log (create-logger! "tabs/rows")
 
         ;; Module-private mutable state
-        counters :- Any {:group 0 :resync-pending false}
+        counters :- Any {:group 0 :resync-pending false :grid-raf 0}
 
         ;; ----- tab rows -----
 
@@ -111,9 +111,12 @@
                        :level    lv
                        :state    nil
                        :collapsed false
+                       ;; nil (not "") when there's no active space — "" is a
+                       ;; phantom id that downstream truthy-checks treat as Main
+                       ;; anyway; nil states "no space assigned" honestly.
                        :spaceId  (if (.-getActiveSpaceId deps)
-                                   (or (.getActiveSpaceId deps) "")
-                                   "")}
+                                   (or (.getActiveSpaceId deps) nil)
+                                   nil)}
                 row     (xul "hbox" "gjoa-group-row")
                 marker  (htm "span" "gjoa-group-marker")
                 label   (htm "span" "gjoa-tab-label")
@@ -252,9 +255,14 @@
                               (.join tracks " ")))
                       (set! (.-gridTemplateColumns (.-style c)) "")))))
 
-              ;; Pin container heights and handle popouts in rAF
-              (requestAnimationFrame
-                (fn [] (when (is-horizontal)
+              ;; Pin container heights and handle popouts in rAF. Capture the
+              ;; handle so a re-entrant pass (rapid mode toggle) cancels the
+              ;; stale one instead of double-positioning popouts.
+              (when (> (.-grid-raf counters) 0)
+                (cancelAnimationFrame (.-grid-raf counters)))
+              (set! (.-grid-raf counters)
+                (requestAnimationFrame
+                  (fn [] (set! (.-grid-raf counters) 0) (when (is-horizontal)
                    ;; Pin each container to first-row height
                    (.forEach raw-containers
                      #(let [first-row (q %
@@ -305,11 +313,14 @@
                                        (str (.-top r) "px"))
                                  (set! (.-width (.-style p))
                                        (str (.-width r) "px"))
-                                 (set! (.-zIndex (.-style p)) "9999"))))))))))))))))
+                                 (set! (.-zIndex (.-style p)) "9999")))))))))))))))))
 
         ;; ----- clear horizontal grid -----
 
         clear-horizontal-grid (fn []
+          (when (> (.-grid-raf counters) 0)
+            (cancelAnimationFrame (.-grid-raf counters))
+            (set! (.-grid-raf counters) 0))
           (let [both []]
             (when (.-pinnedContainer state)
               (.push both (.-pinnedContainer state)))

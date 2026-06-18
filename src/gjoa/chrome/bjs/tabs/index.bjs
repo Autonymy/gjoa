@@ -408,8 +408,11 @@
                 ;; Position panel
                 (.positionPanel layout)
 
-                ;; MutationObserver for sidebar attribute changes
-                (let [obs (MutationObserver. #(.positionPanel layout))
+                ;; MutationObserver for sidebar attribute changes. Use the
+                ;; rAF-coalesced wrapper: compact mode bursts these attributes in
+                ;; one turn, so the un-coalesced positionPanel would re-enter
+                ;; several times per frame and could read a half-applied set.
+                (let [obs (MutationObserver. #(.requestPositionPanel layout))
                       opts {:childList true
                             :attributes true
                             :attributeFilter ["sidebar-launcher-expanded" "data-gjoa-compact" "gjoa-has-hover"]}]
@@ -417,7 +420,7 @@
 
                 ;; Pref observer for vertical tabs
                 (.addObserver (.-prefs Services) "sidebar.verticalTabs"
-                  {:observe #(.positionPanel layout)})
+                  {:observe #(.requestPositionPanel layout)})
 
                 ;; Build from saved or fresh
                 (when (not (build-from-saved!))

@@ -1,0 +1,82 @@
+#lang beagle/js
+;; #40 bug3 — a session-restored tab must re-anchor to its real space, not Main.
+;; gjoa now persists each tab's space on a `gjoa-space-id` attribute (registered
+;; with SessionStore, so it survives restore). `spaceOf` reads it as a
+;; self-healing fallback when the in-memory WeakMap misses (which is exactly what
+;; happens at hydrate time for a tab the tabById lookup can't yet resolve).
+(ns gjoa.tests.integration.spaces-session-restore
+  (:require [gjoa.tests.dsl :refer [deftest chrome-eval expect expect-eq]]))
+(define-mode strict)
+(declare-extern [JSON] Any)
+
+(def RESET-JS :- String
+  (str "\n"
+       "  const S = window.Spaces;\n"
+       "  const main = S.list().find(s => s.name === 'Main') || S.list()[0];\n"
+       "  S.setActive(main.id);\n"
+       "  for (const s of [...S.list()]) { if (s.id !== main.id) S.delete(s.id); }\n"
+       "  const work = S.create('Work');\n"
+       "  window.__workId = work.id;\n"
+       "  window.__mainId = main.id;\n"
+       "  return JSON.stringify({ work: work.id, main: main.id });\n"))
+
+;; A restored tab the in-memory WeakMap doesn't know about: a tab-like object
+;; whose only space signal is the persisted gjoa-space-id attribute. spaceOf must
+;; read it and resolve to Work (warming the WeakMap), not strand in Main. (A real
+;; gBrowser tab can't be used here: onTabOpen assigns it on creation, populating
+;; the WeakMap, so the fallback would never be exercised — which is the whole
+;; point of the fix.)
+(def RESTORE-PROBE-JS :- String
+  (str "\n"
+       "  const S = window.Spaces;\n"
+       "  const fakeTab = { getAttribute: (a) => a === 'gjoa-space-id' ? window.__workId : null };\n"
+       "  const got = S.spaceOf(fakeTab);\n"
+       "  return JSON.stringify({ isWork: got === window.__workId, isMain: got === window.__mainId });\n"))
+
+;; assignTab must persist the attribute so the tab survives a future restore.
+(def ASSIGN-PERSIST-JS :- String
+  (str "\n"
+       "  const S = window.Spaces;\n"
+       "  const t = gBrowser.addTab('https://example.com/assign', {\n"
+       "    triggeringPrincipal: Services.scriptSecurityManager.getSystemPrincipal() });\n"
+       "  S.assignTab(t, window.__workId);\n"
+       "  const attr = t.getAttribute('gjoa-space-id');\n"
+       "  gBrowser.removeTab(t);\n"
+       "  return attr;\n"))
+
+;; A tab with NO attr and not in the WeakMap still falls back to Main (unchanged
+;; behaviour — the fix must not regress the genuine no-space case).
+(def NO-ATTR-JS :- String
+  (str "\n"
+       "  const S = window.Spaces;\n"
+       "  const t = gBrowser.addTab('https://example.com/plain', {\n"
+       "    triggeringPrincipal: Services.scriptSecurityManager.getSystemPrincipal() });\n"
+       "  const got = S.spaceOf(t);\n"
+       "  const isMain = got === window.__mainId;\n"
+       "  gBrowser.removeTab(t);\n"
+       "  return JSON.stringify({ isMain });\n"))
+
+(js/export (def tests :- Any
+  [(deftest "spaces #40bug3: restored tab re-anchors via persisted gjoa-space-id (not Main)" [mn ctx]
+     (js/await (.setContext mn "chrome"))
+     (chrome-eval RESET-JS)
+     (let [parsed (JSON/parse (chrome-eval RESTORE-PROBE-JS))]
+       (expect (.-isWork parsed)
+               "restored tab with persisted gjoa-space-id resolves to Work")
+       (expect (not (.-isMain parsed))
+               "restored tab must NOT strand in Main")))
+
+   (deftest "spaces #40bug3: assignTab persists gjoa-space-id on the tab" [mn ctx]
+     (js/await (.setContext mn "chrome"))
+     (chrome-eval RESET-JS)
+     (expect-eq (chrome-eval ASSIGN-PERSIST-JS) (chrome-eval "return window.__workId;")
+                "assignTab writes the space id to the gjoa-space-id attribute"))
+
+   (deftest "spaces #40bug3: tab with no space attr still falls back to Main" [mn ctx]
+     (js/await (.setContext mn "chrome"))
+     (chrome-eval RESET-JS)
+     (let [parsed (JSON/parse (chrome-eval NO-ATTR-JS))]
+       (expect (.-isMain parsed)
+               "a tab with no persisted space and no WeakMap entry defaults to Main")))]))
+
+(js/export-default tests)

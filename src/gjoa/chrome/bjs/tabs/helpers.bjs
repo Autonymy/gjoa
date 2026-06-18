@@ -3,7 +3,7 @@
   (:require [gjoa.macros :refer [qa attr! has? tabs! bool]]))
 (define-mode strict)
 
-(declare-extern [create-logger! PIN-ATTR tree-of state gBrowser console ChromeUtils String Number Set Array JSON Math SessionStore] Any)
+(declare-extern [create-logger! PIN-ATTR SPACE-ATTR tree-of state gBrowser console ChromeUtils String Number Set Array JSON Math SessionStore] Any)
 
 (def log :- Any (create-logger! "tabs"))
 
@@ -30,6 +30,9 @@
   (when (and (not (.-done pin-reg)) SS (.-persistTabAttribute SS))
     (try
       (.persistTabAttribute SS PIN-ATTR)
+      ;; Persist the per-tab space assignment too, so a restored tab carries its
+      ;; space across session restore (see spaces/manager spaceOf fallback).
+      (.persistTabAttribute SS SPACE-ATTR)
       (set! (.-done pin-reg) true)
       (catch Any e
         (.error console "gjoa-tabs: persistTabAttribute failed" e))))))

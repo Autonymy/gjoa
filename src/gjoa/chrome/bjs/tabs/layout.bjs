@@ -3,7 +3,7 @@
   (:require [gjoa.macros :refer [by-id xul-new attr! pref-bool has? rmattr! toggle! on!]]))
 (define-mode strict)
 
-(declare-extern [gBrowser ResizeObserver create-logger! all-rows data-of! level-of-row row-of state] Any)
+(declare-extern [gBrowser ResizeObserver requestAnimationFrame create-logger! all-rows data-of! level-of-row row-of state] Any)
 
 (js/export (defn make-layout! [deps :- Any] :- Any
   (let [sidebar-main (.-sidebarMain deps)
@@ -13,7 +13,8 @@
         ;; Module-private mutable state
         priv :- Any {:toolboxResizeObs nil
                      :alignSpacer nil
-                     :lastVertical nil}
+                     :lastVertical nil
+                     :posPanelRaf 0}
 
         is-vertical (fn [] :- Bool
           (pref-bool "sidebar.verticalTabs" true))
@@ -191,8 +192,22 @@
                 ;; mode toggle never leaves the selected tab hidden.
                 (when (.-reconcileSelection deps)
                   (.reconcileSelection deps))
-                (set! (.-lastVertical priv) vertical)))))]
+                (set! (.-lastVertical priv) vertical)))))
+
+        ;; rAF-coalesce positionPanel: compact mode bursts several sidebar
+        ;; attributes in one turn (data-gjoa-compact / gjoa-has-hover /
+        ;; sidebar-launcher-expanded), each firing the MutationObserver. Collapse
+        ;; them into ONE positionPanel per frame so we never thrash the layout or
+        ;; read a half-applied attribute set mid-burst.
+        request-position-panel (fn []
+          (when (= (.-posPanelRaf priv) 0)
+            (set! (.-posPanelRaf priv)
+              (requestAnimationFrame
+                (fn []
+                  (set! (.-posPanelRaf priv) 0)
+                  (position-panel))))))]
 
     {:positionPanel position-panel
+     :requestPositionPanel request-position-panel
      :isVertical is-vertical
      :setUrlbarTopLayer set-urlbar-top-layer})))

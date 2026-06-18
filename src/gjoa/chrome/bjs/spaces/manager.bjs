@@ -1,6 +1,7 @@
 #lang beagle/js
 (ns gjoa.spaces.manager
-  (:require [gjoa.spaces.visibility :refer [is-in-active-space]]))
+  (:require [gjoa.spaces.visibility :refer [is-in-active-space]]
+            [gjoa.tabs.constants :refer [SPACE-ATTR]]))
 (define-mode strict)
 
 (declare-extern [crypto Date Array] Any)
@@ -33,10 +34,20 @@
 
        :active #(.get spaces (.-active-id state))
 
-       :spaceOf #(let [id (.get tab-space %)]
-           (if (and id (.has spaces id))
-             id
-             (default-id)))
+       :spaceOf (fn [tab]
+           (let [cached (.get tab-space tab)]
+             (if (and cached (.has spaces cached))
+               cached
+               ;; WeakMap miss — e.g. a session-restored tab the hydrate-time
+               ;; tabById lookup couldn't resolve yet. Fall back to the space-id
+               ;; persisted on the tab itself (survives Firefox session restore),
+               ;; warming the WeakMap so the tab re-anchors to its real space
+               ;; instead of silently stranding in Main.
+               (let [persisted (try (.getAttribute tab SPACE-ATTR)
+                                 (catch Any _e nil))]
+                 (if (and persisted (.has spaces persisted))
+                   (do (.set tab-space tab persisted) persisted)
+                   (default-id))))))
 
        :create (fn [name icon]
          (let [s {:id (uuid) :name (or name "Untitled") :createdAt (.now Date)}]
@@ -85,6 +96,10 @@
            (let [prev (.get tab-space tab)]
              (when (not= prev id)
                (.set tab-space tab id)
+               ;; Persist on the tab node so SessionStore carries the assignment
+               ;; across restore (read back by the spaceOf fallback above).
+               (try (.setAttribute tab SPACE-ATTR id)
+                 (catch Any _e nil))
                (on-change)))))
 
        :isVisible #(is-in-active-space % tab-space spaces (default-id) (.-active-id state))

@@ -3,7 +3,7 @@
   (:require [gjoa.macros :refer [q on! bool rmattr! undef-or toggle! tabs!]]))
 (define-mode strict)
 
-(declare-extern [Services gBrowser console Math Object create-logger! CLOSED-MEMORY all-rows group-by-id is-horizontal level-of parent-of-tab pin-tab-id read-pinned-id subtree-rows tab-by-id tab-url tree-data! pop-saved-by-url pop-saved-for-tab closed-tabs moving-tabs row-of saved-tab-queue state tree-of] Any)
+(declare-extern [Services gBrowser console Math Object create-logger! CLOSED-MEMORY SPACE-ATTR all-rows group-by-id is-horizontal level-of parent-of-tab pin-tab-id read-pinned-id subtree-rows tab-by-id tab-url tree-data! pop-saved-by-url pop-saved-for-tab closed-tabs moving-tabs row-of saved-tab-queue state tree-of] Any)
 
 ;; Find previous tab in array matching predicate, searching backwards (multi-site)
 (defn find-prev-matching [tabs-arr :- Any idx :- Int pred :- Any] :- Any
@@ -233,9 +233,22 @@
         (fn [e]
           (let [tab (.-target e)
                 td (tree-data! tab)]
-            ;; Assign to active space
+            ;; Assign to the persisted space if this tab carries one (a tab
+            ;; restored from a prior session keeps its gjoa-space-id), else to
+            ;; the active space. This re-anchors restored tabs to their real
+            ;; space even when the saved-tab-queue / hydrate lookups miss (#40
+            ;; bug3). If the persisted space isn't hydrated yet, leave the tab
+            ;; UNASSIGNED so spaceOf's attr fallback resolves it later — never
+            ;; clobber a restored tab onto the active space.
             (when spaces
-              (.assignTab spaces tab (.activeId spaces)))
+              (let [persisted (.getAttribute tab SPACE-ATTR)]
+                (cond
+                  (and persisted (.get spaces persisted))
+                    (.assignTab spaces tab persisted)
+                  (and persisted (> (.-length persisted) 0))
+                    nil
+                  :else
+                    (.assignTab spaces tab (.activeId spaces)))))
 
             ;; Session-restore path
             (let [prior (pop-saved-for-tab saved-tab-queue

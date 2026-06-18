@@ -6,3 +6,8 @@
 (js/export (def CHORD-TIMEOUT :- Int 500))
 (js/export (def CLOSED-MEMORY :- Int 32))
 (js/export (def PIN-ATTR :- String "gjoa-id"))
+;; Per-tab space assignment, persisted via SessionStore so a tab re-anchors to
+;; its real space across session restore (instead of stranding in Main when the
+;; hydrate-time tabById lookup misses). Read as a self-healing fallback in
+;; spaces/manager spaceOf.
+(js/export (def SPACE-ATTR :- String "gjoa-space-id"))

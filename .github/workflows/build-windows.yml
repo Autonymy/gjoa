@@ -106,18 +106,12 @@ jobs:
           tar --zstd -xf "$HOME/wine.tar.zst" -C ~/win-cross
           rm -f "$HOME/wine.tar.zst"
           test -x ~/win-cross/wine/bin/wine || { echo "::error::wine not at ~/win-cross/wine/bin/wine"; ls -R ~/win-cross/wine 2>/dev/null | head -20; exit 1; }
-          # Visual Studio + Windows SDK (+ App SDK) via Mozilla's fetcher
+          # Visual Studio + Windows SDK (+ App SDK) via Mozilla's fetcher. This is
+          # the SAME setup zen-browser uses (windows-release-build.yml:156-161):
+          # fetch wine, get_vs.py → WINSYSROOT, chmod +x. No fxc/d3dcompiler hacks —
+          # the SDK's fxc.exe compiles the D3D shaders fine under this wine, headless.
           ./mach python --virtualenv build taskcluster/scripts/misc/get_vs.py build/vs/vs2026.yaml ~/win-cross/vs2026
           chmod -R +x ~/win-cross/vs2026 || true
-          # Ensure the NATIVE d3dcompiler_47.dll sits next to fxc.exe so wine (with
-          # the WINEDLLOVERRIDES in the mozconfig) loads it instead of builtin vkd3d.
-          # In this SDK it's already there — only copy if it lives elsewhere.
-          FXC_DIR="$(dirname "$(find ~/win-cross/vs2026 -name fxc.exe -path '*x64*' | head -1)")"
-          DCDLL="$(find ~/win-cross/vs2026 -name d3dcompiler_47.dll -path '*x64*' | head -1)"
-          echo "fxc dir: $FXC_DIR ; d3dcompiler: $DCDLL"
-          test -n "$FXC_DIR" || { echo "::error::fxc.exe not found"; exit 1; }
-          test -n "$DCDLL" || { echo "::error::d3dcompiler_47.dll not found"; exit 1; }
-          [ "$(dirname "$DCDLL")" != "$FXC_DIR" ] && cp "$DCDLL" "$FXC_DIR/" || echo "d3dcompiler already next to fxc"
           ls ~/win-cross
 
       - name: Write mozconfig (cross)
@@ -135,15 +129,17 @@ jobs:
           ac_add_options --enable-optimize
           ac_add_options --enable-release
           ac_add_options --disable-debug-symbols
+          # Mirror zen-browser/configs/windows/mozconfig exactly — the proven
+          # cross env. No WINEDLLOVERRIDES: zen sets none and the SDK fxc compiles
+          # the shaders correctly. MOZ_PKG_FORMAT=TAR avoids needing NSIS/makensis
+          # at package time. CROSS_COMPILE=1 + CROSS_BUILD=1 as zen sets them.
           export WINSYSROOT="$HOME/win-cross/vs2026"
           export WINE="$HOME/win-cross/wine/bin/wine"
           export WINEDEBUG=-all
-          # Force wine to load the NATIVE d3dcompiler_47.dll (copied next to fxc.exe
-          # in the setup step) instead of its builtin vkd3d, whose HLSL compiler
-          # can't build FF's shaders. With this, the SDK's fxc.exe works under wine.
-          export WINEDLLOVERRIDES="d3dcompiler_47=n"
-          export CROSS_BUILD=1
           export MOZ_STUB_INSTALLER=1
+          export MOZ_PKG_FORMAT=TAR
+          export CROSS_BUILD=1
+          CROSS_COMPILE=1
           export WIN32_REDIST_DIR="$(ls -d $HOME/win-cross/vs2026/VC/Redist/MSVC/*/x64/Microsoft.VC*.CRT 2>/dev/null | head -1)"
           MOZCONFIG
           sed -i 's/^          //' engine/mozconfig
@@ -170,11 +166,10 @@ jobs:
         run: |
           export MOZBUILD_STATE_PATH="$HOME/.mozbuild"
           [ -f "$HOME/.cargo/env" ] && . "$HOME/.cargo/env" || true
-          # wine needs an X display to run the VS tools during cross-compile (else
-          # "explorer process failed to start" → compilation fails). Start a virtual
-          # framebuffer (zen .github/workflows/src/release-build.sh:22-26).
-          Xvfb :2 -nolisten tcp -noreset -screen 0 1024x768x24 &
-          export DISPLAY=:2
+          # Headless — NO Xvfb/DISPLAY. zen gates Xvfb behind !ZEN_CROSS_COMPILING
+          # (release-build.sh:22-27): it's only for the native Linux profile build.
+          # The SDK's fxc.exe is a CLI tool and compiles the D3D shaders under wine
+          # without a display; Mozilla's own taskcluster cross-build is headless too.
           ./mach build -j2
 
       - name: Package
@@ -189,5 +184,5 @@ jobs:
           name: gjoa-windows-x86_64
           path: |
             engine/obj-*/dist/gjoa-*.zip
-            engine/obj-*/dist/gjoa-*.tar.*
+            engine/obj-*/dist/gjoa-*.tar*
           if-no-files-found: error

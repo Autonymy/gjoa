@@ -1,0 +1,86 @@
+#lang beagle/js
+;; Per-site dark-mode HYBRID (task #43). The headline mechanism is per-document
+;; inversion: BrowsingContext.colorInversionOverride ("active"/"inactive"/"none")
+;; drives nsPresContext::mColorInversion for THAT document only, so the engine
+;; can invert one tab (themeless site) while another keeps its native theme.
+;; These tests drive the override from chrome and verify only that document
+;; inverts — independent of the actor's detection logic (which is JS).
+(ns gjoa.tests.integration.darkmode-hybrid
+  (:require [gjoa.tests.dsl :refer [deftest chrome-eval await-true wait-for expect expect-eq]]))
+(define-mode strict)
+(declare-extern [JSON] Any)
+
+(def TOP :- String "http://127.0.0.1:8975/")
+
+(def NAV-JS :- String
+  (str "\n"
+       "  const [url, resolve] = arguments;\n"
+       "  let done = false; const finish = v => { if (!done) { done = true; resolve(v); } };\n"
+       "  const win = Services.wm.getMostRecentWindow('navigator:browser');\n"
+       "  const b = win.gBrowser.selectedBrowser;\n"
+       "  const l = { QueryInterface: ChromeUtils.generateQI(['nsIWebProgressListener','nsISupportsWeakReference']),\n"
+       "    onStateChange(wp, req, flags) { const S = Ci.nsIWebProgressListener;\n"
+       "      if ((flags & S.STATE_STOP) && (flags & S.STATE_IS_WINDOW)) { try { b.removeProgressListener(l); } catch {} finish(true); } } };\n"
+       "  b.addProgressListener(l, Ci.nsIWebProgress.NOTIFY_STATE_ALL);\n"
+       "  b.loadURI(Services.io.newURI(url), { triggeringPrincipal: Services.scriptSecurityManager.getSystemPrincipal() });\n"
+       "  setTimeout(() => finish(false), 15000);\n"))
+
+(defn set-override-js [v :- String] :- String
+  (str "\n"
+       "  const b = Services.wm.getMostRecentWindow('navigator:browser').gBrowser.selectedBrowser;\n"
+       "  b.browsingContext.colorInversionOverride = '" v "';\n"
+       "  return b.browsingContext.colorInversionOverride;\n"))
+
+(def PROBE :- String
+  (str "\n"
+       "  const d = document.createElement('div');\n"
+       "  d.style.backgroundColor = 'rgb(255, 255, 255)';\n"
+       "  d.style.color = 'rgb(0, 0, 0)';\n"
+       "  document.body.appendChild(d);\n"
+       "  const cs = getComputedStyle(d);\n"
+       "  return JSON.stringify({ bg: cs.backgroundColor, fg: cs.color });\n"))
+
+(js/export (def tests :- Any
+  [(deftest "darkmode hybrid: per-document override 'active' inverts just this doc" [mn ctx]
+     (js/await (.setContext mn "chrome"))
+     ;; Global invert OFF, so ONLY the per-document field can cause inversion.
+     (chrome-eval "Services.prefs.setBoolPref('gjoa.darkmode.invert.enabled', false); return 'off';")
+     (let [navOk (js/await (.executeAsyncScript mn NAV-JS [TOP]))]
+       (expect navOk "fixture page loaded")
+       (expect-eq (chrome-eval (set-override-js "active")) "active" "override set to active")
+       (js/await (wait-for mn "return true;" 400))
+       (js/await (.setContext mn "content"))
+       (let [parsed (JSON/parse (chrome-eval PROBE))]
+         (expect-eq (.-bg parsed) "rgb(0, 0, 0)"
+                    "white bg must invert to black under colorInversionOverride=active")
+         (expect-eq (.-fg parsed) "rgb(255, 255, 255)"
+                    "black text must invert to white"))))
+
+   (deftest "darkmode hybrid: per-document override 'inactive' leaves doc untouched (global off)" [mn ctx]
+     (js/await (.setContext mn "chrome"))
+     (chrome-eval "Services.prefs.setBoolPref('gjoa.darkmode.invert.enabled', false); return 'off';")
+     (let [navOk (js/await (.executeAsyncScript mn NAV-JS [TOP]))]
+       (expect navOk "fixture page loaded")
+       (expect-eq (chrome-eval (set-override-js "inactive")) "inactive" "override set to inactive")
+       (js/await (wait-for mn "return true;" 400))
+       (js/await (.setContext mn "content"))
+       (let [parsed (JSON/parse (chrome-eval PROBE))]
+         (expect-eq (.-bg parsed) "rgb(255, 255, 255)"
+                    "white bg must STAY white under colorInversionOverride=inactive (global off)"))))
+
+   (deftest "darkmode hybrid: global pref still drives inversion when override is 'none'" [mn ctx]
+     (js/await (.setContext mn "chrome"))
+     (chrome-eval "Services.prefs.setBoolPref('gjoa.darkmode.invert.enabled', true); return 'on';")
+     (let [navOk (js/await (.executeAsyncScript mn NAV-JS [TOP]))]
+       (expect navOk "fixture page loaded")
+       (expect-eq (chrome-eval (set-override-js "none")) "none" "override set to none (defer to pref)")
+       (js/await (wait-for mn "return true;" 400))
+       (js/await (.setContext mn "content"))
+       (let [parsed (JSON/parse (chrome-eval PROBE))]
+         (expect-eq (.-bg parsed) "rgb(0, 0, 0)"
+                    "with override=none, the global invert pref must still invert"))
+       ;; cleanup
+       (js/await (.setContext mn "chrome"))
+       (chrome-eval "Services.prefs.setBoolPref('gjoa.darkmode.invert.enabled', false); return 'cleanup';")))]))
+
+(js/export-default tests)

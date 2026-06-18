@@ -5,6 +5,9 @@
 #     - servo/components/style/device/gecko.rs
 #     - layout/base/nsPresContext.h
 #     - layout/base/nsPresContext.cpp
+#     - dom/chrome-webidl/BrowsingContext.webidl
+#     - docshell/base/BrowsingContext.h
+#     - docshell/base/BrowsingContext.cpp
 #
 Engine-level dark mode: luminance-invert resolved absolute colors at
 style-resolution time (the performant successor to the compositor filter:invert).
@@ -25,8 +28,115 @@ style-resolution time (the performant successor to the compositor filter:invert)
 The "engine" dark-mode mode (src/gjoa chrome) forces prefers-color-scheme:light
 then flips this flag, so sites render light and the engine inverts to dark.
 
+diff --git a/docshell/base/BrowsingContext.cpp b/docshell/base/BrowsingContext.cpp
+index e8b50c6548..b5c5194ead 100644
+--- a/docshell/base/BrowsingContext.cpp
++++ b/docshell/base/BrowsingContext.cpp
+@@ -124,6 +124,11 @@ struct ParamTraits<mozilla::dom::ForcedColorsOverride>
+     : public mozilla::dom::WebIDLEnumSerializer<
+           mozilla::dom::ForcedColorsOverride> {};
+ 
++template <>
++struct ParamTraits<mozilla::dom::ColorInversionOverride>
++    : public mozilla::dom::WebIDLEnumSerializer<
++          mozilla::dom::ColorInversionOverride> {};
++
+ template <>
+ struct ParamTraits<mozilla::dom::PrefersReducedMotionOverride>
+     : public mozilla::dom::WebIDLEnumSerializer<
+@@ -3491,6 +3496,15 @@ void BrowsingContext::DidSet(FieldIndex<IDX_ForcedColorsOverride>,
+   PresContextAffectingFieldChanged();
+ }
+ 
++void BrowsingContext::DidSet(FieldIndex<IDX_ColorInversionOverride>,
++                             dom::ColorInversionOverride aOldValue) {
++  MOZ_ASSERT(IsTop());
++  if (ColorInversionOverride() == aOldValue) {
++    return;
++  }
++  PresContextAffectingFieldChanged();
++}
++
+ void BrowsingContext::DidSet(FieldIndex<IDX_PrefersReducedMotionOverride>,
+                              dom::PrefersReducedMotionOverride aOldValue) {
+   MOZ_ASSERT(IsTop());
+diff --git a/docshell/base/BrowsingContext.h b/docshell/base/BrowsingContext.h
+index 02abb6ab95..d68f109d10 100644
+--- a/docshell/base/BrowsingContext.h
++++ b/docshell/base/BrowsingContext.h
+@@ -254,6 +254,8 @@ struct EmbedderColorSchemes {
+   FIELD(PrefersReducedMotionOverride, dom::PrefersReducedMotionOverride)      \
+   /* DevTools override for forced-colors */                                   \
+   FIELD(ForcedColorsOverride, dom::ForcedColorsOverride)                      \
++  /* gjoa per-document dark-mode engine-inversion override */                 \
++  FIELD(ColorInversionOverride, dom::ColorInversionOverride)                  \
+   /* DevTools multiplier for animations playback rate */                      \
+   FIELD(AnimationsPlayBackRateMultiplier, double)                             \
+   /* prefers-color-scheme override based on the color-scheme style of our     \
+@@ -1110,6 +1112,10 @@ class BrowsingContext : public nsILoadContext, public nsWrapperCache {
+     return GetForcedColorsOverride();
+   }
+ 
++  dom::ColorInversionOverride ColorInversionOverride() const {
++    return GetColorInversionOverride();
++  }
++
+   dom::PrefersReducedMotionOverride PrefersReducedMotionOverride() const {
+     return GetPrefersReducedMotionOverride();
+   }
+@@ -1325,6 +1331,11 @@ class BrowsingContext : public nsILoadContext, public nsWrapperCache {
+     return IsTop();
+   }
+ 
++  bool CanSet(FieldIndex<IDX_ColorInversionOverride>, dom::ColorInversionOverride,
++              ContentParent*) {
++    return IsTop();
++  }
++
+   bool CanSet(FieldIndex<IDX_PrefersReducedMotionOverride>,
+               dom::PrefersReducedMotionOverride, ContentParent*) {
+     return IsTop();
+@@ -1350,6 +1361,9 @@ class BrowsingContext : public nsILoadContext, public nsWrapperCache {
+   void DidSet(FieldIndex<IDX_ForcedColorsOverride>,
+               dom::ForcedColorsOverride aOldValue);
+ 
++  void DidSet(FieldIndex<IDX_ColorInversionOverride>,
++              dom::ColorInversionOverride aOldValue);
++
+   void DidSet(FieldIndex<IDX_PrefersReducedMotionOverride>,
+               dom::PrefersReducedMotionOverride aOldValue);
+ 
+diff --git a/dom/chrome-webidl/BrowsingContext.webidl b/dom/chrome-webidl/BrowsingContext.webidl
+index d0508a8c29..da80d54f18 100644
+--- a/dom/chrome-webidl/BrowsingContext.webidl
++++ b/dom/chrome-webidl/BrowsingContext.webidl
+@@ -63,6 +63,13 @@ enum ForcedColorsOverride {
+   "active",
+ };
+ 
++// gjoa per-document dark-mode inversion: "none" defers to the global pref.
++enum ColorInversionOverride {
++  "none",
++  "inactive",
++  "active",
++};
++
+ /**
+  * CSS prefers-reduced-motion values override.
+  */
+@@ -255,6 +262,10 @@ interface BrowsingContext {
+   // Forced-colors simulation, for DevTools
+   [SetterThrows] attribute ForcedColorsOverride forcedColorsOverride;
+ 
++  // gjoa per-document dark-mode inversion override. Set by the GjoaDarkmode
++  // actor on top BrowsingContexts; "none" defers to the global invert pref.
++  [SetterThrows] attribute ColorInversionOverride colorInversionOverride;
++
+   // Animation playbackRate multiplier, for Devtools
+   [SetterThrows] attribute double animationsPlayBackRateMultiplier;
+ 
 diff --git a/layout/base/nsPresContext.cpp b/layout/base/nsPresContext.cpp
-index b2394c6..a7e963f 100644
+index b2394c6106..ce3725d676 100644
 --- a/layout/base/nsPresContext.cpp
 +++ b/layout/base/nsPresContext.cpp
 @@ -327,6 +327,7 @@ nsPresContext::nsPresContext(dom::Document* aDocument, nsPresContextType aType)
@@ -57,7 +167,7 @@ index b2394c6..a7e963f 100644
    if (prefName.EqualsLiteral("layout.css.dpi") ||
        prefName.EqualsLiteral("layout.css.devPixelsPerPx")) {
      int32_t oldAppUnitsPerDevPixel = mDeviceContext->AppUnitsPerDevPixel();
-@@ -775,6 +782,26 @@ void nsPresContext::UpdateForcedColors(bool aNotify) {
+@@ -775,6 +782,37 @@ void nsPresContext::UpdateForcedColors(bool aNotify) {
    }
  }
  
@@ -72,6 +182,17 @@ index b2394c6..a7e963f 100644
 +    if (PrefSheetPrefs().mIsChrome) {
 +      return false;
 +    }
++    // Per-document override set by the GjoaDarkmode actor (the per-site hybrid);
++    // "none" defers to the global pref.
++    if (auto* bc = mDocument->GetBrowsingContext()) {
++      auto ov = bc->Top()->ColorInversionOverride();
++      if (ov == ColorInversionOverride::Active) {
++        return true;
++      }
++      if (ov == ColorInversionOverride::Inactive) {
++        return false;
++      }
++    }
 +    return Preferences::GetBool("gjoa.darkmode.invert.enabled", false);
 +  }();
 +  if (aNotify && mColorInversion != old) {
@@ -84,8 +205,16 @@ index b2394c6..a7e963f 100644
  bool nsPresContext::ForcingColors() const {
    return mForcedColors == StyleForcedColors::Active;
  }
+@@ -927,6 +965,7 @@ void nsPresContext::RecomputeBrowsingContextDependentData() {
+   }());
+ 
+   UpdateForcedColors();
++  UpdateColorInversion();
+ 
+   SetInRDMPane(top->GetInRDMPane());
+ 
 diff --git a/layout/base/nsPresContext.h b/layout/base/nsPresContext.h
-index 13aa714..2794d77 100644
+index 13aa7141c8..2794d77dda 100644
 --- a/layout/base/nsPresContext.h
 +++ b/layout/base/nsPresContext.h
 @@ -362,6 +362,10 @@ class nsPresContext : public nsISupports,
@@ -117,7 +246,7 @@ index 13aa714..2794d77 100644
   protected:
    virtual ~nsPresContext();
 diff --git a/servo/components/style/device/gecko.rs b/servo/components/style/device/gecko.rs
-index 7ed8c2c..54ffa6f 100644
+index 7ed8c2c7a1..54ffa6f483 100644
 --- a/servo/components/style/device/gecko.rs
 +++ b/servo/components/style/device/gecko.rs
 @@ -389,6 +389,14 @@ impl Device {
@@ -136,7 +265,7 @@ index 7ed8c2c..54ffa6f 100644
      pub(crate) fn system_nscolor(
          &self,
 diff --git a/servo/components/style/values/specified/color.rs b/servo/components/style/values/specified/color.rs
-index 9c55023..71ca91d 100644
+index 9c55023eb0..71ca91d2aa 100644
 --- a/servo/components/style/values/specified/color.rs
 +++ b/servo/components/style/values/specified/color.rs
 @@ -860,6 +860,41 @@ impl Color {

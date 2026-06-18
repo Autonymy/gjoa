@@ -404,3 +404,45 @@ the RS client + 6 uBO filter lists.
 `youtube-scriptlet.bjs` + `group-drag-above.bjs` (drag fix) also green in
 isolation. Full suite 58/62 (the 4 fails: documented adblock-smoke discrepancy +
 test order/flake, all non-code; engine/youtube/drag pass in isolation).
+
+---
+
+## 2026-06-18 — Dark-mode per-site HYBRID (#43) — SUCCESS (exit 0)
+
+**Lane 3** full `./mach build` (1845 s ≈ 30 min, 8 warnings — all pre-existing
+third-party). Validates `patches/0009`: a per-document inversion field mirroring
+`BrowsingContext.ForcedColorsOverride` end-to-end —
+- WebIDL `enum ColorInversionOverride {none,inactive,active}` + `[SetterThrows]
+  attribute colorInversionOverride`;
+- BC `FIELD` + getter + `CanSet`(`IsTop()`) + `DidSet`(`PresContextAffecting…`) +
+  `ParamTraits<…>` (`WebIDLEnumSerializer`);
+- `nsPresContext::UpdateColorInversion` now consults `bc->Top()->Color…()`
+  (active→invert, inactive→don't, none→defer to `gjoa.darkmode.invert.enabled`).
+
+The chrome side (Lane 1) is `GjoaDarkmode{Child,Parent}.sys.mjs`: child measures
+the rendered bg one cascade behind first paint, parent decides from trusted
+state; in `hybrid` mode (the new default) native-dark sites keep their theme and
+only themeless sites latch `active`. Every site dark, each the best way.
+
+### POSTMORTEM — webidl attribute edited AFTER the build's codegen tier ran
+Added the `colorInversionOverride` **attribute** line at 06:06; the build's
+export/codegen tier had already run at 05:52, so `BrowsingContextBinding.cpp`
+was generated WITHOUT the attribute and libxul linked (06:22) from the stale
+binding → the C++ field compiles but the **JS setter is a no-op expando**. The
+in-flight build cannot re-enter its own export tier. Fix: a follow-up incremental
+`./mach build` (webidl now newer than the binding → make regenerates it + relinks
+~minutes). **New gate idea (J):** after any `.webidl` change, assert the
+generated `*Binding.cpp` is newer than the `.webidl` AND greps for the new member
+before declaring the build done. Could it have been Lane 1? No — per-document
+inversion needs the synced BC field (C++/IPDL); chrome JS only sets it.
+
+### Cargo.lock --frozen — release/CI build fix (folded into patches/0008)
+The scriptlet-engine patch added `serde_json` to
+`content_classifier_engine/Cargo.toml` but never updated `Cargo.lock`; local mach
+(no `--frozen`) silently patched the lock in place, masking it, while CI **and**
+`nix build` (both `--frozen`) died: `cannot update the lock file … --frozen was
+passed`. This is why the v0.3.0 CI builds (Linux + macOS, sha a8d50bf) failed.
+Folded the 1-line `serde_json` dependency edge into `patches/0008` (forward-applies
+on a pristine tree). New gate idea (K): preflight should `cargo metadata
+--frozen` (or grep that every Cargo.toml dep edge exists in Cargo.lock) so a
+crate added without a lock update fails preflight, not a 30-min CI build.

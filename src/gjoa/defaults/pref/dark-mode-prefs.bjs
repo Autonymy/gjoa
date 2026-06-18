@@ -27,11 +27,25 @@
 ;;              performant successor to "filter".
 ;;   "filter" — legacy compositor-level SVG invert for sites without native dark.
 ;;              Counter-inverts images/video. Superseded by "engine".
+;;   "hybrid" — DEFAULT. Forces prefers-color-scheme:dark (native-dark sites
+;;              render their own theme) AND the GjoaDarkmode actor engine-inverts
+;;              ONLY documents that stayed light (no native dark theme), decided
+;;              per-document. Every site dark, each the best way. Per-site
+;;              overrides via the user.* prefs below.
 ;;   "off"    — dark mode disabled (same as enabled=false; exists so the mode
 ;;              pref can be cycled without touching the enabled toggle).
-(pref "gjoa.darkmode.mode" "auto")
+(pref "gjoa.darkmode.mode" "hybrid")
 
 ;; Engine-level luminance-inversion flag. Set by the dark-mode chrome module for
 ;; "engine" mode; read by nsPresContext::UpdateColorInversion to drive the Servo
-;; cascade hook. Default off; the chrome module owns it.
+;; cascade hook. Default off; the chrome module owns it (in "hybrid" mode the
+;; per-document BrowsingContext.colorInversionOverride drives inversion instead).
 (pref "gjoa.darkmode.invert.enabled" false)
+
+;; Per-site dark-mode overrides (comma-separated host lists), applied in "hybrid"
+;; mode by GjoaDarkmodeParent. Precedence: off > force-invert > force-native >
+;; auto. force-native = keep the site's look (never invert); force-invert =
+;; always invert; off = no inversion for that site.
+(pref "gjoa.darkmode.user.force-native" "")
+(pref "gjoa.darkmode.user.force-invert" "")
+(pref "gjoa.darkmode.user.off" "")

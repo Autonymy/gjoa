@@ -21,6 +21,10 @@
 (def PREF-CONTENT-OVERRIDE :- String "layout.css.prefers-color-scheme.content-override")
 ;; gjoa engine-level dark mode flag (read by nsPresContext::UpdateColorInversion).
 (def PREF-INVERT :- String "gjoa.darkmode.invert.enabled")
+;; Per-site override host-lists (used in "hybrid" mode by GjoaDarkmodeParent).
+(def PREF-FORCE-NATIVE :- String "gjoa.darkmode.user.force-native")
+(def PREF-FORCE-INVERT :- String "gjoa.darkmode.user.force-invert")
+(def PREF-SITE-OFF :- String "gjoa.darkmode.user.off")
 
 (def FILTER-CSS-ID :- String "gjoa-darkmode-filter-style")
 (def FILTER-CSS :- String
@@ -89,7 +93,10 @@
 
 (defn cycle-mode [] :- String
   (let [cur (mode-)
-        nxt (cond (= cur "auto") "engine" (= cur "engine") "off" :else "auto")]
+        nxt (cond (= cur "hybrid") "auto"
+                  (= cur "auto") "engine"
+                  (= cur "engine") "off"
+                  :else "hybrid")]
     (set-pref-str! PREF-MODE nxt)
     nxt))
 

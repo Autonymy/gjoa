@@ -1,6 +1,7 @@
 # gjoa-patch:
 #   baseline-firefox: 152.0
 #   touches:
+#     - Cargo.lock
 #     - toolkit/components/content-classifier/ContentClassifierService.cpp
 #     - toolkit/components/content-classifier/ContentClassifierService.h
 #     - toolkit/components/content-classifier/nsIContentClassifierService.idl
@@ -22,6 +23,18 @@ element-hiding (the gjoa adblock M2 feature).
 - moz.build: register GjoaCosmetic{Parent,Child}.sys.mjs as EXTRA_JS_MODULES
   (those NEW actor files ship as src/gjoa overlays, not in this patch)
 
+diff --git a/Cargo.lock b/Cargo.lock
+index ae3d1519df..1378c52dc3 100644
+--- a/Cargo.lock
++++ b/Cargo.lock
+@@ -1116,6 +1116,7 @@ dependencies = [
+  "cstr",
+  "nserror",
+  "nsstring",
++ "serde_json",
+  "thin-vec",
+  "xpcom",
+ ]
 diff --git a/toolkit/components/content-classifier/ContentClassifierService.cpp b/toolkit/components/content-classifier/ContentClassifierService.cpp
 index 8ea4179418..c69193e525 100644
 --- a/toolkit/components/content-classifier/ContentClassifierService.cpp
@@ -447,15 +460,17 @@ index 295b3bfd8b..88ad661a1c 100644
  
  impl adblock::url_parser::ResolvesDomain for SchemelessSiteResolver {
 diff --git a/toolkit/components/content-classifier/moz.build b/toolkit/components/content-classifier/moz.build
-index e65d3eebce..668e0c6f84 100644
+index e65d3eebce..11f7b2c3a7 100644
 --- a/toolkit/components/content-classifier/moz.build
 +++ b/toolkit/components/content-classifier/moz.build
-@@ -28,6 +28,16 @@ LOCAL_INCLUDES += [
+@@ -28,6 +28,18 @@ LOCAL_INCLUDES += [
  
  EXTRA_JS_MODULES += [
      "ContentClassifierRemoteSettingsClient.sys.mjs",
 +    "GjoaCosmeticChild.sys.mjs",
 +    "GjoaCosmeticParent.sys.mjs",
++    "GjoaDarkmodeChild.sys.mjs",
++    "GjoaDarkmodeParent.sys.mjs",
 +]
 +
 +# uBO-derived scriptlet/redirect resource library (JSON), read at init by the

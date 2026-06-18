@@ -144,5 +144,8 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: gjoa-linux-x86_64
-          path: engine/obj-*/dist/gjoa-*.tar.bz2
-          if-no-files-found: warn
+          # mach packages Linux as .tar.xz (not .bz2). Match any tarball, and
+          # FAIL if none is found — a silent `warn` produced a green build with
+          # no artifact, which is worse than a red build.
+          path: engine/obj-*/dist/gjoa-*.tar.*
+          if-no-files-found: error

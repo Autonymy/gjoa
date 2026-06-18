@@ -72,8 +72,14 @@
       (do (.removeProperty (.-style root) "color-scheme")
           (rmattr! root "gjoa-darkmode")))))
 
-(defn enabled? [] :- Boolean (pref-bool PREF-ENABLED false))
-(defn mode- [] :- String (pref-str PREF-MODE "auto"))
+(defn enabled? [] :- Boolean (pref-bool PREF-ENABLED true))
+(defn mode- [] :- String (pref-str PREF-MODE "system"))
+
+;; The chrome window's prefers-color-scheme reflects the OS / browser theme
+;; (independent of the content-override pref, which is content-only), so this is
+;; a reliable read of "is the system in dark mode right now".
+(defn system-dark? [] :- Boolean
+  (.-matches (.matchMedia window "(prefers-color-scheme: dark)")))
 
 (defn apply! [] :- Any
   (let [en (enabled?)
@@ -81,6 +87,13 @@
     (cond
       (or (not en) (= m "off"))
         (do (set-chrome-scheme! false) (set-content-override! 2) (set-invert! false) (set-default-invert! false) (remove-filter!))
+      ;; "system" (default): follow the OS theme. Dark OS -> the no-flash hybrid
+      ;; engine; light OS -> leave sites in their own (light) themes. The discrete
+      ;; modes below are manual escape hatches. Re-applied live on OS theme change.
+      (= m "system")
+        (if (system-dark?)
+          (do (set-chrome-scheme! true) (set-content-override! 0) (set-invert! false) (set-default-invert! true) (remove-filter!))
+          (do (set-chrome-scheme! false) (set-content-override! 2) (set-invert! false) (set-default-invert! false) (remove-filter!)))
       ;; "engine": force LIGHT so sites render their light theme, then the engine
       ;; inverts every absolute color to dark at style-resolution time — cached,
       ;; raster-safe, no per-frame compositor filter.
@@ -104,14 +117,28 @@
     (set-pref-bool! PREF-ENABLED new-state)
     new-state))
 
+;; Cycle the three user-facing states: follow the system theme (default), force
+;; dark everywhere (hybrid), force off (sites as-is). The legacy engine/filter
+;; modes stay reachable via about:config but are not in the quick cycle.
 (defn cycle-mode [] :- String
   (let [cur (mode-)
-        nxt (cond (= cur "hybrid") "auto"
-                  (= cur "auto") "engine"
-                  (= cur "engine") "off"
-                  :else "hybrid")]
+        nxt (cond (= cur "system") "hybrid"
+                  (= cur "hybrid") "off"
+                  (= cur "off") "system"
+                  :else "system")]
     (set-pref-str! PREF-MODE nxt)
     nxt))
+
+;; Make on-by-default + system-driven the real defaults (default branch), so the
+;; GjoaDarkmode actor and the engine — which read these prefs directly — agree
+;; with the chrome. A user pref still overrides.
+(defn set-darkmode-defaults! [] :- Any
+  (try
+    (let [d (.getDefaultBranch (.-prefs Services) "")]
+      (.setBoolPref d PREF-ENABLED true)
+      (.setCharPref d PREF-MODE "system"))
+    (catch Any e
+      (.error console "gjoa-darkmode: set-darkmode-defaults! failed" e))))
 
 (defn destroy! [] :- Any
   (let [u (.-unsub state)]
@@ -121,14 +148,20 @@
   (remove-filter!))
 
 (defn init-! [] :- Any
+  (set-darkmode-defaults!)
   (apply!)
-  (let [observer {:observe (fn [_s _t _d] (apply!))}]
+  (let [observer {:observe (fn [_s _t _d] (apply!))}
+        mql (.matchMedia window "(prefers-color-scheme: dark)")
+        on-sys (fn [_e] (apply!))]
     (.addObserver (.-prefs Services) PREF-ENABLED observer)
     (.addObserver (.-prefs Services) PREF-MODE observer)
+    ;; live-follow the OS theme while in "system" mode
+    (.addEventListener mql "change" on-sys)
     (set! (.-unsub state)
       (fn []
         (.removeObserver (.-prefs Services) PREF-ENABLED observer)
-        (.removeObserver (.-prefs Services) PREF-MODE observer))))
+        (.removeObserver (.-prefs Services) PREF-MODE observer)
+        (.removeEventListener mql "change" on-sys))))
   (set! (.-gjoaDarkMode window)
     {:toggle toggle :cycleMode cycle-mode :isEnabled enabled? :getMode mode-})
   (on1! window "unload" destroy!)

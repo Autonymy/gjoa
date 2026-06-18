@@ -100,10 +100,11 @@
                    (str "const d=document.getElementById('dm-w'); const cs=d&&getComputedStyle(d);"
                         " return !!(cs && cs.backgroundColor==='rgb(0, 0, 0)');")
                    4000))))
-   ;; Tier b: a native-dark page (authored #111) is RETRACTED pre-paint by
-   ;; PresShell::Initialize -> MaybeRetractColorInversionForNativeDark, so it keeps
-   ;; its theme. After a settle (refiner could otherwise re-invert), the root stays
-   ;; dark AND an injected white box stays white (inversion is off for this doc).
+   ;; Tier b: a native-dark page (authored #111) is left un-inverted pre-paint by
+   ;; PresShell::Initialize -> ApplyHybridDefaultInvertIfThemeless (it only flips
+   ;; themeless pages), so it keeps its theme. After a settle (refiner could
+   ;; otherwise re-invert), the root stays dark AND an injected white box stays
+   ;; white (inversion is off for this doc).
    (deftest "darkmode tier-b: native-dark page keeps its theme (no invert)" [mn ctx]
      (js/await (.setContext mn "chrome"))
      (chrome-eval HYBRID-B-JS)
@@ -121,6 +122,24 @@
        (js/await (await-true
                    (str "const d=document.getElementById('dm-w'); const cs=d&&getComputedStyle(d);"
                         " return !!(cs && cs.backgroundColor==='rgb(255, 255, 255)');")
-                   4000))))]))
+                   4000))))
+   ;; #48: in "system" mode the engine's pre-paint default-invert tracks the OS
+   ;; theme live. Spoof the OS via ui.systemUsesDarkTheme; the chrome matchMedia
+   ;; change drives apply!, which sets/clears gjoa.darkmode.hybrid.default-invert.
+   (deftest "darkmode system-mode: default-invert follows the OS theme" [mn ctx]
+     (js/await (.setContext mn "chrome"))
+     (chrome-eval (str "Services.prefs.setBoolPref('gjoa.darkmode.enabled', true);"
+                       " Services.prefs.setStringPref('gjoa.darkmode.mode', 'system');"
+                       " return 'system';"))
+     ;; OS dark -> the no-flash hybrid engine engages
+     (chrome-eval "Services.prefs.setIntPref('ui.systemUsesDarkTheme', 1); return 'os-dark';")
+     (js/await (await-true
+                 "return Services.prefs.getBoolPref('gjoa.darkmode.hybrid.default-invert', false) === true;"
+                 4000))
+     ;; OS light -> sites left in their own themes
+     (chrome-eval "Services.prefs.setIntPref('ui.systemUsesDarkTheme', 0); return 'os-light';")
+     (js/await (await-true
+                 "return Services.prefs.getBoolPref('gjoa.darkmode.hybrid.default-invert', false) === false;"
+                 4000)))]))
 
 (js/export-default tests)

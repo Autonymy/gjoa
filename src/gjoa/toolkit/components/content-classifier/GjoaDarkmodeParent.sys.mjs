@@ -104,9 +104,16 @@ export class GjoaDarkmodeParent extends JSWindowActorParent {
   }
 
   #hybridActive() {
+    // Active for the explicit "hybrid" mode AND whenever the engine's pre-paint
+    // default-invert is on (e.g. "system" mode while the OS is dark) — that pref
+    // is the single signal that hybrid behavior is live, so the actor's curated
+    // fixes + refiner track it without knowing the mode string.
+    if (!Services.prefs.getBoolPref(ENABLED_PREF, false)) {
+      return false;
+    }
     return (
-      Services.prefs.getBoolPref(ENABLED_PREF, false) &&
-      Services.prefs.getStringPref(MODE_PREF, "auto") === "hybrid"
+      Services.prefs.getStringPref(MODE_PREF, "auto") === "hybrid" ||
+      Services.prefs.getBoolPref(DEFAULT_INVERT_PREF, false)
     );
   }
 

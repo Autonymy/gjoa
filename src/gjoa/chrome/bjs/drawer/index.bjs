@@ -1,9 +1,14 @@
 #lang beagle/js
 (ns gjoa.drawer.index
-  (:require [gjoa.macros :refer [by-id on! onc! on1!]]))
+  (:require [gjoa.macros :refer [by-id on! onc! on1!]]
+            [gjoa.drawer.drag-overlay :refer [make-drag-overlay!]]
+            [gjoa.drawer.compact :refer [make-compact!]]
+            [gjoa.drawer.sidebar-button :refer [make-sidebar-button!]]
+            [gjoa.drawer.banner :refer [make-banner!]]
+            [gjoa.drawer.layout :refer [make-layout!]]))
 (define-mode strict)
 
-(declare-extern [document console window make-layout! make-drag-overlay! make-compact! make-sidebar-button! make-banner!] Any)
+(declare-extern [document console window] Any)
 
 (defn init! [] :- Any
   (let [sidebar-main (by-id "sidebar-main")

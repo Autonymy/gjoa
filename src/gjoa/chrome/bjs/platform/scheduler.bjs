@@ -1,8 +1,9 @@
 #lang beagle/js
-(ns gjoa.platform.scheduler)
+(ns gjoa.platform.scheduler
+  (:require [gjoa.tabs.log :refer [create-logger!]]))
 (define-mode strict)
 
-(declare-extern [create-logger! performance String] Any)
+(declare-extern [performance String] Any)
 
 (js/export (def DOMAIN-ORDER :- Any ["prefs" "windows" "tabs" "snapshots" "sidebar" "command"]))
 

@@ -1,9 +1,14 @@
 #lang beagle/js
 (ns gjoa.tabs.events
-  (:require [gjoa.macros :refer [q on! bool rmattr! undef-or toggle! tabs! last-of]]))
+  (:require [gjoa.macros :refer [q on! bool rmattr! undef-or toggle! tabs! last-of]]
+            [gjoa.tabs.log :refer [create-logger!]]
+            [gjoa.tabs.constants :refer [CLOSED-MEMORY SPACE-ATTR]]
+            [gjoa.tabs.helpers :refer [all-rows group-by-id is-horizontal level-of parent-of-tab pin-tab-id read-pinned-id subtree-rows tab-by-id tab-url tree-data!]]
+            [gjoa.tabs.snapshot :refer [pop-saved-by-url pop-saved-for-tab]]
+            [gjoa.tabs.state :refer [closed-tabs moving-tabs row-of saved-tab-queue state tree-of]]))
 (define-mode strict)
 
-(declare-extern [Services gBrowser create-logger! CLOSED-MEMORY SPACE-ATTR all-rows group-by-id is-horizontal level-of parent-of-tab pin-tab-id read-pinned-id subtree-rows tab-by-id tab-url tree-data! pop-saved-by-url pop-saved-for-tab closed-tabs moving-tabs row-of saved-tab-queue state tree-of] Any)
+(declare-extern [Services gBrowser] Any)
 
 ;; Find previous tab in array matching predicate, searching backwards (multi-site)
 (defn find-prev-matching [tabs-arr :- Any idx :- Int pred :- Any] :- Any

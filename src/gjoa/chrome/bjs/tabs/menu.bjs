@@ -1,9 +1,11 @@
 #lang beagle/js
 (ns gjoa.tabs.menu
-  (:require [gjoa.macros :refer [by-id mi sep xul-id with-ctx on! has? attr! tabs! bool]]))
+  (:require [gjoa.macros :refer [by-id mi sep xul-id with-ctx on! has? attr! tabs! bool]]
+            [gjoa.tabs.state :refer [row-of state]]
+            [gjoa.tabs.helpers :refer [data-of! has-children level-of-row subtree-rows tree-data!]]))
 (define-mode strict)
 
-(declare-extern [gBrowser Services Ci Cc TabContextMenu PlacesCommandHook BrowserCommands undoCloseTab row-of state data-of! has-children level-of-row subtree-rows tree-data!] Any)
+(declare-extern [gBrowser Services Ci Cc TabContextMenu PlacesCommandHook BrowserCommands undoCloseTab] Any)
 
 (js/export (defn build-context-menu! [deps :- Any] :- Any
   (let [{:keys [startRename toggleCollapse createGroupRow setCursor updateVisibility scheduleTreeResync scheduleSave]} deps

@@ -1,10 +1,14 @@
 #lang beagle/js
 (ns gjoa.tabs.vim
-  (:require [gjoa.macros :refer [q by-id key= xul-new xul-id html-new attr! pref-bool pref-int pref-str set-pref-bool! set-pref-str! dispatch-key on! on1! onc! xul htm bool rmattr! tabs! toggle! css!]]))
+  (:require [gjoa.macros :refer [q by-id key= xul-new xul-id html-new attr! pref-bool pref-int pref-str set-pref-bool! set-pref-str! dispatch-key on! on1! onc! xul htm bool rmattr! tabs! toggle! css!]]
+            [gjoa.tabs.helpers :refer [all-rows data-of! has-children is-horizontal level-of level-of-row subtree-rows tab-by-id tree-data!]]
+            [gjoa.tabs.log :refer [create-logger!]]
+            [gjoa.tabs.state :refer [hz-display row-of saved-tab-queue selection state tree-of]]
+            [gjoa.tabs.picker :refer [make-picker!]]))
 (define-mode strict)
 
 ;; Browser globals
-(declare-extern [document window gBrowser Services setTimeout clearTimeout Math Array all-rows data-of! has-children is-horizontal level-of level-of-row subtree-rows tab-by-id tree-data! create-logger! hz-display row-of saved-tab-queue selection state tree-of make-picker!] Any)
+(declare-extern [document window gBrowser Services setTimeout clearTimeout Math Array] Any)
 
 ;; Sibling module externs (no import)
 (defn insert-after-each [anchor :- Any rows-arr :- Any] :- Any

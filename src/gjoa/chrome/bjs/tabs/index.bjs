@@ -1,10 +1,27 @@
 #lang beagle/js
 (ns gjoa.tabs.index
-  (:require [gjoa.macros :refer [q by-id xul-new xul-id attr! pref-bool on! on1! has? bool rmattr! tabs! last-of]]))
+  (:require [gjoa.macros :refer [q by-id xul-new xul-id attr! pref-bool on! on1! has? bool rmattr! tabs! last-of]]
+            [gjoa.tabs.menu :refer [build-context-menu! build-group-context-menu! build-panel-context-menu!]]
+            [gjoa.tabs.drag :refer [make-drag!]]
+            [gjoa.tabs.events :refer [make-events!]]
+            [gjoa.tabs.rows :refer [make-rows!]]
+            [gjoa.tabs.vim :refer [make-vim!]]
+            [gjoa.tabs.helpers :refer [all-rows pin-tab-id tab-url tree-data! try-register-pin-attr!]]
+            [gjoa.tabs.log :refer [create-logger!]]
+            [gjoa.tabs.history :refer [make-history!]]
+            [gjoa.tabs.content-focus :refer [make-content-focus!]]
+            [gjoa.firefox.prefs :refer [ensure-vertical-tabs-default migrate-legacy-prefs migrate-toolbar-defaults apply-menubar-default]]
+            [gjoa.spaces.niri :refer [make-niri-binding!]]
+            [gjoa.platform.index :refer [make-gjoa!]]
+            [gjoa.tabs.snapshot :refer [make-saver!]]
+            [gjoa.tabs.layout :refer [make-layout!]]
+            [gjoa.spaces.manager :refer [make-spaces!]]
+            [gjoa.tabs.state :refer [closed-tabs row-of saved-tab-queue selection state tree-of]]))
 (define-mode strict)
 
-;; Browser globals
-(declare-extern [window document gBrowser gBrowserInit Services build-context-menu! build-group-context-menu! build-panel-context-menu! make-drag! make-events! make-layout! make-rows! make-vim! all-rows all-tabs pin-tab-id tab-url tree-data! try-register-pin-attr! create-logger! make-history! make-content-focus! ensure-vertical-tabs-default migrate-legacy-prefs migrate-toolbar-defaults apply-menubar-default make-spaces! make-niri-binding! make-gjoa! make-saver! closed-tabs row-of saved-tab-queue selection state tree-of] Any)
+;; Browser globals (all-tabs left as extern: collides — exported by both
+;; gjoa.firefox.tabs and gjoa.tabs.helpers, both in this bundle).
+(declare-extern [window document gBrowser gBrowserInit Services all-tabs] Any)
 
 ;; Module deps — no import, declared extern
 (def pfx-log :- Any (create-logger! "tabs"))

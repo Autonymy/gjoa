@@ -1,9 +1,12 @@
 #lang beagle/js
 (ns gjoa.tabs.drag
-  (:require [gjoa.macros :refer [q qa xul-new attr! on! onc! bool has? rmattr! css! tabs! toggle! undef-or last-of]]))
+  (:require [gjoa.macros :refer [q qa xul-new attr! on! onc! bool has? rmattr! css! tabs! toggle! undef-or last-of]]
+            [gjoa.tabs.log :refer [create-logger!]]
+            [gjoa.tabs.state :refer [state row-of selection moving-tabs]]
+            [gjoa.tabs.helpers :refer [all-rows data-of! is-horizontal level-of level-of-row subtree-rows tab-by-id tree-data!]]))
 (define-mode strict)
 
-(declare-extern [document gBrowser Array requestAnimationFrame create-logger! state row-of selection moving-tabs all-rows data-of! is-horizontal level-of level-of-row subtree-rows tab-by-id tree-data!] Any)
+(declare-extern [document gBrowser Array requestAnimationFrame] Any)
 
 ;; Walk siblings from `start` using `dir` (e.g. .-nextElementSibling),
 ;; return the first node satisfying `pred`, or nil.

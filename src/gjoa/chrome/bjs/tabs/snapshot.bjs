@@ -1,9 +1,9 @@
 #lang beagle/js
 (ns gjoa.tabs.snapshot
-  (:require [gjoa.macros :refer [bool]]))
+  (:require [gjoa.macros :refer [bool]]
+            [gjoa.tabs.constants :refer [CLOSED-MEMORY]]))
 (define-mode strict)
 
-(declare-extern [CLOSED-MEMORY] Any)
 (js/export (defn build-envelope [snapshot :- Any] :- Any
   (let [tab-space-map (Map.)]
     (when (and (.-spaces snapshot) (.-tabSpaces (.-spaces snapshot)))

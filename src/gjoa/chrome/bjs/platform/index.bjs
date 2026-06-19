@@ -1,8 +1,11 @@
 #lang beagle/js
-(ns gjoa.platform.index)
+(ns gjoa.platform.index
+  (:require [gjoa.platform.scheduler :refer [make-scheduler!]]
+            [gjoa.platform.tabs-reconciler :refer [make-tabs-reconciler!]]
+            [gjoa.platform.window :refer [make-gjoa-window!]]
+            [gjoa.platform.history :refer [make-persisted]]
+            [gjoa.platform.cross-window-tabs :refer [make-cross-window-tabs]]))
 (define-mode strict)
-
-(declare-extern [make-scheduler! make-tabs-reconciler! make-gjoa-window! make-persisted make-cross-window-tabs] Any)
 
 (js/export (defn make-gjoa! [deps :- Any] :- Any
   (let [scheduler (make-scheduler!)

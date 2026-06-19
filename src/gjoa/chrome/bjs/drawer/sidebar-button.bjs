@@ -1,9 +1,10 @@
 #lang beagle/js
 (ns gjoa.drawer.sidebar-button
-  (:require [gjoa.macros :refer [by-id q xul-id attr! mi sep pref-bool set-pref-bool! on! off! has?]]))
+  (:require [gjoa.macros :refer [by-id q xul-id attr! mi sep pref-bool set-pref-bool! on! off! has?]]
+            [gjoa.tabs.log :refer [create-logger!]]))
 (define-mode strict)
 
-(declare-extern [window create-logger!] Any)
+(declare-extern [window] Any)
 
 (defn install! [sidebar-button :- Any sidebar-main :- Any compact :- Any] :- Any
   (let [og-icon (q sidebar-button ".toolbarbutton-icon")

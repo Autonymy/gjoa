@@ -1,9 +1,11 @@
 #lang beagle/js
 (ns gjoa.drawer.compact
-  (:require [gjoa.macros :refer [q xul-new pref-bool pref-int set-pref-bool! on! off! has? attr! rmattr! bool]]))
+  (:require [gjoa.macros :refer [q xul-new pref-bool pref-int set-pref-bool! on! off! has? attr! rmattr! bool]]
+            [gjoa.tabs.log :refer [create-logger!]]
+            [gjoa.drawer.timing :refer [collapse-protection-duration-ms]]))
 (define-mode strict)
 
-(declare-extern [document window Services requestAnimationFrame create-logger! collapse-protection-duration-ms] Any)
+(declare-extern [document window Services requestAnimationFrame] Any)
 
 (js/import create-logger! "../tabs/log.js" create_logger)
 (js/import collapse-protection-duration-ms "./timing.js" collapse_protection_duration_ms)

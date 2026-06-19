@@ -1,9 +1,12 @@
 #lang beagle/js
 (ns gjoa.tabs.helpers
-  (:require [gjoa.macros :refer [qa attr! has? tabs! bool]]))
+  (:require [gjoa.macros :refer [qa attr! has? tabs! bool]]
+            [gjoa.tabs.log :refer [create-logger!]]
+            [gjoa.tabs.constants :refer [PIN-ATTR SPACE-ATTR]]
+            [gjoa.tabs.state :refer [tree-of state]]))
 (define-mode strict)
 
-(declare-extern [create-logger! PIN-ATTR SPACE-ATTR tree-of state gBrowser ChromeUtils String Number SessionStore] Any)
+(declare-extern [gBrowser ChromeUtils String Number SessionStore] Any)
 
 (def log :- Any (create-logger! "tabs"))
 

@@ -1,9 +1,12 @@
 #lang beagle/js
 (ns gjoa.tabs.layout
-  (:require [gjoa.macros :refer [by-id xul-new attr! pref-bool has? rmattr! toggle! on!]]))
+  (:require [gjoa.macros :refer [by-id xul-new attr! pref-bool has? rmattr! toggle! on!]]
+            [gjoa.tabs.log :refer [create-logger!]]
+            [gjoa.tabs.helpers :refer [all-rows data-of! level-of-row]]
+            [gjoa.tabs.state :refer [row-of state]]))
 (define-mode strict)
 
-(declare-extern [gBrowser create-logger! all-rows data-of! level-of-row row-of state] Any)
+(declare-extern [gBrowser] Any)
 
 (js/export (defn make-layout! [deps :- Any] :- Any
   (let [sidebar-main (.-sidebarMain deps)

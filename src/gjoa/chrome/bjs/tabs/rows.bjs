@@ -1,9 +1,12 @@
 #lang beagle/js
 (ns gjoa.tabs.rows
-  (:require [gjoa.macros :refer [q qa by-id attr! on! xul htm has? toggle! rmattr! bool tabs!]]))
+  (:require [gjoa.macros :refer [q qa by-id attr! on! xul htm has? toggle! rmattr! bool tabs!]]
+            [gjoa.tabs.helpers :refer [has-children is-horizontal level-of-row tree-data! data-of! all-rows]]
+            [gjoa.tabs.log :refer [create-logger!]]
+            [gjoa.tabs.state :refer [hz-display moving-tabs row-of state]]))
 (define-mode strict)
 
-(declare-extern [gBrowser cancelAnimationFrame has-children is-horizontal level-of-row tree-data! data-of! all-rows create-logger! hz-display moving-tabs row-of state] Any)
+(declare-extern [gBrowser cancelAnimationFrame] Any)
 
 ;; From sibling modules — no import, declare-extern only.
 ;; --- reset-style!: clear all 7 grid/position style properties ---

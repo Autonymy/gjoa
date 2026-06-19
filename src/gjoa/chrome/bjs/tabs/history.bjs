@@ -1,6 +1,7 @@
 #lang beagle/js
 (ns gjoa.tabs.history
-  (:require [gjoa.macros :refer [pref-str set-pref-str! bool]]))
+  (:require [gjoa.macros :refer [pref-str set-pref-str! bool]]
+            [gjoa.tabs.log :refer [create-logger!]]))
 (define-mode strict)
 
 ;; Temporal workspace history — gjoa's append-only event log over SQLite.
@@ -14,7 +15,7 @@
 ;; last successful commit is durable. Hash dedupe runs in-memory before
 ;; touching the DB so we don't pay a write cost for no-op saves.
 
-(declare-extern [Services Ci PathUtils ChromeUtils crypto String create-logger!] Any)
+(declare-extern [Services Ci PathUtils ChromeUtils crypto String] Any)
 (def SCHEMA-VERSION :- Int 3)
 
 (def INSTANCE-ID-PREF :- String "gjoa.instance.id")

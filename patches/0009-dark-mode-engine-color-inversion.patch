@@ -9,6 +9,8 @@
 #     - dom/chrome-webidl/BrowsingContext.webidl
 #     - docshell/base/BrowsingContext.h
 #     - docshell/base/BrowsingContext.cpp
+#   depends-on:
+#     - rust-path crate::computed_value_flags::ComputedValueFlags
 #
 Engine-level dark mode: luminance-invert resolved absolute colors at
 style-resolution time (the performant successor to the compositor filter:invert).

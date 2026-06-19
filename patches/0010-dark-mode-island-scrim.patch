@@ -4,6 +4,8 @@
 #     - servo/components/style/properties/computed_value_flags.rs
 #     - servo/components/style/style_adjuster.rs
 #     - layout/painting/nsDisplayList.cpp
+#   depends-on:
+#     - rust-field GeckoBackground.background_image | accessor=clone_background_image
 #
 gjoa dark mode — image-backed "island" detection + dark scrim (sibling to 0009).
 

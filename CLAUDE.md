@@ -49,6 +49,9 @@ builds (which is the actual goal):
 - G — `nix eval` succeeds (catches eval-time rejections before compile)
 - H — diff since last working build reviewed for prereqs
 - I — chrome bundles aligned across loader / `jar.mn` / `chrome-bake.ts`
+- J — scriptlet bundle integrity (`scriptlet-resources.json` matches pinned SHA-256)
+- K — engine-currency (refuse build if `src/gjoa/`/`patches/`/`tools/prep/` is newer than the last `bun run import` — kills the stale-`engine/` class). Gate A also WARNs on patch line-offset drift (early `.rej` warning).
+- L — surface contracts (a patch/overlay's declared `# depends-on:` upstream symbols still resolve in `engine/` — catches a Rust path move / field removal / JS prop deletion *before* the compile)
 
 ### Postmortem on any unexpected rebuild
 

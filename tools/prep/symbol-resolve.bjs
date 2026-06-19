@@ -1,0 +1,172 @@
+#lang beagle/js
+;; Symbol resolver for Gate L (surface contracts). Given a declared upstream
+;; dependency a gjoa patch/overlay relies on, verify it still RESOLVES in the
+;; patched engine/ tree — cheap (rg/fs class), no build. Each resolver returns
+;; {:verdict "resolved"|"not-found"|"ambiguous" :detail "..."}.
+;;   resolved  — the symbol is present/reachable (green)
+;;   not-found — moved / deleted / field gone (RED — the build will break)
+;;   ambiguous — cfg-gated / deep-glob / missing objdir (warn, never a false green)
+;; Design: private-docs/research-fork-currency-gate-l.md (Gate L v1).
+(ns gjoa.tools.prep.symbol-resolve
+  (:require [fs :refer [existsSync readFileSync]]
+            [path :refer [join dirname]]
+            [child_process :refer [execSync]]))
+(define-mode strict)
+(declare-extern [process Error] Any)
+
+(def REPO :- String (.cwd process))
+(def ENGINE :- String (join REPO "engine"))
+(js/export (def STYLE-ROOT :- String (join ENGINE "servo" "components" "style")))
+
+(defn slurp [f :- String] :- String
+  (if (existsSync f) (readFileSync f "utf8") ""))
+
+(defn sh [cmd :- String] :- String
+  (try (.toString (execSync cmd {:encoding "utf8" :stdio ["ignore" "pipe" "ignore"]}))
+    (catch Error _e "")))
+
+(defn rel [f :- String] :- String (.replace f (str ENGINE "/") ""))
+
+;; ── rust-path ──────────────────────────────────────────────────────────────
+;; Walk the module chain from the crate root (lib.rs), honoring `#[path = ...]`
+;; attributes — load-bearing: lib.rs maps `computed_value_flags` to
+;; properties/computed_value_flags.rs, which a naive a::b::c -> a/b/c.rs resolver
+;; gets wrong. Returns the resolved module file path, or nil if the chain breaks.
+(defn resolve-module-file [crate-root :- String mods :- Any] :- Any
+  (loop [file (join crate-root "lib.rs")
+         dir crate-root
+         i 0]
+    (if (>= i (.-length mods))
+      file
+      (let [seg (aget mods i)
+            text (slurp file)
+            pm (.exec (RegExp. (str "#\\[path\\s*=\\s*\"([^\"]+)\"\\]\\s*(?:pub\\s+)?mod\\s+" seg "\\b")) text)]
+        (cond
+          pm
+          (let [nf (join dir (aget pm 1))]
+            (recur nf (dirname nf) (+ i 1)))
+          (existsSync (join dir (str seg ".rs")))
+          (recur (join dir (str seg ".rs")) (join dir seg) (+ i 1))
+          (existsSync (join dir seg "mod.rs"))
+          (recur (join dir seg "mod.rs") (join dir seg) (+ i 1))
+          :else nil)))))
+
+(defn item-defined? [file :- String item :- String] :- Bool
+  (let [text (slurp file)]
+    (or (.test (RegExp. (str "(?:pub\\s+)?(?:struct|enum|fn|const|type|trait|static)\\s+" item "\\b")) text)
+        (.test (RegExp. (str "bitflags!\\s*\\{[\\s\\S]*?(?:pub\\s+)?struct\\s+" item "\\b")) text)
+        (.test (RegExp. (str "pub\\s+use\\s+[^;]*\\b" item "\\b")) text))))
+
+(defn has-pub-glob? [file :- String] :- Bool
+  (.test (RegExp. "pub\\s+use\\s+[^;]*::\\*\\s*;") (slurp file)))
+
+(js/export (defn resolve-rust-path [crate-root :- String sym :- String] :- Any
+  (let [clean (.replace sym (RegExp. "^crate::") "")
+        segs (.split clean "::")
+        upper-idx (.findIndex segs (fn [s :- String] :- Bool (.test (RegExp. "^[A-Z]") s)))
+        n (.-length segs)
+        mods (if (= upper-idx -1) (.slice segs 0 (- n 1)) (.slice segs 0 upper-idx))
+        item (if (= upper-idx -1) (aget segs (- n 1)) (aget segs upper-idx))
+        file (resolve-module-file crate-root mods)]
+    (cond
+      (not file) {:verdict "not-found" :detail (str "module chain broke (no `mod " (.join mods "::") "`)")}
+      (item-defined? file item) {:verdict "resolved" :detail (str item " defined in " (rel file))}
+      (has-pub-glob? file) {:verdict "ambiguous" :detail (str item " not a direct pub item; module has a `pub use ::*` glob — can't prove")}
+      :else {:verdict "not-found" :detail (str item " not defined/re-exported in " (rel file))}))))
+
+;; ── rust-field ─────────────────────────────────────────────────────────────
+;; Generated Gecko style-struct longhands live ONLY in the objdir artifact
+;; obj-*/.../style-*/out/properties.rs. Modern API is clone_<longhand>(); assert
+;; the accessor (or a bare field) exists there.
+(defn objdir-properties [] :- String
+  (.trim (sh (str "ls -t " ENGINE "/obj-*/x86_64-unknown-linux-gnu/release/build/style-*/out/properties.rs 2>/dev/null | head -1"))))
+
+(js/export (defn resolve-rust-field [field :- String accessor :- String] :- Any
+  (let [gen (objdir-properties)]
+    (if (= gen "")
+      {:verdict "ambiguous" :detail "objdir properties.rs absent (no prior build) — can't verify generated bindings"}
+      (let [text (slurp gen)
+            has-acc (if (and accessor (not= accessor "")) (.test (RegExp. (str "fn\\s+" accessor "\\b")) text) false)
+            has-field (.test (RegExp. (str "\\b" field "\\b")) text)]
+        (if (or has-acc has-field)
+          {:verdict "resolved" :detail (str (if has-acc (str "accessor " accessor "()") (str "field " field)) " present in generated properties.rs")}
+          {:verdict "not-found" :detail (str "neither field `" field "` nor accessor `" accessor "()` in generated bindings")}))))))
+
+;; ── js-prop ────────────────────────────────────────────────────────────────
+;; A property on an exported object literal (e.g. AboutNewTab.newTabURL). Find
+;; `export const Mod = {`, brace-match the body, assert get/set/prop inside.
+;; Optionally assert >=1 non-definition reader exists under must-read (the
+;; override is still CONSULTED, not orphaned like FF152's silently-ignored
+;; newTabURL). Brace match is not string/comment-aware (v1 limitation).
+(defn match-object-body [text :- String mod :- String] :- Any
+  (let [m (.exec (RegExp. (str "export\\s+(?:const|let|var)\\s+" mod "\\s*=\\s*\\{")) text)]
+    (if (not m)
+      nil
+      (let [start (+ (.-index m) (.-length (aget m 0)) -1)
+            len (.-length text)]
+        (loop [i (+ start 1) depth 1]
+          (if (>= i len)
+            (.slice text (+ start 1) i)
+            (let [ch (.charAt text i)
+                  nd (cond (= ch "{") (+ depth 1) (= ch "}") (- depth 1) :else depth)]
+              (if (= nd 0)
+                (.slice text (+ start 1) i)
+                (recur (+ i 1) nd)))))))))
+
+(js/export (defn resolve-js-prop [rel-path :- String mod :- String prop :- String must-read :- String] :- Any
+  (let [file (join ENGINE rel-path)
+        text (slurp file)]
+    (if (= text "")
+      {:verdict "not-found" :detail (str rel-path " not found")}
+      (let [body (match-object-body text mod)]
+        (if (not body)
+          {:verdict "not-found" :detail (str mod " is no longer an exported object literal in " rel-path)}
+          (let [present (.test (RegExp. (str "(?:get|set)\\s+" prop "\\s*\\(|\\b" prop "\\s*[:(]")) body)]
+            (if (not present)
+              {:verdict "not-found" :detail (str prop " not a member of " mod " (deleted/renamed)")}
+              (if (and must-read (not= must-read ""))
+                (let [readers (.trim (sh (str "rg -l --no-messages '\\." prop "\\b' " (join ENGINE must-read) " 2>/dev/null | head -1")))]
+                  (if (= readers "")
+                    {:verdict "not-found" :detail (str prop " exists but is ORPHANED — no reader under " must-read " (override silently ignored, like FF152 newTabURL)")}
+                    {:verdict "resolved" :detail (str prop " present + read under " must-read)}))
+                {:verdict "resolved" :detail (str prop " present on " mod)})))))))))
+
+;; ── contract parsing + dispatch ─────────────────────────────────────────────
+;; A `depends-on` entry is any comment line `(# | ;;) - <kind> <symbol> [@ path]
+;; [| accessor=X] [must-be-read-by: Y]`. The kind keyword IS the marker, so no
+;; block delimiter is needed — works in both patch headers and overlay comments.
+(defn parse-dep-entry [kind :- String rest :- String] :- Any
+  (let [at-m (.exec (RegExp. "@\\s*(\\S+)") rest)
+        acc-m (.exec (RegExp. "accessor=(\\S+)") rest)
+        read-m (.exec (RegExp. "must-be-read-by:\\s*(\\S+)") rest)
+        sym (.trim (aget (.split rest (RegExp. "\\s*[@|]\\s*|\\s*must-be-read-by:")) 0))]
+    {:kind kind :symbol sym
+     :at (if at-m (aget at-m 1) nil)
+     :accessor (if acc-m (aget acc-m 1) nil)
+     :mustRead (if read-m (aget read-m 1) nil)}))
+
+(js/export (defn parse-depends-on [text :- String] :- Any
+  (let [out []
+        re (RegExp. "(?:#|;;)\\s*-\\s*(rust-path|rust-field|rust-method|cpp-member|webidl-attr|js-prop)\\s+(.+?)\\s*$" "gm")]
+    (doseq [m (.matchAll text re)]
+      (.push out (parse-dep-entry (.trim (aget m 1)) (.trim (aget m 2)))))
+    out)))
+
+;; Parse a patch/overlay text's declared dependencies and resolve each against
+;; engine/. Returns [{:kind :symbol :verdict :detail}].
+(js/export (defn check-contract [text :- String] :- Any
+  (let [entries (parse-depends-on text)
+        out []]
+    (doseq [e entries]
+      (let [kind (.-kind e)
+            sym (.-symbol e)
+            r (cond
+                (= kind "rust-path") (resolve-rust-path STYLE-ROOT sym)
+                (= kind "rust-field")
+                (resolve-rust-field (or (aget (.split sym ".") 1) sym) (or (.-accessor e) ""))
+                (= kind "js-prop")
+                (let [parts (.split sym ".")]
+                  (resolve-js-prop (or (.-at e) "") (aget parts 0) (or (aget parts 1) "") (or (.-mustRead e) "")))
+                :else {:verdict "ambiguous" :detail (str kind " not yet resolved (coverage backlog)")})]
+        (.push out {:kind kind :symbol sym :verdict (.-verdict r) :detail (.-detail r)})))
+    out)))

@@ -11,7 +11,8 @@
 (ns gjoa.tools.scripts.preflight
   (:require [fs :refer [existsSync readFileSync readdirSync]]
             [child_process :refer [execSync]]
-            [path :refer [join]]))
+            [path :refer [join basename]]
+            [gjoa.tools.prep.symbol-resolve :refer [check-contract]]))
 (define-mode strict)
 (declare-extern [process console JSON parseInt Array String] Any)
 
@@ -352,6 +353,44 @@
           (pass "K" "engine/ reflects current source (import-currency)"
             "no src/patches/tooling edits since the last import"))))))
 
+;; ── Gate L: surface contracts (declared upstream deps still resolve) ────────
+;; A patch/overlay DEPENDS ON upstream symbols it references but does not patch
+;; (a Rust path, a generated style-struct accessor, a JS object property). git
+;; apply (Gate A) is blind to these — they're added tokens, not context — so a
+;; MOVE/REMOVAL passes apply and dies 26 min into the compile (ComputedValueFlags
+;; module move; background_image field removal) or ships a silent no-op
+;; (FF152 deleting AboutNewTab.newTabURL). A `# depends-on:` / `;; @gjoa-depends-on`
+;; block declares those anchors; Gate L resolves each against engine/, RED before
+;; the build if one vanished. Design: private-docs/research-fork-currency-gate-l.md.
+(def OVERLAY-FILES :- Any
+  [(join REPO-ROOT "src" "gjoa" "browser" "components" "gjoa" "GjoaLoader.bjs")])
+(defn gateL [] :- Any
+  (let [patch-files (.map (.filter (readdirSync PATCHES-DIR) (fn [p :- String] :- Bool (.endsWith p ".patch")))
+                          (fn [p :- String] :- String (join PATCHES-DIR p)))
+        files (.concat patch-files (.filter OVERLAY-FILES (fn [f :- String] :- Bool (existsSync f))))
+        not-found []
+        ambiguous []
+        resolved []]
+    (doseq [f files]
+      (doseq [r (check-contract (readFileSync f "utf8"))]
+        (cond
+          (= (.-verdict r) "not-found")
+          (.push not-found (str (basename f) ": " (.-kind r) " `" (.-symbol r) "` — " (.-detail r)))
+          (= (.-verdict r) "ambiguous")
+          (.push ambiguous (str (basename f) ": " (.-symbol r)))
+          :else (.push resolved (.-symbol r)))))
+    (cond
+      (> (.-length not-found) 0)
+      (fail "L" "surface contracts (declared upstream deps resolve)"
+        (str (.-length not-found) " declared dependency(ies) no longer resolve")
+        (str "the upstream anchor moved/was removed — regenerate the patch/overlay against current upstream:\n    " (.join not-found "\n    ")))
+      (> (.-length ambiguous) 0)
+      (warn "L" "surface contracts (declared upstream deps resolve)"
+        (str (.-length resolved) " resolved, " (.-length ambiguous) " ambiguous (cfg/glob/no-objdir — can't prove): " (.join ambiguous ", ")))
+      :else
+      (pass "L" "surface contracts (declared upstream deps resolve)"
+        (str (.-length resolved) " declared upstream dependencies resolve")))))
+
 ;; ── Run + render ──────────────────────────────────────────────────────────
 (defn main! [] :- Any
   (.log console (bold "gjoa preflight"))
@@ -360,7 +399,7 @@
 
   (let [gates [["A" gateA] ["B" gateB] ["C" gateC] ["D" gateD]
                ["E" gateE] ["F" gateF] ["G" gateG] ["H" gateH]
-               ["I" gateI] ["J" gateJ] ["K" gateK]]]
+               ["I" gateI] ["J" gateJ] ["K" gateK] ["L" gateL]]]
     (doseq [gate gates]
       (let [fn (aget gate 1)]
         (try (fn)

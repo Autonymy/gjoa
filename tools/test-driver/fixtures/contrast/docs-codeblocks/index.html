@@ -1,0 +1,61 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Docs — fixture</title>
+  <style>
+    body { margin: 0; background: #fff; color: #2b2b2b; font-family: -apple-system, "Segoe UI", Helvetica, Arial, sans-serif; line-height: 1.6; }
+    .doc { max-width: 760px; margin: 0 auto; padding: 32px 24px; }
+    h1 { font-size: 30px; color: #1a1a1a; }
+    h2 { font-size: 22px; color: #1a1a1a; margin-top: 28px; }
+    p { font-size: 16px; color: #2b2b2b; }
+    code { font-family: "SF Mono", Menlo, Consolas, monospace; font-size: 14px; }
+
+    /* Light code blocks with syntax-highlight tokens: many small colored FG
+       on a tinted background — lots of low-contrast-risk tokens to score. */
+    pre {
+      background: #f5f5f5;
+      border-radius: 6px;
+      padding: 16px 18px;
+      overflow-x: auto;
+      font-family: "SF Mono", Menlo, Consolas, monospace;
+      font-size: 14px;
+      line-height: 1.5;
+    }
+    .kw   { color: #a626a4; }  /* keyword  */
+    .str  { color: #50a14f; }  /* string   */
+    .com  { color: #a0a1a7; }  /* comment  */
+    .fn   { color: #4078f2; }  /* function */
+    .pln  { color: #383a42; }  /* plain    */
+  </style>
+</head>
+<body>
+  <div class="doc">
+    <h1>Getting started</h1>
+    <p>This guide walks through installing the toolkit and writing your first program. Every code sample below uses syntax highlighting, which means each block contains a spread of small colored tokens sitting on a lightly tinted grey background. Those colored tokens are exactly the kind of low-contrast-risk text a theme engine tends to ruin.</p>
+
+    <h2>Installation</h2>
+    <p>Install the package with your favorite manager, then import it at the top of your entry file:</p>
+    <pre><span class="com">// install first: bun add toolkit</span>
+<span class="kw">import</span> <span class="pln">{ greet }</span> <span class="kw">from</span> <span class="str">"toolkit"</span><span class="pln">;</span>
+
+<span class="kw">function</span> <span class="fn">main</span><span class="pln">() {</span>
+  <span class="kw">const</span> <span class="pln">message =</span> <span class="fn">greet</span><span class="pln">(</span><span class="str">"world"</span><span class="pln">);</span>
+  <span class="pln">console.</span><span class="fn">log</span><span class="pln">(message);</span>
+<span class="pln">}</span></pre>
+
+    <h2>Configuration</h2>
+    <p>The toolkit reads a small config object. Keys you do not set fall back to sensible defaults, so a minimal setup is only a few lines long:</p>
+    <pre><span class="com">/* every field below is optional */</span>
+<span class="kw">export</span> <span class="kw">const</span> <span class="pln">config = {</span>
+  <span class="pln">retries:</span> <span class="kw">3</span><span class="pln">,</span>
+  <span class="pln">timeout:</span> <span class="kw">5000</span><span class="pln">,</span>
+  <span class="pln">label:</span> <span class="str">"production"</span><span class="pln">,</span>
+  <span class="pln">onError:</span> <span class="fn">reportError</span><span class="pln">,</span>
+<span class="pln">};</span></pre>
+
+    <p>With that in place you can run the program and watch the output. If the colored tokens above are still legible after the theme engine has done its work, the harness will report a passing contrast score for this page.</p>
+  </div>
+</body>
+</html>

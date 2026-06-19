@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Editorial Card — fixture</title>
+  <style>
+    body { margin: 0; background: #fafafa; color: #222; font-family: Georgia, serif; padding: 40px; }
+
+    .card {
+      position: relative;
+      max-width: 640px;
+      margin: 0 auto;
+      min-height: 360px;
+      border-radius: 8px;
+      overflow: hidden;
+      /* WORST-CASE backdrop: a DARK background-image, transparent bg-color. */
+      background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='8' height='8'%3E%3Crect width='8' height='8' fill='%23161620'/%3E%3C/svg%3E");
+      background-size: cover;
+      background-repeat: no-repeat;
+    }
+    /* A translucent gradient scrim painted OVER the image. */
+    .card .scrim {
+      position: absolute;
+      inset: 0;
+      background: linear-gradient(transparent, rgba(0, 0, 0, 0.6));
+    }
+    /* WHITE text painted over the image + gradient composite. */
+    .card .content {
+      position: absolute;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      padding: 28px;
+    }
+    .card .kicker { color: #fff; font-size: 13px; text-transform: uppercase; letter-spacing: 1.5px; opacity: 0.85; margin: 0 0 8px; }
+    .card h1 { color: #fff; font-size: 30px; margin: 0 0 10px; line-height: 1.2; }
+    .card p { color: #fff; font-size: 16px; line-height: 1.55; margin: 0; }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <div class="scrim"></div>
+    <div class="content">
+      <p class="kicker">The Long Read</p>
+      <h1>Inside the quiet collapse of the local newspaper</h1>
+      <p>For a hundred years the presses ran every night without fail, and the town measured its mornings by the thud of the paper on the porch. This is the story of the people who kept it alive long after the advertising left, and of the single decision that finally brought it down.</p>
+    </div>
+  </div>
+</body>
+</html>

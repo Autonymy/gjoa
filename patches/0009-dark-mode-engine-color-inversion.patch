@@ -390,10 +390,9 @@ index 7ed8c2c7a1..54ffa6f483 100644
      pub(crate) fn system_nscolor(
          &self,
 diff --git a/servo/components/style/values/specified/color.rs b/servo/components/style/values/specified/color.rs
-index 9c55023eb0..71ca91d2aa 100644
 --- a/servo/components/style/values/specified/color.rs
 +++ b/servo/components/style/values/specified/color.rs
-@@ -860,6 +860,41 @@ impl Color {
+@@ -860,6 +860,41 @@
      }
  }
  
@@ -435,7 +434,7 @@ index 9c55023eb0..71ca91d2aa 100644
  impl Color {
      /// Converts this Color into a ComputedColor.
      ///
-@@ -885,7 +920,7 @@ impl Color {
+@@ -885,7 +920,7 @@
              }};
          }
  
@@ -444,7 +443,7 @@ index 9c55023eb0..71ca91d2aa 100644
              Color::CurrentColor => ComputedColor::CurrentColor,
              Color::Absolute(ref absolute) => {
                  let mut color = absolute.color;
-@@ -931,7 +966,19 @@ impl Color {
+@@ -931,7 +966,32 @@
              Color::InheritFromBodyQuirk => {
                  ComputedColor::Absolute(context.ok_or(())?.device().body_text_color())
              },
@@ -456,7 +455,20 @@ index 9c55023eb0..71ca91d2aa 100644
 +        // just explicit colors). currentColor / color-mix / unresolved
 +        // color-functions stay symbolic and resolve against these already-
 +        // inverted values.
-+        if context.map_or(false, |c| c.device().color_inversion()) {
++        // gjoa dark mode: invert resolved absolute colors — EXCEPT an INHERITED
++        // color (color / text-shadow / border-color, i.e. !for_non_inherited_property)
++        // on an element under a full-bleed image backdrop, where the authored text
++        // was chosen for the image and must be preserved (the paint-stage dark
++        // scrim supplies its contrast). Reset properties like background-color
++        // still invert, so solid backgrounds go dark normally.
++        let invert = context.map_or(false, |c| {
++            c.device().color_inversion()
++                && !(!c.for_non_inherited_property
++                    && c.builder.get_parent_flags().contains(
++                        crate::computed_value_flags::ComputedValueFlags::SELF_OR_ANCESTOR_HAS_IMAGE_BACKDROP,
++                    ))
++        });
++        if invert {
 +            if let ComputedColor::Absolute(ref abs) = computed {
 +                return Ok(ComputedColor::Absolute(invert_color_luminance(abs)));
 +            }

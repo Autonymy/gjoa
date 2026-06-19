@@ -1,0 +1,65 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Hacker News — fixture</title>
+  <style>
+    body { margin: 0; background: #f6f6ef; color: #000; font-family: Verdana, Geneva, sans-serif; }
+
+    /* Orange top bar — must darken/recolor under invert. */
+    .topbar { background: #ff6600; color: #000; padding: 4px 8px; display: flex; align-items: center; gap: 12px; }
+    .topbar .brand { font-weight: bold; font-size: 13px; border: 1px solid #000; padding: 0 4px; }
+    .topbar a { color: #000; text-decoration: none; font-size: 10pt; }
+
+    .stories { padding: 8px; max-width: 760px; }
+    .story { margin: 0 0 6px; }
+    .story .rank { color: #828282; font-size: 10pt; margin-right: 4px; }
+    .story .title { font-size: 10pt; color: #000; text-decoration: none; }
+    .story .domain { color: #828282; font-size: 8pt; }
+    .story .sub { color: #828282; font-size: 7pt; margin: 2px 0 0 18px; }
+    .story .sub a { color: #828282; text-decoration: none; }
+    .blurb { color: #000; font-size: 10pt; max-width: 600px; margin: 16px 8px; line-height: 1.5; }
+  </style>
+</head>
+<body>
+  <div class="topbar">
+    <span class="brand">Y</span>
+    <a href="#">Hacker News</a>
+    <a href="#">new</a>
+    <a href="#">past</a>
+    <a href="#">comments</a>
+    <a href="#">ask</a>
+    <a href="#">show</a>
+    <a href="#">jobs</a>
+  </div>
+
+  <div class="stories">
+    <div class="story">
+      <span class="rank">1.</span>
+      <a class="title" href="#">A battery that charges in seconds and lasts for years</a>
+      <span class="domain">(mit.edu)</span>
+      <div class="sub"><a href="#">412 points</a> by <a href="#">researcher</a> 3 hours ago | <a href="#">189 comments</a></div>
+    </div>
+    <div class="story">
+      <span class="rank">2.</span>
+      <a class="title" href="#">Show HN: I wrote a terminal file manager in 400 lines of Rust</a>
+      <span class="domain">(github.com)</span>
+      <div class="sub"><a href="#">288 points</a> by <a href="#">ferris</a> 5 hours ago | <a href="#">96 comments</a></div>
+    </div>
+    <div class="story">
+      <span class="rank">3.</span>
+      <a class="title" href="#">The forgotten history of the spreadsheet</a>
+      <span class="domain">(longreads.com)</span>
+      <div class="sub"><a href="#">201 points</a> by <a href="#">historian</a> 7 hours ago | <a href="#">54 comments</a></div>
+    </div>
+    <div class="story">
+      <span class="rank">4.</span>
+      <a class="title" href="#">Ask HN: How do you keep your side projects from dying?</a>
+      <div class="sub"><a href="#">156 points</a> by <a href="#">builder</a> 8 hours ago | <a href="#">203 comments</a></div>
+    </div>
+  </div>
+
+  <p class="blurb">The front page is deliberately plain: small grey timestamps, dark blue-black links, and a single orange bar across the top. That austerity is exactly what makes it a useful contrast fixture, because nearly every text box on the page sits at ten points or smaller, and the grey subtext hovers right at the edge of what passes an accessibility check even before a theme engine touches it.</p>
+</body>
+</html>

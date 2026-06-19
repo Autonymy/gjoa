@@ -1,0 +1,185 @@
+# gjoa-patch:
+#   baseline-firefox: 152.0
+#   touches:
+#     - servo/components/style/properties/computed_value_flags.rs
+#     - servo/components/style/style_adjuster.rs
+#     - layout/painting/nsDisplayList.cpp
+#
+gjoa dark mode — image-backed "island" detection + dark scrim (sibling to 0009).
+
+A full-bleed raster background-image (a hero photo) with authored light text was
+broken by the blanket luminance inversion: the text flipped to near-black over the
+untouched dark image. This makes the engine backdrop-aware where bg meets fg.
+
+- computed_value_flags.rs: new INHERITED bit SELF_OR_ANCESTOR_HAS_IMAGE_BACKDROP,
+  propagated to a hero's descendants.
+- style_adjuster.rs (set_bits): sets it for elements establishing a full-bleed
+  RASTER hero (url()/image-set + cover/contain + non-tiled). Gradients, tiled
+  textures, and decorative images are excluded.
+- specified/color.rs: the foreground-inversion hook PRESERVES an inherited color
+  (color/text-shadow/border-color) under an image backdrop so authored light text
+  stays light; reset background-color still inverts (solid bgs go dark).
+- nsDisplayList.cpp: paints a translucent dark scrim (gjoa.darkmode.scrim.alpha,
+  default 140) over a hero's bg images, below content, so text reads on the photo.
+diff --git a/servo/components/style/properties/computed_value_flags.rs b/servo/components/style/properties/computed_value_flags.rs
+--- a/servo/components/style/properties/computed_value_flags.rs
++++ b/servo/components/style/properties/computed_value_flags.rs
+@@ -123,6 +123,12 @@
+ 
+         /// Whether grid-auto-flow is author-specified.
+         const HAS_AUTHOR_SPECIFIED_GRID_AUTO_FLOW = 1 << 23;
++
++        /// gjoa dark mode: this element or an ancestor establishes a full-bleed
++        /// raster image backdrop (a hero photo). The foreground-inversion hook
++        /// reads this to preserve authored text over the image instead of
++        /// flipping it blind, and the paint stage scrims such backdrops.
++        const SELF_OR_ANCESTOR_HAS_IMAGE_BACKDROP = 1 << 24;
+     }
+ }
+ 
+@@ -144,6 +150,7 @@
+             | Self::SELF_OR_ANCESTOR_HAS_CONTAIN_STYLE
+             | Self::SELF_OR_ANCESTOR_HAS_SIZE_CONTAINER_TYPE
+             | Self::IS_IN_APPEARANCE_BASE_SUBTREE
++            | Self::SELF_OR_ANCESTOR_HAS_IMAGE_BACKDROP
+     }
+ 
+     /// Flags that may be propagated to descendants.
+diff --git a/servo/components/style/style_adjuster.rs b/servo/components/style/style_adjuster.rs
+--- a/servo/components/style/style_adjuster.rs
++++ b/servo/components/style/style_adjuster.rs
+@@ -311,6 +311,56 @@
+             self.style
+                 .add_flags(ComputedValueFlags::SELF_OR_ANCESTOR_HAS_SIZE_CONTAINER_TYPE);
+         }
++
++        // gjoa dark mode: flag elements that establish a full-bleed RASTER image
++        // backdrop (a hero photo) so the cascade foreground-inversion hook
++        // preserves authored text over it and the paint stage scrims it — rather
++        // than flipping light hero text to black over an untouched dark image.
++        // Only stretched (cover/contain), non-tiled url()/image-set layers
++        // qualify; gradients are recolored in place, and tiled/decorative images
++        // are excluded (the over-fire ChatGPT's naive "has background-image"
++        // predicate would cause). The bit is inherited, so a hero's descendants
++        // (its text) inherit it.
++        #[cfg(feature = "gecko")]
++        if !display.is_contents() {
++            use crate::values::generics::background::GenericBackgroundSize;
++            use crate::values::generics::image::GenericImage;
++            use crate::values::specified::background::BackgroundRepeatKeyword;
++            let bg = self.style.get_background();
++            // Gecko's Background exposes layers via clone_* accessors, not direct
++            // fields (that's the servo-only path). The clones are cheap here — most
++            // elements have a single `none` image layer.
++            let image_list = bg.clone_background_image();
++            let size_list = bg.clone_background_size();
++            let repeat_list = bg.clone_background_repeat();
++            let images = &image_list.0;
++            let sizes = &size_list.0;
++            let repeats = &repeat_list.0;
++            let mut hero = false;
++            for (i, image) in images.iter().enumerate() {
++                if !matches!(image, GenericImage::Url(..) | GenericImage::ImageSet(..)) {
++                    continue;
++                }
++                // background-size / -repeat lists may be shorter than the image
++                // list; CSS repeats them, so index modulo their length.
++                let size = &sizes[i % sizes.len()];
++                let stretched = matches!(
++                    size,
++                    GenericBackgroundSize::Cover | GenericBackgroundSize::Contain
++                );
++                let r = &repeats[i % repeats.len()];
++                let tiled = !matches!(r.0, BackgroundRepeatKeyword::NoRepeat)
++                    || !matches!(r.1, BackgroundRepeatKeyword::NoRepeat);
++                if stretched && !tiled {
++                    hero = true;
++                    break;
++                }
++            }
++            if hero {
++                self.style
++                    .add_flags(ComputedValueFlags::SELF_OR_ANCESTOR_HAS_IMAGE_BACKDROP);
++            }
++        }
+     }
+ 
+     /// Adjust the style for text style.
+diff --git a/layout/painting/nsDisplayList.cpp b/layout/painting/nsDisplayList.cpp
+--- a/layout/painting/nsDisplayList.cpp
++++ b/layout/painting/nsDisplayList.cpp
+@@ -3137,6 +3137,63 @@
+                                                    aBgSC, aColor);
+ }
+ 
++// gjoa dark mode: paint a translucent dark scrim over a hero photo's background
++// images (but under its content) so the inversion-preserved authored text stays
++// readable against the still-bright image. Gated on content color inversion and
++// on this frame establishing a stretched, non-tiled raster image backdrop.
++static void MaybeAppendDarkScrim(nsDisplayListBuilder* aBuilder,
++                                 nsIFrame* aFrame,
++                                 nsIFrame* aSecondaryReferenceFrame,
++                                 const nsRect& aBackgroundRect,
++                                 const ComputedStyle* aBgSC,
++                                 const nsStyleBorder& aBorder,
++                                 nsDisplayList* aBgItemList) {
++  if (!aFrame->PresContext()->ColorInversion()) {
++    return;
++  }
++
++  // The SELF_OR_ANCESTOR_HAS_IMAGE_BACKDROP ComputedValueFlags bit is only
++  // reachable through ComputedStyle's private Flags(), so re-derive the hero
++  // condition from the bottom background layer: a stretched (cover/contain),
++  // non-tiled url()/image-set raster image, matching style_adjuster.rs.
++  const nsStyleImageLayers::Layer& layer = aBgSC->StyleBackground()->BottomLayer();
++  const bool isRaster = layer.mImage.IsUrl() || layer.mImage.IsImageSet();
++  const bool stretched = layer.mSize.IsCover() || layer.mSize.IsContain();
++  const bool tiled =
++      layer.mRepeat.mXRepeat != StyleImageLayerRepeat::NoRepeat ||
++      layer.mRepeat.mYRepeat != StyleImageLayerRepeat::NoRepeat;
++  if (!isRaster || !stretched || tiled) {
++    return;
++  }
++
++  const uint8_t alpha = (uint8_t)std::clamp(
++      mozilla::Preferences::GetInt("gjoa.darkmode.scrim.alpha", 140), 0, 255);
++
++  Maybe<DisplayListClipState::AutoSaveRestore> clipState;
++  nsRect scrimRect = aBackgroundRect;
++  nsCSSRendering::ImageLayerClipState clip;
++  nsCSSRendering::GetImageLayerClip(
++      aBgSC->StyleBackground()->BottomLayer(), aFrame, aBorder, aBackgroundRect,
++      aBackgroundRect, false, aFrame->PresContext()->AppUnitsPerDevPixel(),
++      &clip);
++
++  scrimRect = scrimRect.Intersect(clip.mBGClipArea);
++  if (clip.mHasAdditionalBGClipArea) {
++    scrimRect = scrimRect.Intersect(clip.mAdditionalBGClipArea);
++  }
++  if (clip.mHasRoundedCorners) {
++    clipState.emplace(aBuilder);
++    clipState->ClipContentDescendants(clip.mBGClipArea, &clip.mRadii);
++  }
++
++  nsDisplayBackgroundColor* scrim =
++      CreateBackgroundColor(aBuilder, aFrame, aSecondaryReferenceFrame,
++                            scrimRect, aBgSC, NS_RGBA(0, 0, 0, alpha));
++  if (scrim) {
++    aBgItemList->AppendToTop(scrim);
++  }
++}
++
+ static void DealWithWindowsAppearanceHacks(nsIFrame* aFrame,
+                                            nsDisplayListBuilder* aBuilder) {
+   if (!XRE_IsParentProcess()) {
+@@ -3419,6 +3476,10 @@
+             nsDisplayItem::ContainerASRType::Constant));
+   }
+ 
++  // gjoa dark mode: scrim a hero photo above its images, below frame content.
++  MaybeAppendDarkScrim(aBuilder, aFrame, aSecondaryReferenceFrame,
++                       aBackgroundRect, bgSC, border, &bgItemList);
++
+   if (!bgItemList.IsEmpty()) {
+     aList->AppendToTop(&bgItemList);
+     return AppendedBackgroundType::Background;

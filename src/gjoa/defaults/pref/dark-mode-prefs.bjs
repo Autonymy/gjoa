@@ -49,3 +49,10 @@
 (pref "gjoa.darkmode.user.force-native" "")
 (pref "gjoa.darkmode.user.force-invert" "")
 (pref "gjoa.darkmode.user.off" "")
+
+;; Dark-mode scrim opacity (0-255 alpha). When the engine flags an element as a
+;; full-bleed image backdrop (a hero photo) under inversion, the paint stage lays
+;; a translucent black scrim over its background images so preserved (un-inverted)
+;; authored text reads against the still-bright photo. ~0.55 alpha. Read in C++ via
+;; Preferences::GetInt at display-list build, so it's live-tunable (re-render to apply).
+(pref "gjoa.darkmode.scrim.alpha" 140)

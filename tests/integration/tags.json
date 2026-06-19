@@ -2,6 +2,7 @@
   "version": 1,
   "subsystems": {
     "darkmode":  ["darkmode-hybrid", "darkmode-invert"],
+    "contrast":  ["contrast"],
     "adblock":   ["adblock-cosmetic", "adblock-cosmetic-actor", "adblock-production", "adblock-ui", "adblock-validate"],
     "scriptlet": ["scriptlet-engine", "youtube-scriptlet"],
     "tabs":      ["tab-mode-toggle", "nav-bar-layout", "sidebar-symmetric-icons", "groups", "group-drag-above", "vim-hotkeys", "help-menu"],
@@ -10,11 +11,11 @@
     "misc":      ["sqlite"]
   },
   "lanes": {
-    "slow":    ["adblock-production", "adblock-validate", "darkmode-hybrid"],
-    "network": ["youtube-scriptlet", "scriptlet-engine", "adblock-production", "adblock-validate", "adblock-cosmetic-actor", "darkmode-invert", "darkmode-hybrid"]
+    "slow":    ["adblock-production", "adblock-validate", "darkmode-hybrid", "contrast"],
+    "network": ["youtube-scriptlet", "scriptlet-engine", "adblock-production", "adblock-validate", "adblock-cosmetic-actor", "darkmode-invert", "darkmode-hybrid", "contrast"]
   },
   "sources": {
-    "src/gjoa/chrome/bjs/dark-mode/": "darkmode",
+    "src/gjoa/chrome/bjs/dark-mode/": ["darkmode", "contrast"],
     "src/gjoa/chrome/bjs/blocking/":  ["adblock", "scriptlet"],
     "src/gjoa/chrome/bjs/spaces/":    "spaces",
     "src/gjoa/chrome/bjs/tabs/":      ["tabs", "newtab"],

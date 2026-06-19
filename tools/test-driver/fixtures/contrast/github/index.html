@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <!-- Declares native dark support: the force-native tier should HONOR the
+       site's own dark theme rather than engine-inverting it. -->
+  <meta name="color-scheme" content="light dark">
+  <title>GitHub — fixture</title>
+  <style>
+    * { box-sizing: border-box; }
+    /* Light defaults. */
+    body { margin: 0; background: #ffffff; color: #1f2328; font-family: -apple-system, "Segoe UI", Helvetica, Arial, sans-serif; }
+    .appbar { background: #f6f8fa; border-bottom: 1px solid #d0d7de; padding: 12px 20px; display: flex; align-items: center; gap: 16px; }
+    .appbar .brand { font-weight: 600; font-size: 16px; color: #1f2328; }
+    .appbar a { color: #1f2328; text-decoration: none; font-size: 14px; }
+    .main { max-width: 760px; margin: 0 auto; padding: 28px 20px; }
+    h1 { font-size: 24px; color: #1f2328; }
+    p { font-size: 16px; line-height: 1.6; color: #1f2328; }
+    a.link { color: #0969da; text-decoration: none; }
+    .readme { border: 1px solid #d0d7de; border-radius: 6px; padding: 20px; margin-top: 20px; }
+
+    /* The site ships its OWN dark theme. A force-native engine must let this win. */
+    @media (prefers-color-scheme: dark) {
+      body { background: #0d1117; color: #e6edf3; }
+      .appbar { background: #161b22; border-bottom-color: #30363d; }
+      .appbar .brand, .appbar a { color: #e6edf3; }
+      h1, p { color: #e6edf3; }
+      a.link { color: #4493f8; }
+      .readme { border-color: #30363d; }
+    }
+  </style>
+</head>
+<body>
+  <div class="appbar">
+    <span class="brand">GitHub</span>
+    <a href="#">Pull requests</a>
+    <a href="#">Issues</a>
+    <a href="#">Explore</a>
+  </div>
+
+  <div class="main">
+    <h1>octocat / hello-world</h1>
+    <p>This repository declares a <code>color-scheme</code> of <code>light dark</code> and ships a real dark theme behind a <a class="link" href="#">prefers-color-scheme</a> media query. A browser that respects native dark support should render this page using the site's own dark palette and leave the inversion engine out of it entirely.</p>
+    <div class="readme">
+      <p>The README explains the project in a few short paragraphs. Because the site author already did the work of choosing legible foreground and background pairs for dark mode, the contrast harness should find that every text box here passes the accessibility threshold without any help from the luminance inverter.</p>
+      <p>If the engine instead inverts a site that already provides its own dark theme, the result is a double negative: dark text on a dark background, or washed-out grey on grey. Detecting and honoring the native theme is exactly what the force-native tier is meant to guarantee.</p>
+    </div>
+  </div>
+</body>
+</html>

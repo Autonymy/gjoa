@@ -1,0 +1,63 @@
+#lang beagle/js
+;; Backdrop sampling — turn a full-page screenshot + a text box's page-relative
+;; rect into the color actually painted behind that text. This is the half of the
+;; oracle that a style-stage inverter can't know: the COMPOSITED backdrop (image +
+;; overlays + blends), read straight off the rendered pixels.
+;;
+;; Approach: sample a grid across the box and take the LUMINANCE-MEDIAN pixel.
+;; Text glyphs are a sparse minority of a line box's pixels, so the median sample
+;; is the background — no second text-hidden render pass, no glyph masking.
+;;
+;; `scale` = pngWidth / pageCssWidth (≈ devicePixelRatio; passed in so HiDPI is
+;; exact). Box rect is PAGE-relative CSS px (caller adds scrollX/scrollY), which
+;; is what a {:full true} screenshot is captured in.
+(ns gjoa.tools.test-driver.contrast-sample
+  (:require [pngjs :refer [PNG]]))
+(define-mode strict)
+(declare-extern [Buffer Math] Any)
+
+;; base64 PNG (Marionette TakeScreenshot) -> {:width :height :data}. data is an
+;; RGBA byte buffer, row-major, 4 bytes/pixel.
+(js/export (defn decode-png [b64 :- String] :- Any
+  (let [buf (.from Buffer b64 "base64")
+        png (.read (.-sync PNG) buf)]
+    {:width (.-width png) :height (.-height png) :data (.-data png)})))
+
+;; Read one RGBA pixel.
+(defn pixel-at [data :- Any width :- Any px :- Any py :- Any] :- Any
+  (let [i (* (+ (* py width) px) 4)]
+    {:r (aget data i) :g (aget data (+ i 1)) :b (aget data (+ i 2)) :a (aget data (+ i 3))}))
+
+;; Fast (non-gamma) luminance — only used to ORDER samples for the median, so the
+;; sRGB transfer is irrelevant here (relative order is preserved).
+(defn lum-quick [p :- Any] :- Any
+  (+ (* 0.2126 (:r p)) (* 0.7152 (:g p)) (* 0.0722 (:b p))))
+
+;; Median backdrop color behind a text box. rect = {:x :y :w :h} in page CSS px.
+;; Returns {:r :g :b :a} in 0..255 (a always 255 — screenshots are opaque).
+(js/export (defn sample-backdrop [png :- Any rect :- Any scale :- Any] :- Any
+  (let [w (:width png)
+        h (:height png)
+        data (:data png)
+        x0 (.max Math 0 (.floor Math (* (:x rect) scale)))
+        y0 (.max Math 0 (.floor Math (* (:y rect) scale)))
+        x1 (.min Math (- w 1) (.floor Math (* (+ (:x rect) (:w rect)) scale)))
+        y1 (.min Math (- h 1) (.floor Math (* (+ (:y rect) (:h rect)) scale)))
+        cols 7
+        rows 3
+        total (* cols rows)
+        pts (Array.)]
+    (loop [k 0]
+      (when (< k total)
+        (let [r (.floor Math (/ k cols))
+              c (- k (* r cols))
+              px (.round Math (+ x0 (* (/ (+ c 0.5) cols) (- x1 x0))))
+              py (.round Math (+ y0 (* (/ (+ r 0.5) rows) (- y1 y0))))]
+          (when (and (>= px 0) (< px w) (>= py 0) (< py h))
+            (.push pts (pixel-at data w px py))))
+        (recur (+ k 1))))
+    (let [n (.-length pts)]
+      (if (= n 0)
+        {:r 255 :g 255 :b 255 :a 255}
+        (let [sorted (.sort pts (fn [a :- Any b :- Any] :- Any (- (lum-quick a) (lum-quick b))))]
+          (aget sorted (.floor Math (/ n 2)))))))))

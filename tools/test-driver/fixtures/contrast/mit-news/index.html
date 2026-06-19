@@ -1,0 +1,65 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>MIT News — fixture</title>
+  <style>
+    * { box-sizing: border-box; }
+    body { margin: 0; font-family: Georgia, "Times New Roman", serif; background: #fff; color: #111; }
+
+    /* White solid header bar — must DARKEN under invert. */
+    header.bar {
+      background: #fff;
+      color: #111;
+      border-bottom: 1px solid #ddd;
+      display: flex;
+      align-items: center;
+      gap: 24px;
+      padding: 16px 32px;
+    }
+    header.bar .logo { font-weight: bold; font-size: 20px; color: #a31f34; letter-spacing: 0.5px; }
+    header.bar nav a { color: #111; text-decoration: none; margin-right: 20px; font-size: 14px; }
+
+    /* Hero with a DARK background-image, TRANSPARENT bg-color, WHITE text.
+       This is the failing baseline: the engine flips the white text to near-black
+       assuming a white backdrop, but the dark photo is untouched -> invisible. */
+    section.hero {
+      background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='8' height='8'%3E%3Crect width='8' height='8' fill='%23161620'/%3E%3C/svg%3E");
+      background-size: cover;
+      background-repeat: no-repeat;
+      padding: 80px 32px;
+    }
+    section.hero h1 { color: #fff; font-size: 38px; margin: 0 0 16px; max-width: 760px; }
+    section.hero p { color: #fff; font-size: 18px; line-height: 1.6; margin: 0; max-width: 680px; }
+
+    /* Normal white-background article — must INVERT clean to dark-with-light-text. */
+    article.body { background: #fff; color: #222; max-width: 720px; margin: 0 auto; padding: 40px 32px; }
+    article.body h2 { color: #111; font-size: 26px; }
+    article.body p { font-size: 17px; line-height: 1.7; color: #222; }
+  </style>
+</head>
+<body>
+  <header class="bar">
+    <span class="logo">MIT News</span>
+    <nav>
+      <a href="#">Research</a>
+      <a href="#">Campus</a>
+      <a href="#">Science</a>
+      <a href="#">Technology</a>
+    </nav>
+  </header>
+
+  <section class="hero">
+    <h1>Engineers build a battery that charges in seconds and lasts for years</h1>
+    <p>The new electrode chemistry could reshape how grid-scale storage is deployed across the country, researchers say, by cutting both the cost and the charging time of large lithium packs without sacrificing safety.</p>
+  </section>
+
+  <article class="body">
+    <h2>A decade in the making</h2>
+    <p>For the past ten years a small group of materials scientists has been quietly chasing a stubborn problem: how to move ions through a solid electrolyte fast enough to be useful without cracking the material apart. The answer, it turns out, was hiding in the geometry of the crystal lattice rather than in any exotic new element.</p>
+    <p>The team published its findings this week, and outside experts have already begun calling the result one of the more consequential storage advances in recent memory. If the manufacturing process scales, the same approach could find its way into everything from electric vehicles to backyard solar installations within a few years.</p>
+    <p>Still, the researchers are careful to temper expectations. Lab demonstrations rarely survive contact with a factory floor unchanged, and the cost of the specialized coating remains an open question. The group plans to spend the next phase of the project working with industrial partners to find out whether the chemistry holds up at volume.</p>
+  </article>
+</body>
+</html>

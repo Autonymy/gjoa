@@ -32,6 +32,8 @@
     "test:integration:nix:all": "bun run tools:compile && GJOA_BIN=$PWD/result/bin/gjoa bun .beagle-tools/gjoa/tools/test-driver/runner.js | bun .beagle-tools/gjoa/tools/test-driver/record-metrics.js all",
     "test:integration:nix:headed": "bun run tools:compile && GJOA_BIN=$PWD/result/bin/gjoa bun .beagle-tools/gjoa/tools/test-driver/runner.js --headed --verbose",
     "test:darkmode": "bun run _itest -- --subsystem darkmode | bun .beagle-tools/gjoa/tools/test-driver/record-metrics.js subsystem:darkmode",
+    "test:contrast": "bun run _itest -- --subsystem contrast | bun .beagle-tools/gjoa/tools/test-driver/record-metrics.js subsystem:contrast",
+    "fixture:contrast": "bun tools/test-driver/contrast-fixture-server.mjs",
     "test:adblock": "bun run _itest -- --subsystem adblock | bun .beagle-tools/gjoa/tools/test-driver/record-metrics.js subsystem:adblock",
     "test:scriptlet": "bun run _itest -- --subsystem scriptlet | bun .beagle-tools/gjoa/tools/test-driver/record-metrics.js subsystem:scriptlet",
     "test:tabs": "bun run _itest -- --subsystem tabs | bun .beagle-tools/gjoa/tools/test-driver/record-metrics.js subsystem:tabs",
@@ -47,6 +49,7 @@
     "bench:env:restore": "sudo bash tools/bench/env.sh --restore"
   },
   "devDependencies": {
-    "happy-dom": "^20.9.0"
+    "happy-dom": "^20.9.0",
+    "pngjs": "^7.0.0"
   }
 }

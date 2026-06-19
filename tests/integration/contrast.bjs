@@ -1,0 +1,136 @@
+#lang beagle/js
+;; Dark-mode contrast-regression harness (#55) — the no-mistakes gate.
+;;
+;; For each golden fixture it drives the REAL binary in the production dark-mode
+;; config (enabled + mode="hybrid"), then measures whether text is actually
+;; legible on the RENDERED result:
+;;   1. navigate (chrome-side progress listener) + settle (actor round-trip + paint)
+;;   2. enumerate visible text runs in content (Range.getClientRects, page-relative)
+;;   3. full-page screenshot (Marionette TakeScreenshot {:full true})
+;;   4. for each text box: sample the composited backdrop behind it (median pixel),
+;;      take the post-inversion computed FG, compute WCAG contrast
+;;   5. score the page; assert passRatio >= the recorded baseline floor
+;;
+;; The contrast math (contrast-score) and sampling (contrast-sample) are pure and
+;; unit-tested with zero binary; this file is the only part that needs a running
+;; gjoa. Baselines start at 0 (record-only) and are ratcheted up to real floors
+;; once measured on the binary (#63) — known-failing fixtures (mit-news) are
+;; recorded so they can't regress further and prove the engine fix when they rise.
+;;
+;; Precondition: tools/test-driver/contrast-fixture-server.mjs serving :8976
+;; (the runner --with-fixtures flag spawns it).
+(ns gjoa.tests.integration.contrast
+  (:require [gjoa.tests.dsl :refer [deftest expect sleep]]
+            [gjoa.tools.test-driver.contrast-score :refer [parse-rgb evaluate-box score-page]]
+            [gjoa.tools.test-driver.contrast-sample :refer [decode-png sample-backdrop]]))
+(define-mode strict)
+(declare-extern [JSON console] Any)
+
+(def BASE :- String "http://127.0.0.1:8976/")
+
+;; Recorded contrast floors. 0 = record-only (always green, logs the score).
+;; After the first binary run these become real floors via #63's measure step;
+;; known-failing fixtures get a floor just below today's value so they can't
+;; regress and visibly rise when the engine fix lands.
+(def BASELINES :- Any
+  {"mit-news" 0
+   "hacker-news" 0
+   "youtube" 0
+   "wikipedia" 0
+   "github" 0
+   "editorial-card" 0
+   "docs-codeblocks" 0
+   "svg-logo" 0
+   "dark-text-hero" 0})
+
+;; Production dark-mode config (the default): master toggle on, hybrid mode (the
+;; GjoaDarkmode actor inverts themeless-light docs per-document).
+(def PREFS-JS :- String
+  (str "Services.prefs.setBoolPref('gjoa.darkmode.enabled', true);"
+       " Services.prefs.setCharPref('gjoa.darkmode.mode', 'hybrid');"
+       " return 'on';"))
+
+;; Chrome-side navigation: load url, resolve when the top window hits STATE_STOP.
+(def NAV-JS :- String
+  (str "\n"
+       "  const [url, resolve] = arguments;\n"
+       "  let done = false; const finish = v => { if (!done) { done = true; resolve(v); } };\n"
+       "  const win = Services.wm.getMostRecentWindow('navigator:browser');\n"
+       "  const b = win.gBrowser.selectedBrowser;\n"
+       "  const l = { QueryInterface: ChromeUtils.generateQI(['nsIWebProgressListener','nsISupportsWeakReference']),\n"
+       "    onStateChange(wp, req, flags) { const S = Ci.nsIWebProgressListener;\n"
+       "      if ((flags & S.STATE_STOP) && (flags & S.STATE_IS_WINDOW)) { try { b.removeProgressListener(l); } catch {} finish(true); } } };\n"
+       "  b.addProgressListener(l, Ci.nsIWebProgress.NOTIFY_STATE_ALL);\n"
+       "  b.loadURI(Services.io.newURI(url), { triggeringPrincipal: Services.scriptSecurityManager.getSystemPrincipal() });\n"
+       "  setTimeout(() => finish(false), 15000);\n"))
+
+;; Content-side enumeration: every visible text run -> page-relative box + its
+;; post-inversion computed color + size/weight. Range.getClientRects (not the
+;; element box) so we measure the text itself, not its padding. Capped at 400.
+(def ENUMERATE-JS :- String
+  (str "\n"
+       "  const W = document.documentElement, boxes = [];\n"
+       "  const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);\n"
+       "  let n;\n"
+       "  while ((n = walker.nextNode()) && boxes.length < 400) {\n"
+       "    const t = (n.textContent || '').trim();\n"
+       "    if (t.length < 2) continue;\n"
+       "    const el = n.parentElement; if (!el) continue;\n"
+       "    const cs = getComputedStyle(el);\n"
+       "    if (cs.visibility === 'hidden' || cs.display === 'none' || parseFloat(cs.opacity) === 0) continue;\n"
+       "    const range = document.createRange(); range.selectNodeContents(n);\n"
+       "    for (const r of range.getClientRects()) {\n"
+       "      if (r.width < 4 || r.height < 4 || r.bottom < 0 || r.right < 0) continue;\n"
+       "      boxes.push({ x: r.left + window.scrollX, y: r.top + window.scrollY, w: r.width, h: r.height,\n"
+       "        color: cs.color, fontSize: parseFloat(cs.fontSize),\n"
+       "        bold: (parseInt(cs.fontWeight, 10) || 400) >= 600, text: t.slice(0, 40) });\n"
+       "    }\n"
+       "  }\n"
+       "  return JSON.stringify({ boxes, pageWidth: W.scrollWidth, pageHeight: W.scrollHeight, dpr: window.devicePixelRatio });\n"))
+
+;; Run the full measure flow for one fixture and assert its baseline floor.
+(defn check-fixture [mn :- Any name :- String] :- Any
+  (js/await (.setContext mn "chrome"))
+  (js/await (.executeScript mn PREFS-JS))
+  (let [url (str BASE name)
+        navOk (js/await (.executeAsyncScript mn NAV-JS [url]))]
+    (expect navOk (str "fixture " url " did not load — is contrast-fixture-server on :8976?"))
+    (js/await (sleep 800))
+    (js/await (.setContext mn "content"))
+    (let [meta (.parse JSON (js/await (.executeScript mn ENUMERATE-JS)))
+          shot (js/await (.takeScreenshot mn))
+          png (decode-png shot)
+          page-w (.-pageWidth meta)
+          scale (if (> page-w 0) (/ (:width png) page-w) 1)
+          boxes (.-boxes meta)
+          results (.map boxes
+                    (fn [b :- Any] :- Any
+                      (let [rect {:x (.-x b) :y (.-y b) :w (.-w b) :h (.-h b)}
+                            bg (sample-backdrop png rect scale)
+                            fg (parse-rgb (.-color b))]
+                        (evaluate-box fg bg (.-fontSize b) (.-bold b) (.-text b)))))
+          score (score-page results)
+          ratio (:passRatio score)
+          baseline (or (get BASELINES name) 0)]
+      (.log console (str "\n[contrast] " name ": passRatio=" (.toFixed ratio 3)
+                         " (" (:passes score) "/" (:total score) ") minRatio="
+                         (.toFixed (:minRatio score) 2) " baseline=" baseline))
+      (doseq [w (:worst5 score)]
+        (when (not (:pass w))
+          (.log console (str "    FAIL box ratio=" (.toFixed (:ratio w) 2)
+                             " need=" (:thr w) " \"" (:text w) "\""))))
+      (expect (>= ratio baseline)
+              (str name " contrast regressed: passRatio " (.toFixed ratio 3) " < baseline " baseline)))))
+
+(js/export (def tests :- Any
+  [(deftest "contrast: mit-news (image-hero — the failing baseline)" [mn ctx] (js/await (check-fixture mn "mit-news")))
+   (deftest "contrast: hacker-news (white/orange bars)" [mn ctx] (js/await (check-fixture mn "hacker-news")))
+   (deftest "contrast: youtube (rounded image cards)" [mn ctx] (js/await (check-fixture mn "youtube")))
+   (deftest "contrast: wikipedia (themeless-light, must invert clean)" [mn ctx] (js/await (check-fixture mn "wikipedia")))
+   (deftest "contrast: github (native-dark capable)" [mn ctx] (js/await (check-fixture mn "github")))
+   (deftest "contrast: editorial-card (text over image+gradient)" [mn ctx] (js/await (check-fixture mn "editorial-card")))
+   (deftest "contrast: docs-codeblocks (small colored tokens)" [mn ctx] (js/await (check-fixture mn "docs-codeblocks")))
+   (deftest "contrast: svg-logo (currentColor SVG text)" [mn ctx] (js/await (check-fixture mn "svg-logo")))
+   (deftest "contrast: dark-text-hero (R3 regression vector)" [mn ctx] (js/await (check-fixture mn "dark-text-hero")))]))
+
+(js/export-default tests)

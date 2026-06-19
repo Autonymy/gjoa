@@ -2,6 +2,7 @@
 (ns gjoa.tools.prep.import
   (:require [gjoa.tools.prep.branding :refer [branding!]]
             [gjoa.tools.prep.chrome-bake :refer [chrome-bake]]
+            [gjoa.tools.prep.fingerprint :refer [fingerprint!]]
             [gjoa.tools.prep.locales :refer [locales]]
             [gjoa.tools.prep.mozconfig :refer [mozconfig!]]
             [gjoa.tools.prep.overlay :refer [overlay]]
@@ -9,25 +10,28 @@
             [gjoa.tools.prep.log :refer [log]]))
 (define-mode strict)
 
-;; Six sequential phases. Each is idempotent, so re-running `bun run import`
+;; Seven sequential phases. Each is idempotent, so re-running `bun run import`
 ;; after editing src/gjoa/ or gjoa.json picks up the changes correctly.
 (js/export (defn import-sources [] :- Any
-  (.step log "phase 1/6 — overlaying src/gjoa/")
+  (.step log "phase 1/7 — overlaying src/gjoa/")
   (js/await (overlay))
 
-  (.step log "phase 2/6 — applying patches/")
+  (.step log "phase 2/7 — applying patches/")
   (js/await (patches))
 
-  (.step log "phase 3/6 — baking chrome bundles into engine/")
+  (.step log "phase 3/7 — baking chrome bundles into engine/")
   (js/await (chrome-bake))
 
-  (.step log "phase 4/6 — generating branding")
+  (.step log "phase 4/7 — generating branding")
   (js/await (branding!))
 
-  (.step log "phase 5/6 — rewriting locale Firefox-isms")
+  (.step log "phase 5/7 — rewriting locale Firefox-isms")
   (js/await (locales))
 
-  (.step log "phase 6/6 — generating engine/mozconfig")
+  (.step log "phase 6/7 — generating engine/mozconfig")
   (js/await (mozconfig!))
+
+  (.step log "phase 7/7 — generating build fingerprint")
+  (js/await (fingerprint!))
 
   (.ok log "import complete")))

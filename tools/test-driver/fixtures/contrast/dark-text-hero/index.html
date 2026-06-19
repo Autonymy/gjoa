@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Dark-text Hero — fixture</title>
+  <style>
+    body { margin: 0; background: #fff; color: #222; font-family: Georgia, serif; }
+
+    /* THE R3 regression vector: a hero with a LIGHT background-image (a light
+       photo), transparent bg-color, and DARK authored text over it. The dark-mode
+       fix must NOT turn this into dark-text-on-dark-scrim — it must stay readable. */
+    section.hero {
+      background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='8' height='8'%3E%3Crect width='8' height='8' fill='%23e8e6dd'/%3E%3C/svg%3E");
+      background-size: cover;
+      background-repeat: no-repeat;
+      padding: 90px 32px;
+    }
+    section.hero h1 { color: #222; font-size: 40px; margin: 0 0 16px; max-width: 760px; }
+    section.hero p { color: #222; font-size: 19px; line-height: 1.6; margin: 0; max-width: 700px; }
+
+    .body { max-width: 720px; margin: 0 auto; padding: 36px 32px; }
+    .body p { font-size: 17px; line-height: 1.7; color: #2b2b2b; }
+  </style>
+</head>
+<body>
+  <section class="hero">
+    <h1>A morning on the coast, told in plain dark ink</h1>
+    <p>The text in this hero was authored dark on purpose, because the photo behind it is light and airy. This is the case a naive dark-mode fix gets wrong: if the engine assumes every image is dark and forces the text light, the words vanish into the pale backdrop. The correct behavior is to leave this dark text alone.</p>
+  </section>
+
+  <div class="body">
+    <p>Below the hero the page continues with ordinary body copy on a white background. That part inverts cleanly like any other light page. The interesting region is the hero above, where the engine must look at the actual composited backdrop rather than guessing, and recognize that dark text on a light image is already perfectly legible and should be preserved exactly as written.</p>
+    <p>Getting this wrong is the regression that prompted the third revision of the dark-mode resolver. An earlier version flipped all light-image text to white for safety, which silently destroyed every hero that had been designed the other way around. This fixture exists so that mistake can never ship unnoticed again.</p>
+  </div>
+</body>
+</html>

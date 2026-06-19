@@ -1,0 +1,81 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>YouTube — fixture</title>
+  <style>
+    * { box-sizing: border-box; }
+    /* Natively darkish UI. */
+    body { margin: 0; background: #0f0f0f; color: #f1f1f1; font-family: Roboto, Arial, sans-serif; }
+
+    .masthead { display: flex; align-items: center; gap: 16px; padding: 12px 20px; background: #0f0f0f; }
+    .masthead .logo { font-weight: bold; font-size: 20px; color: #ff0000; }
+    .masthead .search { flex: 1; max-width: 480px; background: #121212; border: 1px solid #303030; border-radius: 18px; padding: 8px 14px; color: #888; font-size: 14px; }
+
+    .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 16px; padding: 20px; }
+
+    /* Rounded thumbnail cards: DARK background-image, transparent bg-color,
+       WHITE title overlaid at the bottom. */
+    .card .thumb {
+      position: relative;
+      border-radius: 12px;
+      overflow: hidden;
+      aspect-ratio: 16 / 9;
+      background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='8' height='8'%3E%3Crect width='8' height='8' fill='%23161620'/%3E%3C/svg%3E");
+      background-size: cover;
+      background-repeat: no-repeat;
+    }
+    .card .thumb .title-overlay {
+      position: absolute;
+      left: 8px;
+      right: 8px;
+      bottom: 8px;
+      color: #fff;
+      font-size: 14px;
+      font-weight: 500;
+      text-shadow: 0 1px 2px rgba(0,0,0,0.4);
+    }
+    .card .meta { padding: 8px 2px; }
+    .card .meta .vtitle { color: #f1f1f1; font-size: 14px; font-weight: 500; line-height: 1.3; }
+    .card .meta .channel { color: #aaa; font-size: 12px; margin-top: 4px; }
+  </style>
+</head>
+<body>
+  <div class="masthead">
+    <span class="logo">YouTube</span>
+    <div class="search">Search</div>
+  </div>
+
+  <div class="grid">
+    <div class="card">
+      <div class="thumb"><span class="title-overlay">Building a browser from scratch — part 1</span></div>
+      <div class="meta">
+        <div class="vtitle">Building a browser from scratch — part 1</div>
+        <div class="channel">Low Level Lab · 142K views · 2 days ago</div>
+      </div>
+    </div>
+    <div class="card">
+      <div class="thumb"><span class="title-overlay">Why dark mode is harder than it looks</span></div>
+      <div class="meta">
+        <div class="vtitle">Why dark mode is harder than it looks</div>
+        <div class="channel">Design Notes · 89K views · 1 week ago</div>
+      </div>
+    </div>
+    <div class="card">
+      <div class="thumb"><span class="title-overlay">A relaxing walk through an old library</span></div>
+      <div class="meta">
+        <div class="vtitle">A relaxing walk through an old library</div>
+        <div class="channel">Quiet Places · 1.2M views · 3 months ago</div>
+      </div>
+    </div>
+    <div class="card">
+      <div class="thumb"><span class="title-overlay">Rust ownership explained in ten minutes</span></div>
+      <div class="meta">
+        <div class="vtitle">Rust ownership explained in ten minutes</div>
+        <div class="channel">Ferris Teaches · 305K views · 5 days ago</div>
+      </div>
+    </div>
+  </div>
+</body>
+</html>

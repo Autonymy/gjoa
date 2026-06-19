@@ -83,16 +83,31 @@
             (do
               (sh (str "cd " tmp " && git init -q && git add -A && git -c user.email=t@t -c user.name=t commit -q -m baseline") {:timeout 60000})
               (let [patches (.sort (.filter (readdirSync PATCHES-DIR) (fn [p] (.endsWith p ".patch"))))
-                    failed []]
+                    failed []
+                    drifted []]
                 (doseq [p patches]
-                  (let [r (sh (str "cd " tmp " && git apply --check " (join PATCHES-DIR p)) {})]
-                    (when (not (.-ok r))
-                      (.push failed (str p ": " (.trim (or (aget (.split (.-out r) "\n") 0) "")))))))
-                (if (> (.-length failed) 0)
+                  (let [path (join PATCHES-DIR p)
+                        r (sh (str "cd " tmp " && git apply --check " path) {})]
+                    (if (not (.-ok r))
+                      (.push failed (str p ": " (.trim (or (aget (.split (.-out r) "\n") 0) ""))))
+                      ;; Applies clean via git apply — now detect line-offset DRIFT,
+                      ;; the early warning the .rej arrives a release after. GNU patch
+                      ;; reports "Hunk #N succeeded at M (offset L lines)" for drift
+                      ;; that git apply tolerates silently. Take the largest |offset|.
+                      (let [pr (sh (str "cd " tmp " && patch -p1 --dry-run --fuzz=0 --force -i " path " 2>&1 | grep -oiE 'offset -?[0-9]+' | grep -oE '[0-9]+' | sort -rn | head -1") {})
+                            off (parseInt (.trim (or (.-out pr) "")) 10)]
+                        (when (> off 0)
+                          (.push drifted (str p " (offset " off ")")))))))
+                (cond
+                  (> (.-length failed) 0)
                   (fail "A" "patches apply clean on fresh source"
                     (str (.-length failed) "/" (.-length patches) " patches fail")
                     (str "regenerate each failing patch via `git diff` in a fresh extract:\n    " (.join failed "\n    ")))
-                  (pass "A" "patches apply clean on fresh source" (str (.-length patches) "/" (.-length patches) " apply clean")))))))))))
+                  (> (.-length drifted) 0)
+                  (warn "A" "patches apply clean on fresh source"
+                    (str (.-length patches) "/" (.-length patches) " apply, but " (.-length drifted) " drifting on line-offset (early warning — regenerate before they .rej): " (.join drifted ", ")))
+                  :else
+                  (pass "A" "patches apply clean on fresh source" (str (.-length patches) "/" (.-length patches) " apply clean, no drift")))))))))))
 
 ;; ── Gate B: chrome registration uses a known-working pattern ──────────────
 (defn gateB [] :- Any

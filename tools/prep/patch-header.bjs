@@ -45,12 +45,21 @@
         (.add out (aget m 1))))
     (Array.from out)))
 
+;; DEP-3-style provenance (Debian patch convention): a patch that Mozilla has
+;; ABSORBED upstream carries `applied-upstream: <ref>` and should be DROPPED
+;; rather than carried forward toward the divergence cliff; `forwarded: <url>`
+;; records a submission (informational). check-all flags absorbed patches.
 (defn parseHeader [text :- String] :- Any
   (if (not (.startsWith text HEADER-TAG))
     ;; Header may be preceded by nothing, but must be at the very top of the file.
-    {:hasHeader false :declaredBaseline nil}
-    (let [m (.exec (RegExp. "^#\\s*baseline-firefox:\\s*(\\S+)\\s*$" "m") text)]
-      {:hasHeader true :declaredBaseline (if m (aget m 1) nil)})))
+    {:hasHeader false :declaredBaseline nil :appliedUpstream nil :forwarded nil}
+    (let [bm (.exec (RegExp. "^#\\s*baseline-firefox:\\s*(\\S+)\\s*$" "m") text)
+          am (.exec (RegExp. "^#\\s*applied-upstream:\\s*(\\S+)\\s*$" "m") text)
+          fm (.exec (RegExp. "^#\\s*forwarded:\\s*(\\S+)\\s*$" "m") text)]
+      {:hasHeader true
+       :declaredBaseline (if bm (aget bm 1) nil)
+       :appliedUpstream (if am (aget am 1) nil)
+       :forwarded (if fm (aget fm 1) nil)})))
 
 (defn formatHeader [baseline :- String touches :- Any] :- String
   (let [lines (.concat [HEADER-TAG
@@ -68,6 +77,8 @@
      :text text
      :hasHeader (.-hasHeader parsed)
      :declaredBaseline (.-declaredBaseline parsed)
+     :appliedUpstream (.-appliedUpstream parsed)
+     :forwarded (.-forwarded parsed)
      :touches touches}))
 
 (defn listPatches [] :- Any
@@ -100,6 +111,11 @@
             (not (.-declaredBaseline p))
             (do
               (.error console (str "[patch-header] " n ": header present but `baseline-firefox` not parseable"))
+              (recur (+ i 1) (+ problems 1)))
+
+            (.-appliedUpstream p)
+            (do
+              (.error console (str "[patch-header] " n ": applied-upstream (" (.-appliedUpstream p) ") — Mozilla absorbed this change; DROP this patch (rm patches/" n ") to avoid carrying redundant divergence-debt"))
               (recur (+ i 1) (+ problems 1)))
 
             (not= (.-declaredBaseline p) current)

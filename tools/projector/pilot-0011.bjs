@@ -1,0 +1,66 @@
+#lang beagle/js
+;; tools/projector/pilot-0011.bjs — Phase 5 pilot: patch 0011 as a portable claim
+;; document instead of a textual diff.
+;;
+;; 0011 edits two same-named methods in two classes. As a claim-doc that is two
+;; class-qualified `set-body` verbs (anchored to (class, method) identity). The
+;; pilot builds the doc from the known-good patched output, persists it to JSON,
+;; reloads it, and replays — proving the falsifiable payoff:
+;;   GATE 1 — equivalence: replaying the claim-doc onto pristine upstream
+;;            reproduces the textual patch's output BYTE-FOR-BYTE.
+;;   GATE 2 — churn-resilience: after upstream reflow (sibling method inserted +
+;;            a body line the patch anchors on edited) the textual patch `.rej`s
+;;            (Hunk #1 FAILED), but the name-anchored claim-doc still applies to
+;;            valid JS carrying both gjoa edits.
+;;   bun .beagle-tools/gjoa/tools/projector/pilot-0011.js <pristine> <patched> [claim-out.json]
+(ns gjoa.tools.projector.pilot-0011
+  (:require [fs :refer [readFileSync writeFileSync]]
+            [gjoa.tools.projector.claims :refer [build-doc replay doc->json json->doc]]
+            [gjoa.tools.projector.set-body :refer [parses?]]))
+(define-mode strict)
+(declare-extern [process console] Any)
+
+;; 0011's two identity anchors (same method name, two classes).
+(def ANCHORS :- Any
+  [{:class "AboutNewTabRedirectorParent" :method "newChannel"}
+   {:class "AboutNewTabRedirectorChild" :method "newChannel"}])
+
+(defn count-occurrences [s :- String needle :- String] :- Int
+  (loop [from 0 n 0]
+    (let [i (.indexOf s needle from)]
+      (if (< i 0) n (recur (+ i 1) (+ n 1))))))
+
+(defn main! [] :- Any
+  (let [pristine (readFileSync (aget (.-argv process) 2) "utf8")
+        patched (readFileSync (aget (.-argv process) 3) "utf8")
+        claim-path (or (aget (.-argv process) 4) "/tmp/0011.claims.json")
+        ;; build the claim-doc from the known-good patched output, persist to JSON,
+        ;; then reload it — proving the edit round-trips through a portable artifact.
+        doc0 (build-doc patched ANCHORS)
+        json (doc->json doc0)
+        _ (writeFileSync claim-path json)
+        doc (json->doc (readFileSync claim-path "utf8"))
+        ;; GATE 1 — replay the reloaded claim-doc onto pristine == patched?
+        r1 (replay doc pristine)
+        equiv (and (.-ok r1) (= (.-src r1) patched))
+        ;; GATE 2 — churn: (a) insert a sibling method above (offset) AND (b) edit a
+        ;; body line the patch anchors on (forces a textual .rej); replay same doc.
+        churned (.replace
+                  (.replace pristine
+                    "  newChannel(uri, loadInfo) {"
+                    "  // FF153: upstream inserted a telemetry hook\n  _recordOpen(k) {\n    Glean.newtab.opened.add(1);\n  }\n\n  newChannel(uri, loadInfo) {")
+                  "let chromeURI = this.getChromeURI(uri);"
+                  "let chromeURI = this.getChromeURI(uri); // FF153 upstream reflow")
+        r2 (replay doc churned)
+        churn-ok (and (.-ok r2) (parses? (.-src r2)) (= (count-occurrences (.-src r2) "gjoa-newtab") 2))]
+    (console/error (str "claim-doc: " (.-length doc) " set-body verbs, " (.-length json) " bytes JSON -> " claim-path))
+    (console/error (str "GATE 1  equivalence (claim-replay == patch 0011, byte-for-byte): " equiv))
+    (console/error (str "GATE 2  churn-resilience (name-anchored claim survives reflow that .rej's the patch): " churn-ok))
+    (when (not (and equiv churn-ok))
+      (console/error "PILOT FAILED")
+      (when (not (.-ok r1)) (console/error (str "  gate1: " (.-reason r1))))
+      (.exit process 1))
+    (console/error "PILOT PASSED — 0011 is a portable identity-anchored claim-doc: equivalent + churn-resilient.")))
+
+(when (.-main (js/import-meta))
+  (main!))

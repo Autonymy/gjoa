@@ -1,0 +1,89 @@
+#lang beagle/js
+;; tools/projector/reflector.bjs — Phase 5, the JS round-trip reflector.
+;; Parse a JS source file (acorn) into a SELF-CONTAINED lossless CST and render
+;; it back BYTE-IDENTICALLY. The CST stores the literal source `segs` interleaved
+;; with structural `kids`, mirroring the Beagle/Fram node vocabulary
+;; (kind / v(seg) / child / tail). render() concatenates segs+kids using ONLY the
+;; stored data — never the original source — so byte-identity proves losslessness.
+;;   bun .beagle-tools/gjoa/tools/projector/reflector.js <file.js>   # round-trip gate
+(ns gjoa.tools.projector.reflector
+  (:require [acorn :refer [parse]]
+            [fs :refer [readFileSync]]))
+(define-mode strict)
+(declare-extern [process console] Any)
+
+;; an acorn AST node: a non-null object carrying a string `type` and numeric
+;; `start`. `(some? (.-start v))` (not truthiness) so start=0 still counts.
+(js/export (defn node? [v :- Any] :- Bool
+  (and (some? v) (some? (.-type v)) (some? (.-start v)))))
+
+;; direct child AST nodes of `n` (any own prop that is a node, or array of nodes),
+;; ordered by source position.
+(js/export (defn child-nodes [n :- Any] :- Any
+  (let [kids []]
+    (doseq [key (Object/keys n)]
+      (when (not (or (= key "type") (= key "start") (= key "end") (= key "loc") (= key "range")))
+        (let [v (get n key)]
+          (when (node? v) (.push kids v))
+          (when (Array/isArray v)
+            (doseq [e v] (when (node? e) (.push kids e)))))))
+    (.sort kids (fn [a :- Any b :- Any] :- Int (- (.-start a) (.-start b))))
+    kids)))
+
+;; acorn node + source -> lossless CST map {:kind :start :end :segs :kids}.
+;; segs has length (kids+1), interleaved: seg0 kid0 seg1 kid1 ... segN. Children
+;; are clipped to a non-overlapping cover of [start,end]; anything not covered by
+;; a kid stays in a seg (so the round-trip is byte-identical even if a child is
+;; missed — it just demotes structure, never bytes).
+(js/export (defn to-cst [n :- Any src :- String] :- Any
+  (let [raw (child-nodes n)
+        nstart (.-start n)
+        nend (.-end n)
+        kept []]
+    (loop [i 0 last nstart]
+      (when (< i (.-length raw))
+        (let [k (aget raw i)]
+          (if (and (>= (.-start k) last) (<= (.-end k) nend))
+            (do (.push kept k) (recur (+ i 1) (.-end k)))
+            (recur (+ i 1) last)))))
+    (let [segs []
+          kids []]
+      (loop [i 0 pos nstart]
+        (if (< i (.-length kept))
+          (let [k (aget kept i)]
+            (.push segs (.slice src pos (.-start k)))
+            (.push kids (to-cst k src))
+            (recur (+ i 1) (.-end k)))
+          (.push segs (.slice src pos nend))))
+      {:kind (.-type n) :start nstart :end nend :segs segs :kids kids}))))
+
+;; render a CST back to source using ONLY its segs+kids (not the original source).
+(js/export (defn render [c :- Any] :- String
+  (let [segs (.-segs c)
+        kids (.-kids c)]
+    (loop [i 0 out (aget segs 0)]
+      (if (< i (.-length kids))
+        (recur (+ i 1) (str out (render (aget kids i)) (aget segs (+ i 1))))
+        out)))))
+
+;; parse a whole source string -> CST. A synthetic "File" root covers the full
+;; byte range so file-level leading/trailing trivia (hashbang, final newline) is
+;; preserved in segs.
+(js/export (defn reflect [src :- String] :- Any
+  (let [ast (parse src {:ecmaVersion "latest" :sourceType "module" :allowHashBang true})
+        root {:type "File" :start 0 :end (.-length src) :body [ast]}]
+    (to-cst root src))))
+
+(js/export (defn round-trips? [src :- String] :- Bool
+  (= (render (reflect src)) src)))
+
+(defn main! [] :- Any
+  (let [path (aget (.-argv process) 2)
+        src (readFileSync path "utf8")
+        out (render (reflect src))
+        ok (= out src)]
+    (console/error (str path ": " (.-length src) " bytes, byte-identical=" ok))
+    (when (not ok) (.exit process 1))))
+
+(when (.-main (js/import-meta))
+  (main!))

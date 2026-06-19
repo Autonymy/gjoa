@@ -22,6 +22,8 @@
     "preflight": "bun run tools:compile && bun .beagle-tools/gjoa/tools/scripts/preflight.js",
     "cost": "bun run tools:compile && bun .beagle-tools/gjoa/tools/prep/patch-cost.js",
     "forecast": "bun run tools:compile && bun .beagle-tools/gjoa/tools/prep/conflict-forecast.js",
+    "projector:roundtrip": "bun run tools:compile && bun .beagle-tools/gjoa/tools/projector/reflector.js",
+    "projector:pilot": "bun run tools:compile && bun .beagle-tools/gjoa/tools/projector/run-pilot.js",
     "check": "BEAGLE_PURITY=error ../beagle/bin/beagle check --profile 3 src/gjoa/chrome/bjs tools tests",
     "test": "bun run check && bun run tools:compile && bun test .beagle-tools/gjoa/tests/branding.test.js",
     "test:chrome:ensure": "bun run tools:compile && bun .beagle-tools/gjoa/tools/chrome-bundle/ensure-installed.js",
@@ -51,6 +53,7 @@
     "bench:env:restore": "sudo bash tools/bench/env.sh --restore"
   },
   "devDependencies": {
+    "acorn": "^8.17.0",
     "happy-dom": "^20.9.0",
     "pngjs": "^7.0.0"
   }

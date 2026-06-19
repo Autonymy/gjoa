@@ -1,0 +1,41 @@
+#lang beagle/js
+;; tools/projector/run-pilot.bjs — one-command reproducible Phase 5 pilot.
+;; Materializes pristine upstream (the pinned Firefox tag from gjoa.json) + the
+;; patch-0011-applied ground truth, then runs the claim-doc pilot gates.
+;;   bun run projector:pilot
+(ns gjoa.tools.projector.run-pilot
+  (:require [child_process :refer [execSync]]
+            [fs :refer [readFileSync]]
+            [path :refer [join dirname]]))
+(define-mode strict)
+(declare-extern [process console JSON Error] Any)
+
+(def REPO :- String (.cwd process))
+(def REL :- String "browser/components/newtab/AboutNewTabRedirector.sys.mjs")
+(def FF-SRC :- String (join (.-HOME (.-env process)) "code" "reference" "firefox"))
+(def TMP :- String "/tmp/gjoa-pilot")
+
+(defn sh [cmd :- String] :- String
+  (.toString (execSync cmd {:encoding "utf8" :maxBuffer (* 64 1024 1024)})))
+
+(defn ff-version [] :- String
+  (.-version (.-firefox (.parse JSON (readFileSync (join REPO "gjoa.json") "utf8")))))
+
+(defn main! [] :- Any
+  (let [v (ff-version)
+        tag (str "FIREFOX_" (.replaceAll v "." "_") "_RELEASE")
+        dir (join TMP (dirname REL))]
+    ;; pristine = the pinned upstream file at its release tag; patched = pristine + 0011.
+    (sh (str "rm -rf " TMP " && mkdir -p " dir))
+    (sh (str "git -C " FF-SRC " show " tag ":" REL " > " (join TMP "pristine.mjs")))
+    (sh (str "cp " (join TMP "pristine.mjs") " " (join TMP REL)))
+    (sh (str "cd " TMP " && patch -p1 < " (join REPO "patches" "0011-newtab-redirector-gjoa.patch")))
+    (sh (str "cp " (join TMP REL) " " (join TMP "patched.mjs")))
+    (console/error (str "pilot inputs ready (pristine @ " tag ", patched via patches/0011)"))
+    ;; delegate to the pilot (it owns the gates + exit code).
+    (execSync (str "bun " (join REPO ".beagle-tools" "gjoa" "tools" "projector" "pilot-0011.js")
+                   " " (join TMP "pristine.mjs") " " (join TMP "patched.mjs") " " (join TMP "0011.claims.json"))
+              {:stdio "inherit"})))
+
+(when (.-main (js/import-meta))
+  (main!))

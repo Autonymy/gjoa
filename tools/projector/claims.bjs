@@ -1,0 +1,34 @@
+#lang beagle/js
+;; tools/projector/claims.bjs — Phase 5, the edit-as-claims document layer.
+;; A "claim-doc" is the persistable replacement for a textual patch: a list of
+;; identity-anchored `set-body` verbs — {:verb "set-body" :class C :method M :body T}
+;; — anchored to (class, method) IDENTITY, not line numbers. It serializes to JSON.
+;; This is the stable verb layer (independent of Fram's fN/CRDT ordering internals,
+;; which are mid-rewrite): the live-Fram-store projection of the AST itself is a
+;; later integration step. Replaying a doc reproduces the edit; because it anchors
+;; by name, it survives upstream reflow that `.rej`s the textual patch.
+(ns gjoa.tools.projector.claims
+  (:require [gjoa.tools.projector.set-body :refer [set-method-body get-body]]))
+(define-mode strict)
+
+;; build a claim-doc from a known-good edited source + (class,method) anchors:
+;; extract each method's body from the edited source as the set-body payload.
+(js/export (defn build-doc [edited :- String anchors :- Any] :- Any
+  (let [out []]
+    (doseq [a anchors]
+      (let [body (get-body edited (.-class a) (.-method a))]
+        (when (some? body)
+          (.push out {:verb "set-body" :class (.-class a) :method (.-method a) :body body}))))
+    out)))
+
+;; replay a claim-doc onto a source -> {:ok :src} or {:ok false :reason}.
+(js/export (defn replay [doc :- Any src :- String] :- Any
+  (loop [i 0 cur src]
+    (if (< i (.-length doc))
+      (let [c (aget doc i)
+            r (set-method-body cur (.-class c) (.-method c) (.-body c))]
+        (if (.-ok r) (recur (+ i 1) (.-src r)) r))
+      {:ok true :src cur}))))
+
+(js/export (defn doc->json [doc :- Any] :- String (JSON/stringify doc nil 2)))
+(js/export (defn json->doc [s :- String] :- Any (JSON/parse s)))

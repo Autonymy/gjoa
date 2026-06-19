@@ -1,0 +1,81 @@
+#lang beagle/js
+;; tools/projector/set-body.bjs — Phase 5, the name-anchored `set-body` edit verb.
+;; Locate a method/property by NAME (not line number) and replace its body block,
+;; then render the edited source via the lossless CST. Because the anchor is the
+;; method's identity, the edit survives upstream reflow / inserted statements /
+;; param renames that would `.rej` a textual patch. (A rename of the method ITSELF
+;; needs the deferred anchor-matcher; the 0011 pilot keeps newChannel's name.)
+(ns gjoa.tools.projector.set-body
+  (:require [acorn :refer [parse]]
+            [gjoa.tools.projector.reflector :refer [child-nodes to-cst render]]))
+(define-mode strict)
+
+(defn parse-js [src :- String] :- Any
+  (parse src {:ecmaVersion "latest" :sourceType "module" :allowHashBang true}))
+
+;; DFS for the named class (ClassDeclaration/ClassExpression with id.name = cname).
+(defn find-class [n :- Any cname :- String] :- Any
+  (if (and (some? n)
+           (or (= (.-type n) "ClassDeclaration") (= (.-type n) "ClassExpression"))
+           (some? (.-id n)) (= (.-name (.-id n)) cname))
+    n
+    (let [kids (child-nodes n)]
+      (loop [i 0]
+        (if (< i (.-length kids))
+          (let [r (find-class (aget kids i) cname)]
+            (if (some? r) r (recur (+ i 1))))
+          nil)))))
+
+;; DFS within a node for a MethodDefinition/Property whose key name = `name`;
+;; return the body block's [start end] span, or nil.
+(defn find-method [n :- Any name :- String] :- Any
+  (if (and (some? n)
+           (or (= (.-type n) "MethodDefinition") (= (.-type n) "Property"))
+           (some? (.-key n)) (= (.-name (.-key n)) name)
+           (some? (.-value n)) (some? (.-body (.-value n))))
+    [(.-start (.-body (.-value n))) (.-end (.-body (.-value n)))]
+    (let [kids (child-nodes n)]
+      (loop [i 0]
+        (if (< i (.-length kids))
+          (let [r (find-method (aget kids i) name)]
+            (if (some? r) r (recur (+ i 1))))
+          nil)))))
+
+;; CLASS-QUALIFIED anchor: locate `class-name`, then `method-name`'s body span
+;; within it. Disambiguates same-named methods across classes (name + structural
+;; position). Returns [start end] or nil.
+(js/export (defn find-body-span [ast :- Any class-name :- String method-name :- String] :- Any
+  (let [c (find-class ast class-name)]
+    (if (nil? c) nil (find-method c method-name)))))
+
+;; replace the CST node covering exactly [s e] with a raw leaf carrying `text`.
+(js/export (defn replace-span [cst :- Any span :- Any text :- String] :- Any
+  (if (and (= (.-start cst) (aget span 0)) (= (.-end cst) (aget span 1)))
+    {:kind "Raw" :start (aget span 0) :end (aget span 1) :segs [text] :kids []}
+    {:kind (.-kind cst) :start (.-start cst) :end (.-end cst)
+     :segs (.-segs cst)
+     :kids (.map (.-kids cst) (fn [k :- Any] :- Any (replace-span k span text)))})))
+
+;; the set-body verb: src + class + method + new body text (including the braces)
+;; -> {:ok :src :span} or {:ok false :reason}.
+(js/export (defn set-method-body [src :- String class-name :- String method-name :- String new-body :- String] :- Any
+  (let [ast (parse-js src)
+        span (find-body-span ast class-name method-name)]
+    (if (nil? span)
+      {:ok false :reason (str "not found: " class-name "." method-name)}
+      (let [root {:type "File" :start 0 :end (.-length src) :body [ast]}
+            cst (to-cst root src)
+            edited (replace-span cst span new-body)]
+        {:ok true :src (render edited) :span span})))))
+
+;; extract the literal body text of class.method from src (for building a claim
+;; from a known-good edited source).
+(js/export (defn get-body [src :- String class-name :- String method-name :- String] :- Any
+  (let [ast (parse-js src)
+        span (find-body-span ast class-name method-name)]
+    (if (nil? span) nil (.slice src (aget span 0) (aget span 1))))))
+
+;; valid JS? (parse-or-false)
+(js/export (defn parses? [src :- String] :- Bool
+  (try (do (parse-js src) true)
+    (catch Error _e false))))

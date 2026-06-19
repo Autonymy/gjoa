@@ -7,7 +7,8 @@
             [gjoa.tools.prep.mozconfig :refer [mozconfig!]]
             [gjoa.tools.prep.overlay :refer [overlay]]
             [gjoa.tools.prep.patches :refer [patches]]
-            [gjoa.tools.prep.log :refer [log]]))
+            [gjoa.tools.prep.log :refer [log]]
+            [fs :refer [writeFileSync]]))
 (define-mode strict)
 
 ;; Seven sequential phases. Each is idempotent, so re-running `bun run import`
@@ -33,5 +34,11 @@
 
   (.step log "phase 7/7 — generating build fingerprint")
   (js/await (fingerprint!))
+
+  ;; Stamp import completion (written LAST so its mtime is the true completion
+  ;; time). preflight Gate K refuses to build if any source tree (src/gjoa/,
+  ;; patches/, tools/prep/) is newer than this stamp — i.e. you edited source
+  ;; but forgot to re-import, so engine/ (the actual compile input) is stale.
+  (writeFileSync "engine/.gjoa-import-stamp" "gjoa engine import stamp\n")
 
   (.ok log "import complete")))

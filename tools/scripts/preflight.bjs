@@ -310,6 +310,33 @@
             (.trim (or (.-out r) "digest mismatch"))
             "if you refreshed the bundle from a pinned uBO commit, update the SHA-256 in verify-scriptlet-resources.sh AND scriptlet-resources.PROVENANCE.md"))))))
 
+;; ── Gate K: engine/ reflects current source (import-currency) ───────────────
+;; The compile input is engine/ (gitignored), which only mirrors src/gjoa/ +
+;; patches/ + the import tooling AFTER `bun run import`. Every stale-engine
+;; catastrophe — e.g. the 2026-06-14 build that compiled a 3-week-old tree, ran
+;; green, and silently dropped every recent change — is this gate's failure
+;; mode. `import` stamps engine/.gjoa-import-stamp at completion; if any source
+;; tree is newer than that stamp, engine/ is stale and must be re-imported.
+(def IMPORT-STAMP :- String (join ENGINE-DIR ".gjoa-import-stamp"))
+(defn gateK [] :- Any
+  (if (not (existsSync IMPORT-STAMP))
+    (fail "K" "engine/ reflects current source (import-currency)"
+      "no engine/.gjoa-import-stamp — engine/ is unimported (or predates this gate)"
+      "run `bun run import` to (re)build engine/ from src/gjoa/ + patches/")
+    (let [stamp-r (sh (str "stat -c %Y '" IMPORT-STAMP "'") {})
+          newest-r (sh "find src/gjoa patches tools/prep -type f -printf '%T@\\n' 2>/dev/null | sort -rn | head -1" {})
+          stamp-out (.trim (or (.-out stamp-r) ""))
+          newest-out (.trim (or (.-out newest-r) ""))]
+      (if (or (not (.-ok stamp-r)) (not (.-ok newest-r)) (= stamp-out "") (= newest-out ""))
+        (warn "K" "engine/ reflects current source (import-currency)"
+          "could not determine source/stamp mtimes — skipping (non-fatal)")
+        (if (> (parseInt newest-out 10) (parseInt stamp-out 10))
+          (fail "K" "engine/ reflects current source (import-currency)"
+            "src/gjoa/, patches/, or tools/prep/ changed since the last `bun run import`"
+            "run `bun run import` — the build compiles engine/, not src/, so un-imported edits silently vanish from the binary")
+          (pass "K" "engine/ reflects current source (import-currency)"
+            "no src/patches/tooling edits since the last import"))))))
+
 ;; ── Run + render ──────────────────────────────────────────────────────────
 (defn main! [] :- Any
   (.log console (bold "gjoa preflight"))
@@ -318,7 +345,7 @@
 
   (let [gates [["A" gateA] ["B" gateB] ["C" gateC] ["D" gateD]
                ["E" gateE] ["F" gateF] ["G" gateG] ["H" gateH]
-               ["I" gateI] ["J" gateJ]]]
+               ["I" gateI] ["J" gateJ] ["K" gateK]]]
     (doseq [gate gates]
       (let [fn (aget gate 1)]
         (try (fn)

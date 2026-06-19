@@ -1,0 +1,84 @@
+#lang beagle/js
+;; Phase 3 (fork-currency roadmap) — conflict forecast. BEFORE committing to a
+;; Firefox bump, intersect the upstream delta (files Mozilla changed between two
+;; releases) with the files gjoa's patches touch — so you know which patches are
+;; in the blast radius, ranked by seam tier, with NO download and NO build.
+;; Validated against the real 152.0 -> 152.0.1 bump (fully disjoint -> clean).
+;;   bun run forecast            # gjoa.json version -> latest stable
+;;   bun run forecast 152.0 152.0.1
+;; (Precise blast-radius RANKING via the fram call graph is the deferred turtle;
+;;  v1 ranks by seam tier, which needs no graph.)
+(ns gjoa.tools.prep.conflict-forecast
+  (:require [fs :refer [readdirSync readFileSync]]
+            [path :refer [join]]
+            [child_process :refer [execSync]]))
+(define-mode strict)
+(declare-extern [process console JSON Error] Any)
+
+(def REPO :- String (.cwd process))
+(def PATCHES-DIR :- String (join REPO "patches"))
+(def FF :- String (join (.-HOME (.-env process)) "code" "reference" "firefox"))
+
+(defn sh [cmd :- String] :- String
+  ;; 256MB buffer: a major-version delta (e.g. 151->152) is ~76k file paths
+  ;; (~6MB) and overflows execSync's 1MB default, which would silently empty.
+  (try (.toString (execSync cmd {:encoding "utf8" :stdio ["ignore" "pipe" "ignore"] :maxBuffer (* 256 1024 1024)}))
+    (catch Error _e "")))
+
+;; version "152.0.1" -> mozilla release tag "FIREFOX_152_0_1_RELEASE"
+(defn version->tag [v :- String] :- String
+  (str "FIREFOX_" (.replaceAll v "." "_") "_RELEASE"))
+
+(defn gjoa-version [] :- String
+  (.-version (.-firefox (.parse JSON (readFileSync (join REPO "gjoa.json") "utf8")))))
+
+(defn latest-stable [] :- String
+  (let [out (sh "curl -s 'https://product-details.mozilla.org/1.0/firefox_versions.json' 2>/dev/null")]
+    (if (= out "") "" (.-LATEST_FIREFOX_VERSION (.parse JSON out)))))
+
+;; mozilla files a patch touches (exclude the depends-on contract lines)
+(defn touches [text :- String] :- Any
+  (let [out []]
+    (doseq [m (.matchAll text (RegExp. "^#     - (\\S+/\\S+)\\s*$" "gm"))]
+      (let [p (aget m 1)]
+        (when (not (.test (RegExp. "^(rust-|cpp-|js-|webidl-)") p))
+          (.push out p))))
+    out))
+
+(defn rung-name [files :- Any] :- String
+  (cond
+    (.some files (fn [f :- String] :- Bool (.test (RegExp. "\\.(rs|cpp|cc|h|webidl)$") f))) "native-src"
+    (.some files (fn [f :- String] :- Bool (.test (RegExp. "\\.(mjs|js)$") f))) "sys.mjs"
+    :else "build"))
+
+(defn main! [] :- Any
+  (let [argv (.slice (.-argv process) 2)
+        from (or (aget argv 0) (gjoa-version))
+        to (or (aget argv 1) (latest-stable))]
+    (cond
+      (or (= from "") (= to "")) (.log console "forecast: could not determine from/to versions")
+      (= from to) (.log console (str "forecast: already at " to " — nothing to forecast"))
+      :else
+      (let [delta (.filter (.split (sh (str "git -C " FF " diff --name-only " (version->tag from) " " (version->tag to) " 2>/dev/null")) "\n")
+                           (fn [s :- String] :- Bool (> (.-length s) 0)))]
+        (if (= (.-length delta) 0)
+          (.log console (str "forecast " from " -> " to ": empty delta — are the release tags present in " FF "?"))
+          (do
+            (.log console (str "conflict forecast: Firefox " from " -> " to "  (" (.-length delta) " files changed upstream)\n"))
+            (let [names (.sort (.filter (readdirSync PATCHES-DIR) (fn [p :- String] :- Bool (.endsWith p ".patch"))))
+                  affected []]
+              (doseq [n names]
+                (let [files (touches (readFileSync (join PATCHES-DIR n) "utf8"))
+                      hits (.filter files (fn [f :- String] :- Bool (.includes delta f)))]
+                  (when (> (.-length hits) 0)
+                    (.push affected {:name n :rung (rung-name files) :hits hits}))))
+              (if (= (.-length affected) 0)
+                (.log console "  CLEAN — no gjoa patch touches a changed file. All patches apply unchanged.")
+                (do
+                  (.log console (str "  " (.-length affected) " patch(es) in the blast radius (review highest-tier first):"))
+                  (doseq [a affected]
+                    (.log console (str "    [" (.-rung a) "] " (.-name a)))
+                    (doseq [h (.-hits a)] (.log console (str "        ~ " h)))))))))))))
+
+(when (.-main (js/import-meta))
+  (main!))

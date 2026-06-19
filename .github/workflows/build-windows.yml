@@ -194,26 +194,6 @@ jobs:
           [ -f "$HOME/.cargo/env" ] && . "$HOME/.cargo/env" || true
           rustup target add x86_64-pc-windows-msvc
 
-      # Ground-truth probe: the build runs fxc2 with WINEDEBUG=-all (clean log),
-      # which hides WHY fxc2 exits non-zero. Run it here verbosely so a failure is
-      # diagnosable from the same run. Never fails the job (set +e / true).
-      - name: Diagnose fxc2 under wine
-        working-directory: engine
-        run: |
-          set +e
-          export WINEPREFIX="$HOME/.wine"
-          export WINEDLLOVERRIDES="d3dcompiler_47=n"
-          W="$HOME/win-cross/wine/bin/wine"; F="$HOME/win-cross/fxc2/bin/fxc2.exe"
-          # EXACT genshaders.py invocation (run_fxc): -Vn<name> -Vi -DVERTEX_SHADER -Fh
-          ARGS="-nologo -Tvs_4_0_level_9_3 gfx/layers/d3d11/CompositorD3D11.hlsl -ELayerQuadVS -VnLayerQuadVS -Vi -DVERTEX_SHADER -Fh/tmp/o.h"
-          echo "=== which d3dcompiler_47 does wine load? (native=fxc2 bundled / builtin=vkd3d) ==="
-          WINEDEBUG=+loaddll "$W" "$F" $ARGS 2>&1 | grep -iE "d3dcompiler" | head
-          echo "=== real compile: fxc2 output + exit ==="
-          WINEDEBUG=fixme-all "$W" "$F" $ARGS >/tmp/fxc.out 2>&1; echo "fxc2 exit: $?"
-          head -40 /tmp/fxc.out
-          echo "=== header produced? ==="; ls -l /tmp/o.h 2>&1 | head -2; head -2 /tmp/o.h 2>/dev/null
-          true
-
       - name: Build
         working-directory: engine
         run: |

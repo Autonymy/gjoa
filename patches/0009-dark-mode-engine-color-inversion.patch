@@ -1,5 +1,5 @@
 # gjoa-patch:
-#   baseline-firefox: 152.0
+#   baseline-firefox: 152.0.1
 #   touches:
 #     - servo/components/style/values/specified/color.rs
 #     - servo/components/style/device/gecko.rs

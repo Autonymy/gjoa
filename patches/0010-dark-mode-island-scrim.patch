@@ -1,5 +1,5 @@
 # gjoa-patch:
-#   baseline-firefox: 152.0
+#   baseline-firefox: 152.0.1
 #   touches:
 #     - servo/components/style/properties/computed_value_flags.rs
 #     - servo/components/style/style_adjuster.rs

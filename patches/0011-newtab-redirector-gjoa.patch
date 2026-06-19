@@ -1,5 +1,5 @@
 # gjoa-patch:
-#   baseline-firefox: 152.0
+#   baseline-firefox: 152.0.1
 #   touches:
 #     - browser/components/newtab/AboutNewTabRedirector.sys.mjs
 #

@@ -1,5 +1,5 @@
 # gjoa-patch:
-#   baseline-firefox: 151.0.1
+#   baseline-firefox: 152.0.1
 #   touches:
 #     - browser/components/moz.build
 #

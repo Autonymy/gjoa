@@ -1,0 +1,66 @@
+#lang beagle/js
+;; Phase 4 (fork-currency roadmap) — seam-cost scorer. Turns the lane doctrine
+;; into a NUMBER: each patch's expected rebases-broken-per-year ~= its seam-tier
+;; cadence (rung) x the upstream churn under the files it touches (measured from
+;; mozilla-central git history). Ranks patches by fragility so demotion effort
+;; targets the costliest carriers first. Run: `bun run cost`.
+(ns gjoa.tools.prep.patch-cost
+  (:require [fs :refer [readdirSync readFileSync]]
+            [path :refer [join]]
+            [child_process :refer [execSync]]))
+(define-mode strict)
+(declare-extern [process console parseInt Error] Any)
+
+(def REPO :- String (.cwd process))
+(def PATCHES-DIR :- String (join REPO "patches"))
+;; mozilla-central full clone (the churn oracle). /reference per code/CLAUDE.md.
+(def FF :- String (join (.-HOME (.-env process)) "code" "reference" "firefox"))
+
+(defn sh [cmd :- String] :- String
+  (try (.toString (execSync cmd {:encoding "utf8" :stdio ["ignore" "pipe" "ignore"]}))
+    (catch Error _e "")))
+
+;; churn = commits touching <file> in mozilla-central over the last year.
+(defn churn [file :- String] :- Number
+  (parseInt (.trim (sh (str "git -C " FF " log --oneline --since='1 year ago' -- '" file "' 2>/dev/null | wc -l"))) 10))
+
+(defn touches [text :- String] :- Any
+  (let [out []]
+    (doseq [m (.matchAll text (RegExp. "^#     - (\\S+)\\s*$" "gm"))]
+      (.push out (aget m 1)))
+    out))
+
+;; rung_base — seam-tier cadence multiplier, inferred from the highest-cadence
+;; file kind the patch touches. Native C++/Rust/WebIDL source conflicts per
+;; release (3.0); a .sys.mjs in-place patch per major version (0.5); build-wiring
+;; (moz.build / jar.mn) ~never (0.05).
+(defn rung-base [files :- Any] :- Number
+  (cond
+    (.some files (fn [f :- String] :- Bool (.test (RegExp. "\\.(rs|cpp|cc|h|webidl)$") f))) 3.0
+    (.some files (fn [f :- String] :- Bool (.test (RegExp. "\\.(mjs|js)$") f))) 0.5
+    :else 0.05))
+
+(defn rung-name [rb :- Number] :- String
+  (cond (= rb 3.0) "native-src" (= rb 0.5) "sys.mjs" :else "build"))
+
+(defn score-patch [name :- String] :- Any
+  (let [text (readFileSync (join PATCHES-DIR name) "utf8")
+        files (touches text)
+        rb (rung-base files)
+        total-churn (.reduce files (fn [acc :- Number f :- String] :- Number (+ acc (churn f))) 0)]
+    {:name name :rung rb :churn total-churn :score (* rb total-churn) :nfiles (.-length files)}))
+
+(defn main! [] :- Any
+  (let [names (.sort (.filter (readdirSync PATCHES-DIR) (fn [p :- String] :- Bool (.endsWith p ".patch"))))
+        rows (.sort (.map names score-patch) (fn [a :- Any b :- Any] :- Number (- (.-score b) (.-score a))))]
+    (.log console "patch seam-cost  =  rung x upstream-churn  (~expected rebases/yr; higher = demote first)\n")
+    (doseq [r rows]
+      (.log console (str "  " (.padStart (.toFixed (.-score r) 1) 7)
+                         "   " (.padEnd (rung-name (.-rung r)) 11)
+                         " churn=" (.padEnd (str (.-churn r)) 4)
+                         " files=" (.padEnd (str (.-nfiles r)) 3)
+                         " " (.-name r))))
+    (.log console "")))
+
+(when (.-main (js/import-meta))
+  (main!))

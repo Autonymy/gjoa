@@ -16,7 +16,6 @@
 ;; (the async pass), but the AA *gate* must be true WCAG.
 (ns gjoa.tools.test-driver.contrast-score)
 (define-mode strict)
-(declare-extern [Math Number] Any)
 
 ;; --- color parsing ----------------------------------------------------------
 
@@ -25,7 +24,7 @@
 (js/export (defn parse-rgb [s :- String] :- Any
   (let [stripped (.replace (.replace (.replace s "rgba(" "") "rgb(" "") ")" "")
         parts (.split stripped ",")
-        nth-num (fn [i :- Any] :- Any (.parseFloat Number (.trim (aget parts i))))]
+        nth-num (fn [i :- Any] :- Any (Number/parseFloat (.trim (aget parts i))))]
     {:r (nth-num 0)
      :g (nth-num 1)
      :b (nth-num 2)
@@ -42,7 +41,7 @@
   (let [cs (/ c 255)]
     (if (<= cs 0.03928)
       (/ cs 12.92)
-      (.pow Math (/ (+ cs 0.055) 1.055) 2.4))))
+      (Math/pow (/ (+ cs 0.055) 1.055) 2.4))))
 
 ;; WCAG relative luminance of an rgb map.
 (js/export (defn rel-lum [rgb :- Any] :- Any
@@ -68,8 +67,8 @@
         fgc (composite-over (as-rgb fg) bgc)
         l1 (rel-lum fgc)
         l2 (rel-lum bgc)
-        hi (.max Math l1 l2)
-        lo (.min Math l1 l2)]
+        hi (Math/max l1 l2)
+        lo (Math/min l1 l2)]
     (/ (+ hi 0.05) (+ lo 0.05)))))
 
 ;; --- AA threshold -----------------------------------------------------------

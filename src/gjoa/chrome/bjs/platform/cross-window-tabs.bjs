@@ -2,8 +2,6 @@
 (ns gjoa.platform.cross-window-tabs)
 (define-mode strict)
 
-(declare-extern [Services console] Any)
-
 (js/export (defn make-cross-window-tabs [] :- Any
   {:all (fn []
     (let [out []]
@@ -31,7 +29,7 @@
               (recur e))
             out))
         (catch Any err
-          (.error console "[Gjoa.tabs.all] enumerate failed" err)))
+          (console/error "[Gjoa.tabs.all] enumerate failed" err)))
       out))
 
    :activate (fn [gjoa-id window-id]
@@ -48,5 +46,5 @@
               (recur e)))
           false))
       (catch Any err
-        (.error console "[Gjoa.tabs.activate] failed" err)
+        (console/error "[Gjoa.tabs.activate] failed" err)
         false)))}))

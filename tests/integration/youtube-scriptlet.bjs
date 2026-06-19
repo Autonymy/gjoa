@@ -9,7 +9,6 @@
 (ns gjoa.tests.integration.youtube-scriptlet
   (:require [gjoa.tests.dsl :refer [deftest expect]]))
 (define-mode strict)
-(declare-extern [JSON Promise Error console] Any)
 
 (def YT-URL :- String "https://www.youtube.com/watch?v=jNQXAC9IVRw")
 
@@ -47,9 +46,9 @@
        (let [info (js/await (.executeScript mn PROBE))]
          (cond
            (not navOk)
-           (.log console "[youtube] SKIP — page did not load (network)")
+           (console/log "[youtube] SKIP — page did not load (network)")
            (not (.-hasYtipr info))
-           (.log console (str "[youtube] SKIP — no player response (" (.-title info) ")"))
+           (console/log (str "[youtube] SKIP — no player response (" (.-title info) ")"))
            :else
            (do
              (expect (.-jsonPatched info)

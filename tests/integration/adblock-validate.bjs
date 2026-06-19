@@ -11,7 +11,6 @@
 (ns gjoa.tests.integration.adblock-validate
   (:require [gjoa.tests.dsl :refer [deftest expect expect-eq]]))
 (define-mode strict)
-(declare-extern [JSON console Promise] Any)
 
 (def LIST-FILE :- String "file:///tmp/gjoa-adblock-lists.txt")
 (def TOP :- String "https://example.com/")
@@ -71,20 +70,20 @@
          (expect navOk (str "top page " TOP " did not load (network?)"))
          (js/await (.setContext client "content"))
          (let [probe (fn [url] (.executeAsyncScript client PROBE-JS [url]))
-               mustBlockR (js/await (.all Promise (.map MUST-BLOCK probe)))
-               mustSkipR (js/await (.all Promise (.map MUST-SKIP probe)))
-               allowedR (js/await (.all Promise (.map ALLOWED probe)))
+               mustBlockR (js/await (Promise/all (.map MUST-BLOCK probe)))
+               mustSkipR (js/await (Promise/all (.map MUST-SKIP probe)))
+               allowedR (js/await (Promise/all (.map ALLOWED probe)))
                nBlocked (.-length (.filter mustBlockR #(= % "blocked")))
                nSkipBlocked (.-length (.filter mustSkipR #(= % "blocked")))
                nOverblock (.-length (.filter allowedR #(= % "blocked")))]
-           (.log console (str "\n[M0-VALIDATE] must-block (matching rules) -> " (.stringify JSON mustBlockR) " (" nBlocked "/" (.-length MUST-BLOCK) ")"))
-           (.log console (str "[M0-VALIDATE] option-scoped must-skip ($popup/$domain) -> " (.stringify JSON mustSkipR)))
-           (.log console (str "[M0-VALIDATE] controls -> " (.stringify JSON allowedR)))
+           (console/log (str "\n[M0-VALIDATE] must-block (matching rules) -> " (JSON/stringify mustBlockR) " (" nBlocked "/" (.-length MUST-BLOCK) ")"))
+           (console/log (str "[M0-VALIDATE] option-scoped must-skip ($popup/$domain) -> " (JSON/stringify mustSkipR)))
+           (console/log (str "[M0-VALIDATE] controls -> " (JSON/stringify allowedR)))
            (expect-eq nBlocked (.-length MUST-BLOCK)
-                      (str "engine failed to block a MATCHING real ad rule: " (.stringify JSON mustBlockR)))
+                      (str "engine failed to block a MATCHING real ad rule: " (JSON/stringify mustBlockR)))
            (expect-eq nSkipBlocked 0
-                      (str "engine over-applied an option-scoped rule (must honor $popup/$domain): " (.stringify JSON mustSkipR)))
+                      (str "engine over-applied an option-scoped rule (must honor $popup/$domain): " (JSON/stringify mustSkipR)))
            (expect-eq nOverblock 0
-                      (str "control host over-blocked: " (.stringify JSON allowedR)))))))]))
+                      (str "control host over-blocked: " (JSON/stringify allowedR)))))))]))
 
 (js/export-default tests)

@@ -8,7 +8,7 @@
             [path :refer [join]]
             [gjoa.tools.bench.stats :refer [confidence-interval95 median format-result]]))
 (define-mode strict)
-(declare-extern [Bun process console performance Date Number setTimeout clearTimeout parseInt] Any)
+(declare-extern [Bun process performance] Any)
 
 (def parsed :- Any
   (parseArgs {:args (.slice (.-argv Bun) 2)
@@ -21,8 +21,8 @@
 (def values :- Any (.-values parsed))
 
 (def NUM-RUNS :- Any (parseInt (get values "runs") 10))
-(when (or (not (.isFinite Number NUM-RUNS)) (< NUM-RUNS 2))
-  (.error console "ERROR: --runs must be >= 2 (first run is dropped as warm-up).")
+(when (or (not (Number/isFinite NUM-RUNS)) (< NUM-RUNS 2))
+  (console/error "ERROR: --runs must be >= 2 (first run is dropped as warm-up).")
   (.exit process 1))
 
 (defn localGjoa [name :- String] :- Any
@@ -45,7 +45,7 @@
         (if (and (= (.-exitCode result) 0) path)
           path
           (do
-            (.error console (str "ERROR: cannot find " name " binary. Use --" name "-bin=<path>"))
+            (console/error (str "ERROR: cannot find " name " binary. Use --" name "-bin=<path>"))
             (.exit process 1)))))))
 
 (def GJOA-BIN :- Any (or (get values "gjoa-bin") (findBinary "gjoa")))
@@ -56,11 +56,11 @@
   (when (not SKIP-CACHE-DROP)
     (let [result (.spawnSync Bun ["sudo" "sh" "-c" "sync; echo 3 > /proc/sys/vm/drop_caches"])]
       (when (not= (.-exitCode result) 0)
-        (.error console "WARN: failed to drop caches (not root?). Use --skip-cache-drop or run with sudo.")))))
+        (console/error "WARN: failed to drop caches (not root?). Use --skip-cache-drop or run with sudo.")))))
 
 (defn measureColdStart! [binary :- String windowPattern :- String] :- Any
   ;; Create a temporary profile directory
-  (let [profileDir (str (join (.cwd process) "tools" "bench") "/.bench-profile-" (.now Date))]
+  (let [profileDir (str (join (.cwd process) "tools" "bench") "/.bench-profile-" (Date/now))]
     (.spawnSync Bun ["mkdir" "-p" profileDir])
     (try
       (js/await (dropCaches))
@@ -110,8 +110,8 @@
 
 (defn runBenchmark! [binary :- String label :- String windowPattern :- String] :- Any
   (let [times (atom [])]
-    (.log console (str "\n  Running " label " (" NUM-RUNS " runs)..."))
-    (.log console (str "  Binary: " binary))
+    (console/log (str "\n  Running " label " (" NUM-RUNS " runs)..."))
+    (console/log (str "  Binary: " binary))
 
     (doseq [i (range NUM-RUNS)]
       (let [t (js/await (measureColdStart! binary windowPattern))]
@@ -124,9 +124,9 @@
     (let [results (.slice @times 1)
           ci (confidence-interval95 results)
           med (median results)]
-      (.log console (str "\n  " label " results (excluding warm-up run):"))
-      (.log console (str "    Median: " (.toFixed med 1) " ms"))
-      (.log console (str "    Mean:   " (.toFixed (.-mean ci) 1) " ms  ["
+      (console/log (str "\n  " label " results (excluding warm-up run):"))
+      (console/log (str "    Median: " (.toFixed med 1) " ms"))
+      (console/log (str "    Mean:   " (.toFixed (.-mean ci) 1) " ms  ["
                          (.toFixed (.-low ci) 1) " .. " (.toFixed (.-high ci) 1) "] (95% CI)"))
       results)))
 
@@ -134,17 +134,17 @@
 
 ;; Preflight: xdotool is required to detect window visibility.
 (when (= (.which Bun "xdotool") nil)
-  (.error console "ERROR: xdotool not found on PATH. Install it (e.g. `apt install xdotool`).")
+  (console/error "ERROR: xdotool not found on PATH. Install it (e.g. `apt install xdotool`).")
   (.exit process 1))
 
-(.log console "=== Cold Start Benchmark ===")
-(.log console (str "  Runs: " NUM-RUNS " (first dropped as warm-up)"))
-(.log console (str "  Gjoa:    " GJOA-BIN))
-(.log console (str "  Firefox: " FIREFOX-BIN))
+(console/log "=== Cold Start Benchmark ===")
+(console/log (str "  Runs: " NUM-RUNS " (first dropped as warm-up)"))
+(console/log (str "  Gjoa:    " GJOA-BIN))
+(console/log (str "  Firefox: " FIREFOX-BIN))
 
 (def gjoaTimes :- Any (js/await (runBenchmark! GJOA-BIN "Gjoa" "Gjoa|gjoa")))
 (def firefoxTimes :- Any (js/await (runBenchmark! FIREFOX-BIN "Firefox" "Mozilla Firefox|Firefox")))
 
-(.log console "\n=== Comparison ===\n")
-(.log console (format-result "Cold Start (time to window visible)" gjoaTimes firefoxTimes))
-(.log console "")
+(console/log "\n=== Comparison ===\n")
+(console/log (format-result "Cold Start (time to window visible)" gjoaTimes firefoxTimes))
+(console/log "")

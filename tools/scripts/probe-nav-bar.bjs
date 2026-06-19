@@ -16,7 +16,7 @@
             [gjoa.tools.test-driver.profile :refer [create-profile]]
             [gjoa.tools.test-driver.gjoa-locator :refer [locate-gjoa]]))
 (define-mode strict)
-(declare-extern [process console setTimeout Buffer Object JSON String] Any)
+(declare-extern [process Buffer] Any)
 
 (def PROBE-SCRIPT :- String "
   const navBar = document.getElementById(\"nav-bar\");
@@ -77,28 +77,28 @@
 
 (defn probe [label :- String] :- Any
   (let [r (js/await (.executeScript mn PROBE-SCRIPT))]
-    (.log console (str "\n========== " label " (mode=" (.-mode r) ") =========="))
-    (.log console "nav-bar:" (.-navBar r))
-    (.log console "customization-target:" (.-customizationTarget r))
-    (.log console "\nnav-bar children (left→right, visible only):")
+    (console/log (str "\n========== " label " (mode=" (.-mode r) ") =========="))
+    (console/log "nav-bar:" (.-navBar r))
+    (console/log "customization-target:" (.-customizationTarget r))
+    (console/log "\nnav-bar children (left→right, visible only):")
     (let [visible (.filter (.-navBarChildren r) (fn [c] (and (not (.-hidden c)) (> (.-width c) 0))))]
       (.sort visible (fn [a b] (- (.-left a) (.-left b))))
       (doseq [c visible]
-        (.log console (str "  [" (.padStart (String (.-left c)) 4) ".." (.padStart (String (.-right c)) 4) "] w="
+        (console/log (str "  [" (.padStart (String (.-left c)) 4) ".." (.padStart (String (.-right c)) 4) "] w="
                            (.padStart (String (.-width c)) 4) " order=" (.padStart (.-order c) 3) "  "
                            (or (.-id c) (.-tag c)) "." (.slice (.-cls c) 0 30)))))
-    (.log console "\ncustomization-target children (visible only):")
+    (console/log "\ncustomization-target children (visible only):")
     (let [ctVisible (.filter (.-ctChildren r) (fn [c] (and (not (.-hidden c)) (> (.-width c) 0))))]
       (.sort ctVisible (fn [a b] (- (.-left a) (.-left b))))
       (doseq [c ctVisible]
-        (.log console (str "  [" (.padStart (String (.-left c)) 4) ".." (.padStart (String (.-right c)) 4) "] w="
+        (console/log (str "  [" (.padStart (String (.-left c)) 4) ".." (.padStart (String (.-right c)) 4) "] w="
                            (.padStart (String (.-width c)) 4) " order=" (.padStart (.-order c) 3) " mIS="
                            (.padStart (.-marginInlineStart c) 6) "  " (or (.-id c) (.-tag c))))))))
 
 (def profile :- Any (js/await (create-profile)))
 (def gjoaBin :- String (.-path (locate-gjoa)))
-(.log console (str "profile: " (.-path profile)))
-(.log console (str "binary:  " gjoaBin))
+(console/log (str "profile: " (.-path profile)))
+(console/log (str "binary:  " gjoaBin))
 
 (def child :- Any
   (spawn gjoaBin
@@ -109,7 +109,7 @@
           "--remote-allow-system-access"
           "-marionette-port" "2828"]
          {:stdio "pipe"
-          :env (.assign Object {} (.-env process) {"GJOA_ALLOW_INSECURE" "1"})}))
+          :env (Object/assign {} (.-env process) {"GJOA_ALLOW_INSECURE" "1"})}))
 (some-> (.-stdout child) .resume)
 (some-> (.-stderr child) .resume)
 
@@ -141,8 +141,8 @@
       },
     };
   "))]
-    (.log console (str "-- " label " computed style --"))
-    (.log console (.stringify JSON r nil 2))))
+    (console/log (str "-- " label " computed style --"))
+    (console/log (JSON/stringify r nil 2))))
 
 (try
   (do
@@ -152,7 +152,7 @@
     (js/await (diagExt "DEFAULT"))
     (let [shot1 (js/await (.takeScreenshot mn))]
       (js/await (writeFile "/tmp/gjoa-navbar-default.png" (.from Buffer shot1 "base64"))))
-    (.log console "\n→ saved /tmp/gjoa-navbar-default.png")
+    (console/log "\n→ saved /tmp/gjoa-navbar-default.png")
 
     ;; Toggle to compact: remove sidebar-launcher-expanded.
     (js/await (.executeScript mn "
@@ -169,7 +169,7 @@
     (js/await (diagExt "COMPACT"))
     (let [shot2 (js/await (.takeScreenshot mn))]
       (js/await (writeFile "/tmp/gjoa-navbar-compact.png" (.from Buffer shot2 "base64"))))
-    (.log console "\n→ saved /tmp/gjoa-navbar-compact.png")
+    (console/log "\n→ saved /tmp/gjoa-navbar-compact.png")
 
     ;; Mimic user's setup: URL bar has a max-width so it doesn't dominate
     ;; the nav-bar. Then ext should be VISIBLY right of URL, just left of
@@ -186,7 +186,7 @@
     (js/await (diagExt "URL_CAP"))
     (let [shot4 (js/await (.takeScreenshot mn))]
       (js/await (writeFile "/tmp/gjoa-navbar-urlcap.png" (.from Buffer shot4 "base64"))))
-    (.log console "\n→ saved /tmp/gjoa-navbar-urlcap.png")
+    (console/log "\n→ saved /tmp/gjoa-navbar-urlcap.png")
 
     ;; Try horizontal-tabs mode — flip the pref + reload window via tabsLayout API.
     (js/await (.executeScript mn "
@@ -197,11 +197,11 @@
     (js/await (probe "HORIZONTAL TABS (verticalTabs=false)"))
     (let [shot3 (js/await (.takeScreenshot mn))]
       (js/await (writeFile "/tmp/gjoa-navbar-horizontal.png" (.from Buffer shot3 "base64"))))
-    (.log console "\n→ saved /tmp/gjoa-navbar-horizontal.png")
+    (console/log "\n→ saved /tmp/gjoa-navbar-horizontal.png")
 
     ;; Also dump ALL toolbar children including hidden ones — useful to see what's
     ;; there but display:none'd.
-    (.log console "\n========== ALL NAV-BAR CHILDREN (incl. hidden) ==========")
+    (console/log "\n========== ALL NAV-BAR CHILDREN (incl. hidden) ==========")
     (let [all (js/await (.executeScript mn "
     const navBar = document.getElementById(\"nav-bar\");
     const ct = document.getElementById(\"nav-bar-customization-target\");
@@ -216,13 +216,13 @@
     }
     return out;
   "))]
-      (.log console "nav-bar:")
+      (console/log "nav-bar:")
       (doseq [c (.-navBarChildren all)]
-        (.log console (str "  " (if (or (.-hidden c) (= (.-display c) "none")) "[hidden]" "[show]  ")
+        (console/log (str "  " (if (or (.-hidden c) (= (.-display c) "none")) "[hidden]" "[show]  ")
                            "  ord=" (.-order c) "  " (.-id c))))
-      (.log console "customization-target:")
+      (console/log "customization-target:")
       (doseq [c (.-ctChildren all)]
-        (.log console (str "  " (if (or (.-hidden c) (= (.-display c) "none")) "[hidden]" "[show]  ")
+        (console/log (str "  " (if (or (.-hidden c) (= (.-display c) "none")) "[hidden]" "[show]  ")
                            "  ord=" (.-order c) "  " (.-id c))))))
   (finally
     (try (js/await (.deleteSession mn)) (catch Any e nil))

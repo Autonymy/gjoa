@@ -2,7 +2,7 @@
 (ns gjoa.firefox.tabs)
 (define-mode strict)
 
-(declare-extern [gBrowser Services] Any)
+(declare-extern [gBrowser] Any)
 
 (js/export (defn all-tabs [] :- Any
   (.-tabs gBrowser)))

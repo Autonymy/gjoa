@@ -35,7 +35,7 @@
             [gjoa.tools.test-driver.gjoa-locator :refer [locate-gjoa]]))
 (define-mode strict)
 
-(declare-extern [process JSON Date setTimeout clearTimeout Set Array RegExp console] Any)
+(declare-extern [process] Any)
 
 ;; SkipError: the original was a `class extends Error` with name "SkipError".
 ;; Beagle has no JS-class form, so this is a factory that builds an Error and
@@ -47,7 +47,7 @@
     e)))
 
 (defn emit [ev :- Any] :- Any
-  (.write (.-stdout process) (str (.stringify JSON ev) "\n")))
+  (.write (.-stdout process) (str (JSON/stringify ev) "\n")))
 
 (defn logErr [line :- String] :- Any
   (.write (.-stderr process) (str "[runner] " line "\n")))
@@ -80,7 +80,7 @@
                 path (join testDir f)
                 testMod (js/await (dynImport path))
                 tests (or (.-default testMod) [])
-                _push (if (not (.isArray Array tests))
+                _push (if (not (Array/isArray tests))
                         (logErr (str "skipping " f " — default export is not an array"))
                         (.push out {:file (basename f) :tests tests}))]
             (recur (+ i 1))))))
@@ -93,7 +93,7 @@
   (let [p (join (.cwd process) "tests" "integration" "tags.json")]
     (if (existsSync p)
       (try
-        (.parse JSON (readFileSync p "utf8"))
+        (JSON/parse (readFileSync p "utf8"))
         (catch Any e
           (logErr (str "tags.json parse failed: " (.-message e)))
           {:subsystems {} :lanes {} :sources {}}))
@@ -134,7 +134,7 @@
     (cond
       ;; explicit keep set wins; subtract excludes from it
       any
-      (do (doseq [n (.from Array excl)] (.delete keep n))
+      (do (doseq [n (Array/from excl)] (.delete keep n))
           {:keep keep})
       ;; exclude-only → keep everything NOT excluded (caller filters the full list)
       (> (.-size excl) 0) {:exclude excl}
@@ -215,7 +215,7 @@
                 pass (atom 0)
                 fail (atom 0)
                 skip (atom 0)
-                start (.now Date)]
+                start (Date/now)]
 
             (let [killGjoa
                   (fn [] :- Any
@@ -252,7 +252,7 @@
                   runOneTest
                   (fn [file :- String t :- Any] :- Any
                     (emit {:type "test:start" :name (.-name t) :file file})
-                    (let [tStart (.now Date)
+                    (let [tStart (Date/now)
                           ctx {:profilePath (.-path (deref profile))
                                :headed (boolean (.-headed opts))
                                :skip (fn [reason] (throw (SkipError! reason)))
@@ -282,18 +282,18 @@
                                (catch Any _ nil))
                           (js/await (.run t (deref mn) ctx))
                           (emit {:type "test:pass" :name (.-name t) :file file
-                                 :durationMs (- (.now Date) tStart)})
+                                 :durationMs (- (Date/now) tStart)})
                           (swap! pass inc))
                         (catch Any e
                           (if (= (.-name e) "SkipError")
                             (do
                               (emit {:type "test:skip" :name (.-name t) :file file
-                                     :durationMs (- (.now Date) tStart)
+                                     :durationMs (- (Date/now) tStart)
                                      :reason (.-message e)})
                               (swap! skip inc))
                             (do
                               (emit {:type "test:fail" :name (.-name t) :file file
-                                     :durationMs (- (.now Date) tStart)
+                                     :durationMs (- (Date/now) tStart)
                                      :error (or (.-message e) (String e))
                                      :stack (.-stack e)})
                               (swap! fail inc)))))))
@@ -338,7 +338,7 @@
                       (try (js/await (.cleanup (deref profile))) (catch Any _ nil))))))))
 
             (emit {:type "summary" :pass (deref pass) :fail (deref fail) :skip (deref skip)
-                   :durationMs (- (.now Date) start) :binary gjoaBin})
+                   :durationMs (- (Date/now) start) :binary gjoaBin})
             {:pass (deref pass) :fail (deref fail) :skip (deref skip)})))))))
 
 ;; CLI entrypoint. The original guarded this with `import.meta.main`; beagle
@@ -394,7 +394,7 @@
                      (not (.has (.-exclude keep) b))
                      (.has (.-keep keep) b))))
                bases)]
-    (.log console (.stringify JSON
+    (console/log (JSON/stringify
                     {:filter (cond (.-files opts) (str "--files " (.-files opts))
                                    (.-subsystem opts) (str "--subsystem " (.-subsystem opts))
                                    (.-lane opts) (str "--lane " (.-lane opts))

@@ -19,7 +19,6 @@
 ;; `IntegrationTest` from ../../tools/test-driver/runner is a type-only
 ;; import in the original — used purely for annotation, no runtime value.
 ;; Beagle has no type-only import; we annotate with Any.
-(declare-extern [Date Math JSON setTimeout] Any)
 
 ;; Walk light + shadow DOM looking for visible icon-like elements.
 ;; Returns the topmost (top=true) or bottommost (top=false) icon found.
@@ -92,16 +91,16 @@
      ;; convergence. Beagle's JS target has no `while`/`break`; the
      ;; equivalent is a loop/recur that returns the latest probe result
      ;; on either convergence or deadline.
-     (let [deadline (+ (.now Date) 3000)
+     (let [deadline (+ (Date/now) 3000)
            r (js/await (loop [acc {}]
-               (if (>= (.now Date) deadline)
+               (if (>= (Date/now) deadline)
                  acc
                  (let [_ (js/await (Promise. (fn [res] (setTimeout res 200))))
                        nr (chrome-eval probe)]
                    (if (and (.-topIcon nr) (.-bottomIcon nr) (.-sidebar nr)
                             (let [tg (- (.-top (.-topIcon nr)) (.-top (.-sidebar nr)))
                                   bg (- (.-bottom (.-sidebar nr)) (.-bottom (.-bottomIcon nr)))]
-                              (<= (.abs Math (- tg bg)) TOLERANCE-PX)))
+                              (<= (Math/abs (- tg bg)) TOLERANCE-PX)))
                      nr
                      (recur nr))))))]
        (do
@@ -112,11 +111,11 @@
            (expect (.-topIcon r)
              (str "No top icon found in #sidebar-main #nav-bar (searched "
                   (.-topCount r) " candidates). "
-                  "Result: " (.stringify JSON r nil 2)))
+                  "Result: " (JSON/stringify r nil 2)))
            (expect (.-bottomIcon r)
              (str "No bottom icon found in #sidebar-main > sidebar-main (searched "
                   (.-bottomCount r) " candidates). "
-                  "Result: " (.stringify JSON r nil 2)))
+                  "Result: " (JSON/stringify r nil 2)))
            (let [topGap (- (.-top (.-topIcon r)) (.-top (.-sidebar r)))
                  bottomGap (- (.-bottom (.-sidebar r)) (.-bottom (.-bottomIcon r)))
                  ;; src/drawer/layout.ts targets `bottomGap = topGap + BOTTOM_OFFSET`
@@ -124,15 +123,15 @@
                  ;; user 2026-05-28 preference: keep top tight to the top edge, give
                  ;; the bottom row a little extra breathing room.
                  BOTTOM-OFFSET 4
-                 delta (.abs Math (- bottomGap (+ topGap BOTTOM-OFFSET)))]
+                 delta (Math/abs (- bottomGap (+ topGap BOTTOM-OFFSET)))]
              (expect (<= delta TOLERANCE-PX)
                (str "Asymmetric icon Y-deltas off target: topGap=" (.toFixed topGap 2) "px "
                     "bottomGap=" (.toFixed bottomGap 2) "px (expected bottom = top+" BOTTOM-OFFSET
                     ", diff=" (.toFixed delta 2) "px, tolerance ±" TOLERANCE-PX ").\n"
                     "--gjoa-symmetric-footer=" (.-cssVar r) "\n"
-                    "topIcon: " (.stringify JSON (.-topIcon r)) "\n"
-                    "bottomIcon: " (.stringify JSON (.-bottomIcon r)) "\n"
-                    "sidebar: " (.stringify JSON (.-sidebar r))))
+                    "topIcon: " (JSON/stringify (.-topIcon r)) "\n"
+                    "bottomIcon: " (JSON/stringify (.-bottomIcon r)) "\n"
+                    "sidebar: " (JSON/stringify (.-sidebar r))))
              ;; Guard against negative / zero-gap regression (icons jammed
              ;; outside the sidebar). The actual target gap is small (~6-12px)
              ;; per 2026-05-28 user spec: tight to the top edge, not "spacious".

@@ -3,7 +3,7 @@
   (:require [gjoa.macros :refer [by-id q xul-new xul-id pref-int set-pref-int! on! off! has?]]))
 (define-mode strict)
 
-(declare-extern [window Math setTimeout parseFloat getComputedStyle Array create-logger!] Any)
+(declare-extern [window create-logger!] Any)
 
 (js/import create-logger! "../tabs/log.js" create_logger)
 
@@ -65,7 +65,7 @@
                                   (getComputedStyle (.-documentElement document))
                                   "--gjoa-sidebar-inset"))
                               10)
-                    w (.max Math 0 (- (.-width (.getBoundingClientRect sidebar-main))
+                    w (Math/max 0 (- (.-width (.getBoundingClientRect sidebar-main))
                                       (* inset 2)))]
                 (.setProperty (.-style urlbar) "--urlbar-width" (str w "px")))
               (set! (.-updating state) false)))
@@ -76,7 +76,7 @@
             (when sr (collect-icons sr hits)))
           (let [kids (.-children scope)]
             (when kids
-              (.forEach (.from Array kids)
+              (.forEach (Array/from kids)
                 (fn [child]
                   (let [tag (.toLowerCase (.-tagName child))
                         cls (.-classList child)
@@ -118,7 +118,7 @@
                               bottom-gap (- (.-bottom sidebar-rect) (.-bottom bottom-icon))
                               BOTTOM-OFFSET 4
                               delta (- (+ top-gap BOTTOM-OFFSET) bottom-gap)]
-                          (if (< (.abs Math delta) 0.5)
+                          (if (< (Math/abs delta) 0.5)
                             (do
                               (log (str "symfooter:converged topGap="
                                         (.toFixed top-gap 1)
@@ -130,7 +130,7 @@
                                                       (getComputedStyle (.-documentElement document))
                                                       "--gjoa-symmetric-footer"))
                                                   0)
-                                  next (.max Math 0 (.round Math (- current-var (* delta 0.6))))]
+                                  next (Math/max 0 (Math/round (- current-var (* delta 0.6))))]
                               (.setProperty (.-style (.-documentElement document))
                                             "--gjoa-symmetric-footer" (str next "px"))
                               (log (str "symfooter:pass topGap=" (.toFixed top-gap 1)
@@ -140,7 +140,7 @@
 
         ;; --- sync-symmetric-footer ---
         sync-symmetric-footer (fn []
-          (.forEach (.from Array {:length 30})
+          (.forEach (Array/from {:length 30})
             (fn [_ i]
               (setTimeout sync-symmetric-footer-once (* i 50)))))
 
@@ -227,7 +227,7 @@
         (let [width-obs (ResizeObserver.
                           (fn []
                             (when (has? sidebar-main "sidebar-launcher-expanded")
-                              (let [w (.round Math (.-width (.getBoundingClientRect sidebar-main)))]
+                              (let [w (Math/round (.-width (.getBoundingClientRect sidebar-main)))]
                                 (when (> w 0) (set-pref-int! WIDTH-PREF w))))))]
           (.observe width-obs sidebar-main)
 

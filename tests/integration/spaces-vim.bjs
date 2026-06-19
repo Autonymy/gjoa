@@ -6,8 +6,6 @@
   (:require [gjoa.tests.dsl :refer [deftest chrome-eval await-true expect expect-eq expect-includes wait-for]]))
 (define-mode strict)
 
-(declare-extern [JSON] Any)
-
 ;; Reset all non-default spaces between subtests so each one starts clean.
 (defn reset-spaces [mn :- Any] :- Any
   (chrome-eval
@@ -34,11 +32,11 @@
         };
       ")]
        (expect-eq (.-count state) 2
-                  (str "expected 2 spaces, got " (.-count state) ": " (.stringify JSON state)))
+                  (str "expected 2 spaces, got " (.-count state) ": " (JSON/stringify state)))
        (expect-eq (.-activeName state) "Work"
-                  (str "expected active=Work, got " (.-activeName state) ": " (.stringify JSON state)))
+                  (str "expected active=Work, got " (.-activeName state) ": " (JSON/stringify state)))
        (expect-includes (.-names state) "Work"
-                        (str "Work not in list: " (.stringify JSON state)))))
+                        (str "Work not in list: " (JSON/stringify state)))))
 
    (deftest "Spaces+vim — :space rename mutates the active space's name" [mn]
      (await-true "return !!window.gjoaTest;" 1500)
@@ -133,11 +131,11 @@
            ;; Verify we moved (we don't pin to exact name in case ordering shifts;
            ;; the property we care about is "active changed forward, then back").
            (expect (not= after1 "Main")
-                   (str "gs from Main did not cycle. all=" (.stringify JSON all) " after1=" after1))
+                   (str "gs from Main did not cycle. all=" (JSON/stringify all) " after1=" after1))
            (expect (not= after2 after1)
-                   (str "second gs did not cycle. all=" (.stringify JSON all) " after1=" after1 " after2=" after2))
+                   (str "second gs did not cycle. all=" (JSON/stringify all) " after1=" after1 " after2=" after2))
            (expect-eq after-reverse after1
-                      (str "gS should reverse to after1. all=" (.stringify JSON all) " after1=" after1 " after2=" after2 " afterReverse=" after-reverse))))))
+                      (str "gS should reverse to after1. all=" (JSON/stringify all) " after1=" after1 " after2=" after2 " afterReverse=" after-reverse))))))
 
    (deftest "Spaces+vim — :space list opens the picker" [mn]
      (await-true "return !!window.gjoaTest && !!window.gjoaTest.vim;" 1500)

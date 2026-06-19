@@ -4,7 +4,7 @@
 (define-mode strict)
 
 ;; Browser globals
-(declare-extern [window document gBrowser gBrowserInit Services requestAnimationFrame setTimeout setInterval clearInterval console Promise Array Set Math MutationObserver RegExp build-context-menu! build-group-context-menu! build-panel-context-menu! make-drag! make-events! make-layout! make-rows! make-vim! all-rows all-tabs pin-tab-id tab-url tree-data! try-register-pin-attr! create-logger! make-history! make-content-focus! ensure-vertical-tabs-default migrate-legacy-prefs migrate-toolbar-defaults apply-menubar-default make-spaces! make-niri-binding! make-gjoa! make-saver! closed-tabs row-of saved-tab-queue selection state tree-of] Any)
+(declare-extern [window document gBrowser gBrowserInit Services build-context-menu! build-group-context-menu! build-panel-context-menu! make-drag! make-events! make-layout! make-rows! make-vim! all-rows all-tabs pin-tab-id tab-url tree-data! try-register-pin-attr! create-logger! make-history! make-content-focus! ensure-vertical-tabs-default migrate-legacy-prefs migrate-toolbar-defaults apply-menubar-default make-spaces! make-niri-binding! make-gjoa! make-saver! closed-tabs row-of saved-tab-queue selection state tree-of] Any)
 
 ;; Module deps — no import, declared extern
 (def pfx-log :- Any (create-logger! "tabs"))
@@ -265,7 +265,7 @@
                     ;; Pairwise matching
                     (match-tabs-loop! tab-nodes tabs 0 li-ref applied apply-fn)
 
-                    (.log console
+                    (console/log
                       (str "gjoa-tabs: loaded " (.-length tab-nodes) " saved tab nodes, "
                            "matched " (.-size applied) " to live tabs (of " (.-length tabs) ")."))
 
@@ -288,7 +288,7 @@
                     ;; Full node list for buildFromSaved
                     (set! (.-v loaded-nodes-ref) (.-nodes env)))))
               (catch Any e
-                (.error console "gjoa-tabs: loadFromHistory apply error" e)))))))))
+                (console/error "gjoa-tabs: loadFromHistory apply error" e)))))))))
 
 ;; --- buildFromSaved — groups + tab order from saved data ---
 
@@ -367,18 +367,18 @@
 (defn init! [] :- Any
   ;; Defensive: pre-panel steps wrapped in try/catch
   (try (ensure-vertical-tabs-default)
-    (catch Any e (.error console "gjoa-tabs: ensureVerticalTabsDefault threw — continuing" e)))
+    (catch Any e (console/error "gjoa-tabs: ensureVerticalTabsDefault threw — continuing" e)))
   (try (migrate-legacy-prefs)
-    (catch Any e (.error console "gjoa-tabs: migrateLegacyPrefs threw — continuing" e)))
+    (catch Any e (console/error "gjoa-tabs: migrateLegacyPrefs threw — continuing" e)))
   (try (migrate-toolbar-defaults)
-    (catch Any e (.error console "gjoa-tabs: migrateToolbarDefaults threw — continuing" e)))
+    (catch Any e (console/error "gjoa-tabs: migrateToolbarDefaults threw — continuing" e)))
   (try (apply-menubar-default document)
-    (catch Any e (.error console "gjoa-tabs: applyMenubarDefault threw — continuing" e)))
+    (catch Any e (console/error "gjoa-tabs: applyMenubarDefault threw — continuing" e)))
   (try (try-register-pin-attr!)
-    (catch Any e (.error console "gjoa-tabs: tryRegisterPinAttr threw — continuing" e)))
+    (catch Any e (console/error "gjoa-tabs: tryRegisterPinAttr threw — continuing" e)))
 
   (-> (-> (load-from-history)
-          (.catch #(.error console "gjoa-tabs: loadFromHistory threw — init proceeds with empty state" %)))
+          (.catch #(console/error "gjoa-tabs: loadFromHistory threw — init proceeds with empty state" %)))
       (.then (fn []
         ;; await requestAnimationFrame
         (-> (Promise. #(requestAnimationFrame %))
@@ -407,7 +407,7 @@
                 (on! (.-spaceHeader state) "click"
                   (fn []
                     (try (.runExCommand (.-v vim-ref) "spc list")
-                      (catch Any e (.error console "gjoa: space header click failed" e)))))
+                      (catch Any e (console/error "gjoa: space header click failed" e)))))
                 (update-space-header)
 
                 ;; Position panel
@@ -497,7 +497,7 @@
                                (when (= topic "quit-application")
                                  (.catch
                                    (.tagLatest history "session")
-                                   #(.error console "gjoa-tabs: tagLatest on quit failed" %))))}]
+                                   #(console/error "gjoa-tabs: tagLatest on quit failed" %))))}]
                       (.addObserver (.-obs Services) session-tagger "quit-application")
                       (on1! window "unload"
                         #(.removeObserver (.-obs Services) session-tagger "quit-application")))
@@ -505,7 +505,7 @@
                     ;; Retention timer — prune old events
                     (setTimeout
                       #(.catch (.runRetention history)
-                          (fn [e] (.error console "gjoa-tabs: initial retention pass failed" e)))
+                          (fn [e] (console/error "gjoa-tabs: initial retention pass failed" e)))
                       30000)
                     (let [retention-timer
                             (setInterval
@@ -553,7 +553,7 @@
                          :contentInputFocused #(.contentInputFocused content-focus)
                          :contentFocusDiag #(.diag content-focus)
                          :Gjoa gjoa-api})
-                      (.log console "gjoa-tabs: gjoaTest debug API exposed"))
+                      (console/log "gjoa-tabs: gjoaTest debug API exposed"))
 
                     ;; Dev helpers (window.pfx)
                     (when (pref-bool "gjoa.debug" false)
@@ -588,15 +588,15 @@
                                    :sameY (= (Math/round (.-top a)) (Math/round (.-top b)))
                                    :sameX (= (Math/round (.-left a)) (Math/round (.-left b)))}))))))
 
-                        (.log console "gjoa-tabs: dev helpers (window.pfx) exposed (gjoa.debug=true)")))
+                        (console/log "gjoa-tabs: dev helpers (window.pfx) exposed (gjoa.debug=true)")))
 
-                    (.log console "gjoa-tabs: initialized")))))))))))
+                    (console/log "gjoa-tabs: initialized")))))))))))
 
 ;; --- safeInit — wraps init in catch-all ---
 
 (defn safe-init [] :- Any
   (-> (init!)
-      (.catch #(.error console "gjoa-tabs: init() threw — sidebar may be empty" %))))
+      (.catch #(console/error "gjoa-tabs: init() threw — sidebar may be empty" %))))
 
 ;; --- clone-node-fields: copy the 6 persistence fields into a fresh object ---
 

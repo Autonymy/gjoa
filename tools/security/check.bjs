@@ -27,7 +27,7 @@
             [path :refer [join]]
             [gjoa.tools.prep.paths :refer [REPO-ROOT]]))
 (define-mode strict)
-(declare-extern [process console fetch AbortSignal JSON RegExp Error parseInt Array] Any)
+(declare-extern [process fetch AbortSignal] Any)
 
 (def PRODUCT-DETAILS-URL :- String "https://product-details.mozilla.org/1.0/firefox_versions.json")
 (def KNOWN-VULNS-URL :- String "https://www.mozilla.org/en-US/security/known-vulnerabilities/firefox/")
@@ -154,7 +154,7 @@
 
 (js/export (defn check! [] :- Any
   (let [gjoaJsonPath (join REPO-ROOT "gjoa.json")
-        gjoaJson (.parse JSON (js/await (readFile gjoaJsonPath "utf8")))
+        gjoaJson (JSON/parse (js/await (readFile gjoaJsonPath "utf8")))
         pinned (.-version (.-firefox gjoaJson))
         pinnedTuple (parseVersion pinned)
         state {:versions nil :advisories [] :netError nil}]
@@ -201,7 +201,7 @@
             (.push detailLines (str "Unfixed advisories on your pin (" (.-length matchedAdvisories) "):"))
             ;; Sort by severity (critical first), then advisory id newest first.
             (let [sevRank {:critical 0 :high 1 :moderate 2 :low 3}
-                  sorted (.sort (.from Array matchedAdvisories)
+                  sorted (.sort (Array/from matchedAdvisories)
                                 (fn [a b]
                                   (let [sa (let [r (aget sevRank (or (.-severity a) "low"))] (if (= r undefined) 4 r))
                                         sb (let [r (aget sevRank (or (.-severity b) "low"))] (if (= r undefined) 4 r))]
@@ -256,13 +256,13 @@
         r (js/await (check!))]
     (cond
       jsonMode
-      (.log console (.stringify JSON r nil 2))
+      (console/log (JSON/stringify r nil 2))
 
       (not quietMode)
       (let [color (statusColor (.-status r))
             reset "[0m"]
-        (.error console (str color "[security] " (.-status r) reset " — " (.-summary r)))
-        (.error console (.-detail r))))
+        (console/error (str color "[security] " (.-status r) reset " — " (.-summary r)))
+        (console/error (.-detail r))))
     (.exit process (exitCodeFor (.-status r)))))
 
 ;; Entrypoint. The old .ts guarded on `import.meta.main`; beagle has no
@@ -272,5 +272,5 @@
 (when (.-main (js/import-meta))
   (.catch (main!)
     (fn [err]
-      (.error console (str "[security] check threw: " (.-message err)))
+      (console/error (str "[security] check threw: " (.-message err)))
       (.exit process 1))))

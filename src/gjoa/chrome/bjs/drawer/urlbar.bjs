@@ -3,7 +3,7 @@
   (:require [gjoa.macros :refer [q html-new attr! on! onc! offc! off! bool has? rmattr!]]))
 (define-mode strict)
 
-(declare-extern [document window setTimeout String KeyboardEvent create-logger!] Any)
+(declare-extern [document window String create-logger!] Any)
 
 (js/export (defn make-urlbar! [deps] :- Any
   (let [urlbar (.-urlbar deps)

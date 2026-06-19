@@ -9,7 +9,6 @@
 ;;                                     wait-for sleep]])
 (ns gjoa.tests.dsl)
 (define-mode strict)
-(declare-extern [Date setTimeout] Any)
 
 ;; --- macros (compile-time) --------------------------------------------------
 
@@ -56,9 +55,9 @@
 ;; (default 1.5s) elapses, then throw with the last error. 20ms cadence.
 (js/export (defn wait-for [mn :- Any script :- String timeout-ms :- Any] :- Any
   (let [timeout (or timeout-ms 1500)
-        deadline (+ (.now Date) timeout)]
+        deadline (+ (Date/now) timeout)]
     (loop [last-err nil]
-      (if (< (.now Date) deadline)
+      (if (< (Date/now) deadline)
         (let [r (js/await
                   (try
                     (let [ok (js/await (.executeScript mn script))]

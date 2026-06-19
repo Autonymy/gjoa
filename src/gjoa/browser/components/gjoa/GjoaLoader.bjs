@@ -51,7 +51,7 @@
 ;; =============================================================================
 (ns gjoa.browser.components.gjoa.loader)
 (define-mode strict)
-(declare-extern [ChromeUtils Cc Ci Services console] Any)
+(declare-extern [ChromeUtils Cc Ci Services] Any)
 
 (def lazy :- Any {})
 
@@ -151,9 +151,9 @@
   (try
     (do
       (.loadSubScriptWithOptions (.-scriptloader Services) url {:target window :ignoreCache true})
-      (.log console (str "gjoa-loader: loaded script " label)))
+      (console/log (str "gjoa-loader: loaded script " label)))
     (catch Any e
-      (.error console (str "gjoa-loader: script " label " threw at load time") e))))
+      (console/error (str "gjoa-loader: script " label " threw at load time") e))))
 
 (defn register-style-sheet-url [url :- String label :- String] :- Any
   (when (not (.has (.-loaded-sheets st) url))
@@ -161,9 +161,9 @@
       (let [uri (.newURI (.-io Services) url)]
         (.loadAndRegisterSheet STYLE-SHEET-SERVICE uri (.-AGENT_SHEET STYLE-SHEET-SERVICE))
         (.add (.-loaded-sheets st) url)
-        (.log console (str "gjoa-loader: registered stylesheet " label)))
+        (console/log (str "gjoa-loader: registered stylesheet " label)))
       (catch Any e
-        (.error console (str "gjoa-loader: stylesheet " label " threw at register time") e)))))
+        (console/error (str "gjoa-loader: stylesheet " label " threw at register time") e)))))
 
 (defn load-script-into [window :- Any file :- Any] :- Any
   (load-script-url-into window (.-spec (.newFileURI (.-io Services) file)) (.-leafName file)))
@@ -222,7 +222,7 @@
       ;; startup (AboutHomeStartupCache: activityStream is null). Disable it.
       (.setBoolPref d "browser.startup.homepage.abouthome_cache.enabled" false))
     (catch Any e
-      (.error console "gjoa-loader: setDefaults failed" e))))
+      (console/error "gjoa-loader: setDefaults failed" e))))
 
 ;; Registers the cosmetic-filtering JSWindowActor pair. The child (content
 ;; process) asks the parent (where the MAIN_PROCESS_ONLY content-classifier
@@ -238,9 +238,9 @@
                         :DOMWindowCreated {}}}
        :allFrames true
        :messageManagerGroups ["browsers"]})
-    (.log console "gjoa-loader: registered GjoaCosmetic window actor")
+    (console/log "gjoa-loader: registered GjoaCosmetic window actor")
     (catch Any e
-      (.error console "gjoa-loader: registerWindowActor failed" e))))
+      (console/error "gjoa-loader: registerWindowActor failed" e))))
 
 ;; Registers the per-site dark-mode HYBRID actor. Top documents only (subframes
 ;; inherit the top BrowsingContext's colorInversionOverride); the child measures
@@ -257,16 +257,16 @@
                         :DOMWindowCreated {:mozSystemGroup true}}}
        :allFrames false
        :messageManagerGroups ["browsers"]})
-    (.log console "gjoa-loader: registered GjoaDarkmode window actor")
+    (console/log "gjoa-loader: registered GjoaDarkmode window actor")
     (catch Any e
-      (.error console "gjoa-loader: registerDarkmodeActor failed" e))))
+      (console/error "gjoa-loader: registerDarkmodeActor failed" e))))
 
 (defn set-new-tab-url! [] :- Any
   (try
     (set! (.-newTabURL (.-AboutNewTab lazy)) NEW-TAB-URL)
-    (.log console (str "gjoa-loader: new tab URL set to " NEW-TAB-URL))
+    (console/log (str "gjoa-loader: new tab URL set to " NEW-TAB-URL))
     (catch Any e
-      (.error console "gjoa-loader: failed to set newTabURL" e))))
+      (console/error "gjoa-loader: failed to set newTabURL" e))))
 
 (js/export (def GjoaLoader :- Any
   {:start (fn [] :- Any
@@ -279,5 +279,5 @@
       (.addObserver (.-obs Services) observer "chrome-document-loaded")
       (let [dev (dev-mode-dir)]
         (if dev
-          (.log console (str "gjoa-loader: dev mode active — sourcing chrome from " (.-path dev)))
-          (.log console "gjoa-loader: production mode — loading chrome bundles from chrome://gjoa/content/")))))}))
+          (console/log (str "gjoa-loader: dev mode active — sourcing chrome from " (.-path dev)))
+          (console/log "gjoa-loader: production mode — loading chrome bundles from chrome://gjoa/content/")))))}))

@@ -3,7 +3,7 @@
   (:require [gjoa.macros :refer [q on! bool rmattr! undef-or toggle! tabs! last-of]]))
 (define-mode strict)
 
-(declare-extern [Services gBrowser console Math Object create-logger! CLOSED-MEMORY SPACE-ATTR all-rows group-by-id is-horizontal level-of parent-of-tab pin-tab-id read-pinned-id subtree-rows tab-by-id tab-url tree-data! pop-saved-by-url pop-saved-for-tab closed-tabs moving-tabs row-of saved-tab-queue state tree-of] Any)
+(declare-extern [Services gBrowser create-logger! CLOSED-MEMORY SPACE-ATTR all-rows group-by-id is-horizontal level-of parent-of-tab pin-tab-id read-pinned-id subtree-rows tab-by-id tab-url tree-data! pop-saved-by-url pop-saved-for-tab closed-tabs moving-tabs row-of saved-tab-queue state tree-of] Any)
 
 ;; Find previous tab in array matching predicate, searching backwards (multi-site)
 (defn find-prev-matching [tabs-arr :- Any idx :- Int pred :- Any] :- Any
@@ -44,7 +44,7 @@
       (let [g-lv (or (.-level (.-_group next)) 0)]
         (when (> g-lv my-level)
           (set! (.-level (.-_group next))
-                (.max Math 0 (- g-lv 1)))
+                (Math/max 0 (- g-lv 1)))
           (.syncGroupRow rows next)
           (reparent-children! (.-nextElementSibling next)
                              closing-id new-parent-id my-level rows)))
@@ -259,7 +259,7 @@
                                 :log log})]
               (if prior
                 (let [idx (.indexOf (tabs!) tab)]
-                  (.log console
+                  (console/log
                     (str "gjoa-tabs: onTabOpen matched — tab["
                          idx "] url=\"" (tab-url tab)
                          "\" → saved id=" (.-id prior)
@@ -536,7 +536,7 @@
             ;; sessionstore-windows-restored observer
             (let [on-session-restored
                   (fn []
-                    (.log console
+                    (console/log
                       "gjoa-tabs: sessionstore-windows-restored — final tree resync")
                     (when log
                       (log "sessionstore-windows-restored"

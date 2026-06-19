@@ -8,7 +8,6 @@
 (ns gjoa.tests.integration.group-drag-above
   (:require [gjoa.tests.dsl :refer [deftest chrome-eval await-true wait-for expect]]))
 (define-mode strict)
-(declare-extern [JSON Promise Error setTimeout document] Any)
 
 (defn ensure-sidebar-expanded [mn :- Any] :- Any
   (chrome-eval "
@@ -72,7 +71,7 @@
                        acc))
            src-idx (.findIndex rows (fn [r] (.includes (.-label r) "abovegrp")))]
        (when (or (< grp-idx 0) (< src-idx 0))
-         (throw (Error. (str "setup: grpIdx=" grp-idx " srcIdx=" src-idx " rows=" (.stringify JSON rows)))))
+         (throw (Error. (str "setup: grpIdx=" grp-idx " srcIdx=" src-idx " rows=" (JSON/stringify rows)))))
        (when (>= src-idx grp-idx)
          (throw (Error. (str "setup: marked tab must be ABOVE the group (srcIdx=" src-idx " grpIdx=" grp-idx ")"))))
        (chrome-eval (drag-script src-idx grp-idx))
@@ -85,7 +84,7 @@
                       acc))
              src2 (.findIndex after (fn [r] (.includes (.-label r) "abovegrp")))]
          (when (or (< grp2 0) (< src2 0))
-           (throw (Error. (str "after: grpIdx=" grp2 " srcIdx=" src2 " rows=" (.stringify JSON after)))))
+           (throw (Error. (str "after: grpIdx=" grp2 " srcIdx=" src2 " rows=" (JSON/stringify after)))))
          (expect (> src2 grp2)
                  (str "dropped tab must render BELOW the group, not above (tabIdx=" src2 " groupIdx=" grp2 ")"))
          (expect (> (.-level (aget after src2)) (.-level (aget after grp2)))

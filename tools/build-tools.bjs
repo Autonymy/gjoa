@@ -11,16 +11,16 @@
             [fs :refer [existsSync statSync readdirSync]]
             [path :refer [join resolve relative]]))
 (define-mode strict)
-(declare-extern [process Bun Promise Response console RegExp] Any)
+(declare-extern [process Bun] Any)
 
 (def REPO-ROOT :- String (.cwd process))
 (def OUT-ROOT :- String (join REPO-ROOT ".beagle-tools" "gjoa"))
 ;; beagle-build is a `#!/usr/bin/env bash` script. Windows has no shebang support,
 ;; so it can't be exec'd directly there — it's launched via `bash` (Git Bash on the
 ;; runner) at every :cmd site below. Normalize the path to forward slashes so bash
-;; accepts it on Windows; (.fromCharCode String 92) is a backslash. No-op on *nix.
+;; accepts it on Windows; (String/fromCharCode 92) is a backslash. No-op on *nix.
 (def BEAGLE-BUILD :- String
-  (.replaceAll (resolve REPO-ROOT ".." "beagle" "bin" "beagle-build") (.fromCharCode String 92) "/"))
+  (.replaceAll (resolve REPO-ROOT ".." "beagle" "bin" "beagle-build") (String/fromCharCode 92) "/"))
 (def SRC-DIRS :- Any ["tools" "tests"])
 
 ;; Recursively collect every *.bjs path under `dir` (synchronous — small tree).
@@ -60,7 +60,7 @@
                               :cwd REPO-ROOT
                               :stdout "pipe"
                               :stderr "pipe"})
-            results (js/await (.all Promise [(.text (Response. (.-stdout proc)))
+            results (js/await (Promise/all [(.text (Response. (.-stdout proc)))
                                              (.text (Response. (.-stderr proc)))
                                              (.-exited proc)]))]
         {:rel rel :code (aget results 2)
@@ -85,7 +85,7 @@
           (let [r (js/await (compile-one (aget sorted i)))]
             (cond
               (not= (.-code r) 0)
-              (do (.error console (str "[31m✗[0m " (.-rel r) "\n" (.-err r)))
+              (do (console/error (str "[31m✗[0m " (.-rel r) "\n" (.-err r)))
                   (recur (+ i 1) (+ failed 1) built))
               (.-skipped r)
               (recur (+ i 1) failed built)
@@ -93,9 +93,9 @@
               (recur (+ i 1) failed (+ built 1))))
           (do
             (when (> failed 0)
-              (.error console (str "\n[31m✗ " failed " tool file(s) failed to compile[0m"))
+              (console/error (str "\n[31m✗ " failed " tool file(s) failed to compile[0m"))
               (.exit process 1))
-            (.error console (str "[2m[tools][0m compiled " built ", "
+            (console/error (str "[2m[tools][0m compiled " built ", "
                                  (- n built) " cached → .beagle-tools/"))
             0))))))
 

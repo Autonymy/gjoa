@@ -15,7 +15,6 @@
 ;; `IntegrationTest` from ../../tools/test-driver/runner is a type-only
 ;; import in the original — used purely for annotation, no runtime value.
 ;; Beagle has no type-only import; we annotate with Any.
-(declare-extern [Math JSON] Any)
 
 ;; Plain JS source string evaluated in the browser via mn.executeScript —
 ;; the tokens inside are literal JS for the browser, NOT beagle, so it
@@ -116,11 +115,11 @@
                TOL 2]
            (doseq [h (.-hits r)]
              (let [c (center h)]
-               (expect (not (> (.abs Math (- c refC)) TOL))
+               (expect (not (> (Math/abs (- c refC)) TOL))
                  (str "Top-row icon center misaligned: id=\"" (.-id h) "\" center=" (.toFixed c 1) " "
                       "vs ref=\"" (.-id ref) "\" center=" (.toFixed refC 1) " "
                       "(diff=" (.toFixed (- c refC) 1) "px, tolerance ±" TOL ").\n"
-                      "All hits: " (.stringify JSON (.-hits r) nil 2)))))))))
+                      "All hits: " (JSON/stringify (.-hits r) nil 2)))))))))
 
    (deftest "nav-bar — [hamburger][sidebar][ext] left-anchored, [back forward refresh] right-anchored" [mn]
      (let [rects (chrome-eval layoutCheck)
@@ -129,29 +128,29 @@
            ext (get rects "unified-extensions-button")
            back (get rects "back-button")]
        (expect hamburger
-         (str "PanelUI-button not found. rects: " (.stringify JSON rects nil 2)))
+         (str "PanelUI-button not found. rects: " (JSON/stringify rects nil 2)))
        (expect navBar "#nav-bar not found")
        (expect ext
-         (str "unified-extensions-button not found. rects: " (.stringify JSON rects nil 2)))
+         (str "unified-extensions-button not found. rects: " (JSON/stringify rects nil 2)))
        (expect back
-         (str "back-button not found. rects: " (.stringify JSON rects nil 2)))
+         (str "back-button not found. rects: " (JSON/stringify rects nil 2)))
 
        ;; Hamburger at or very near LEFT edge of nav-bar.
        (expect (not (> (.-left hamburger) (+ (.-left navBar) 80)))
          (str "Hamburger not left-anchored: nav-bar.left=" (.-left navBar) " hamburger.left=" (.-left hamburger) ".\n"
-              (.stringify JSON rects nil 2)))
+              (JSON/stringify rects nil 2)))
 
        ;; Extensions should be in the LEFT group (within ~150px of hamburger).
        (expect (not (> (.-left ext) (+ (.-right hamburger) 150)))
          (str "Extensions not left-anchored alongside hamburger: hamburger.right=" (.-right hamburger) " "
               "ext.left=" (.-left ext) " (gap=" (- (.-left ext) (.-right hamburger)) "px, expected ≤150).\n"
-              (.stringify JSON rects nil 2)))
+              (JSON/stringify rects nil 2)))
 
        ;; Back-button should be RIGHT of extensions (the right group).
        (expect (not (<= (.-left back) (.-right ext)))
          (str "back-button must be RIGHT of extensions in expanded layout: "
               "ext.right=" (.-right ext) " back.left=" (.-left back) ".\n"
-              (.stringify JSON rects nil 2)))
+              (JSON/stringify rects nil 2)))
 
        ;; The right group (back/forward/refresh) must be ACTUALLY anchored
        ;; to the right of nav-bar. Use the right-most of the three (refresh
@@ -164,13 +163,13 @@
          (expect (not (> distFromRight 60))
            (str "Right group not anchored to right edge: rightmost-button.right=" (.-right rightmost) " "
                 "nav-bar.right=" (.-right navBar) " distance=" distFromRight "px (expected ≤60).\n"
-                (.stringify JSON rects nil 2))))
+                (JSON/stringify rects nil 2))))
 
        ;; And there should be a visible gap between extensions and back-button.
        (let [gap (- (.-left back) (.-right ext))]
          (expect (not (< gap 40))
            (str "Gap between left group (ext) and right group (back) too small: "
                 "ext.right=" (.-right ext) " back.left=" (.-left back) " gap=" gap "px (expected ≥40).\n"
-                (.stringify JSON rects nil 2))))))])
+                (JSON/stringify rects nil 2))))))])
 
 (js/export-default tests)

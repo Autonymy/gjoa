@@ -3,12 +3,12 @@
   (:require [gjoa.macros :refer [xul-new]]))
 (define-mode strict)
 
-(declare-extern [Object String] Any)
+(declare-extern [String] Any)
 
 (js/export (defn xul [tag :- String attrs :- Any] :- Any
   (let [el (xul-new tag)]
     (when attrs
-      (.forEach (.entries Object attrs) (fn [entry]
+      (.forEach (Object/entries attrs) (fn [entry]
         (let [name (aget entry 0) value (aget entry 1)]
           (when (and (not (= value false))
                      (not (= value nil))

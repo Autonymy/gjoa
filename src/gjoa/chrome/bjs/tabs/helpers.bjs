@@ -3,7 +3,7 @@
   (:require [gjoa.macros :refer [qa attr! has? tabs! bool]]))
 (define-mode strict)
 
-(declare-extern [create-logger! PIN-ATTR SPACE-ATTR tree-of state gBrowser console ChromeUtils String Number Set Array JSON Math SessionStore] Any)
+(declare-extern [create-logger! PIN-ATTR SPACE-ATTR tree-of state gBrowser ChromeUtils String Number SessionStore] Any)
 
 (def log :- Any (create-logger! "tabs"))
 
@@ -20,7 +20,7 @@
             (.importESModule ChromeUtils
               "resource:///modules/sessionstore/SessionStore.sys.mjs"))
           (catch Any e
-            (.error console "gjoa-tabs: SessionStore unavailable" e)
+            (console/error "gjoa-tabs: SessionStore unavailable" e)
             nil))))))
 
 ;; mutable flag for pin-attr registration
@@ -35,7 +35,7 @@
       (.persistTabAttribute SS SPACE-ATTR)
       (set! (.-done pin-reg) true)
       (catch Any e
-        (.error console "gjoa-tabs: persistTabAttribute failed" e))))))
+        (console/error "gjoa-tabs: persistTabAttribute failed" e))))))
 
 (js/export (defn pin-tab-id [tab :- Any id :- Any] :- Any
   (try
@@ -180,6 +180,6 @@
                                                         (- (or (.-index ts) 1) 1)))]
                           (some-> entries (aget idx) .-url))))))
                 (catch Any e
-                  (.error console "gjoa-tabs: getTabState failed" e)
+                  (console/error "gjoa-tabs: getTabState failed" e)
                   nil)))
             spec ""))))))

@@ -9,7 +9,7 @@
             [path :refer [join]]
             [child_process :refer [execSync]]))
 (define-mode strict)
-(declare-extern [process console parseInt Error] Any)
+(declare-extern [process] Any)
 
 (def REPO :- String (.cwd process))
 (def PATCHES-DIR :- String (join REPO "patches"))
@@ -53,14 +53,14 @@
 (defn main! [] :- Any
   (let [names (.sort (.filter (readdirSync PATCHES-DIR) (fn [p :- String] :- Bool (.endsWith p ".patch"))))
         rows (.sort (.map names score-patch) (fn [a :- Any b :- Any] :- Number (- (.-score b) (.-score a))))]
-    (.log console "patch seam-cost  =  rung x upstream-churn  (~expected rebases/yr; higher = demote first)\n")
+    (console/log "patch seam-cost  =  rung x upstream-churn  (~expected rebases/yr; higher = demote first)\n")
     (doseq [r rows]
-      (.log console (str "  " (.padStart (.toFixed (.-score r) 1) 7)
+      (console/log (str "  " (.padStart (.toFixed (.-score r) 1) 7)
                          "   " (.padEnd (rung-name (.-rung r)) 11)
                          " churn=" (.padEnd (str (.-churn r)) 4)
                          " files=" (.padEnd (str (.-nfiles r)) 3)
                          " " (.-name r))))
-    (.log console "")))
+    (console/log "")))
 
 (when (.-main (js/import-meta))
   (main!))

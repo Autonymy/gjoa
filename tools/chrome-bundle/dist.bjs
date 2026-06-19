@@ -17,7 +17,7 @@
             [fs/promises :refer [mkdir copyFile readdir rm]]
             [path :refer [join]]))
 (define-mode strict)
-(declare-extern [process Bun console] Any)
+(declare-extern [process Bun] Any)
 
 ;; REPO_ROOT was resolve(import.meta.dir, "..", ".."); tools run via `bun run`
 ;; from repo root, so import.meta.dir has no beagle equivalent — use cwd.
@@ -31,7 +31,7 @@
 (def TOOLS-DIR :- String (join REPO-ROOT ".beagle-tools" "gjoa" "tools" "chrome-bundle"))
 
 (defn step [name :- String fn :- Any] :- Any
-  (let [_ (.log console (str "→ " name))]
+  (let [_ (console/log (str "→ " name))]
     (js/await (fn))))
 
 (defn copy-dir [src :- String dst :- String] :- Any
@@ -73,7 +73,7 @@
         (fn []
           (js/await (copy-dir (join SRC-CHROME "css") (join DIST-CHROME "CSS"))))))
 
-    (.log console "\n✓ chrome distribution ready at dist/")
-    (.log console "  install: bun run chrome:install")))
+    (console/log "\n✓ chrome distribution ready at dist/")
+    (console/log "  install: bun run chrome:install")))
 
 (js/await (main!))

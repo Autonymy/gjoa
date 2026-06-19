@@ -27,7 +27,7 @@
             [path :refer [join]]
             [gjoa.tools.prep.paths :refer [PATCHES-DIR REPO-ROOT]]))
 (define-mode strict)
-(declare-extern [process console JSON] Any)
+(declare-extern [process] Any)
 
 (def HEADER-TAG :- String "# gjoa-patch:")
 
@@ -87,7 +87,7 @@
 
 (defn loadCurrentBaseline [] :- String
   (let [raw (js/await (readFile (join REPO-ROOT "gjoa.json") "utf8"))
-        cfg (.parse JSON raw)]
+        cfg (JSON/parse raw)]
     (.-version (.-firefox cfg))))
 
 ;; Public verb: warn on any patch without a header or with a baseline
@@ -105,24 +105,24 @@
           (cond
             (not (.-hasHeader p))
             (do
-              (.error console (str "[patch-header] " n ": MISSING header — run `bun tools/prep/patch-header.ts retrofit` after regenerating against " current))
+              (console/error (str "[patch-header] " n ": MISSING header — run `bun tools/prep/patch-header.ts retrofit` after regenerating against " current))
               (recur (+ i 1) (+ problems 1)))
 
             (not (.-declaredBaseline p))
             (do
-              (.error console (str "[patch-header] " n ": header present but `baseline-firefox` not parseable"))
+              (console/error (str "[patch-header] " n ": header present but `baseline-firefox` not parseable"))
               (recur (+ i 1) (+ problems 1)))
 
             (.-appliedUpstream p)
             (do
-              (.error console (str "[patch-header] " n ": applied-upstream (" (.-appliedUpstream p) ") — Mozilla absorbed this change; DROP this patch (rm patches/" n ") to avoid carrying redundant divergence-debt"))
+              (console/error (str "[patch-header] " n ": applied-upstream (" (.-appliedUpstream p) ") — Mozilla absorbed this change; DROP this patch (rm patches/" n ") to avoid carrying redundant divergence-debt"))
               (recur (+ i 1) (+ problems 1)))
 
             (not= (.-declaredBaseline p) current)
             (do
               ;; Not necessarily a problem — patches accumulate across versions.
               ;; Flag at INFO level so the user sees the drift.
-              (.error console (str "[patch-header] " n ": baseline " (.-declaredBaseline p) " ≠ gjoa.json " current " (informational; regenerate when this patch fails to apply)"))
+              (console/error (str "[patch-header] " n ": baseline " (.-declaredBaseline p) " ≠ gjoa.json " current " (informational; regenerate when this patch fails to apply)"))
               (recur (+ i 1) problems))
 
             :else
@@ -138,7 +138,7 @@
     (loop [i 0 changed 0]
       (if (>= i (.-length names))
         (do
-          (.error console (str "[patch-header] done. " changed " patch(es) updated."))
+          (console/error (str "[patch-header] done. " changed " patch(es) updated."))
           js/undefined)
         (let [n (aget names i)
               p (js/await (loadPatch n))]
@@ -146,7 +146,7 @@
             (recur (+ i 1) changed)
             (let [header (formatHeader current (.-touches p))
                   wrote (js/await (writeFile (join PATCHES-DIR n) (str header (.-text p)) "utf8"))
-                  logged (.error console (str "[patch-header] " n ": added header (baseline=" current ", touches=" (.-length (.-touches p)) ")"))]
+                  logged (console/error (str "[patch-header] " n ": added header (baseline=" current ", touches=" (.-length (.-touches p)) ")"))]
               (recur (+ i 1) (+ changed 1))))))))))
 
 ;; CLI entrypoint. The .ts used `import.meta.main`; under bun the compiled
@@ -163,7 +163,7 @@
 
       :else
       (do
-        (.error console "Usage: bun tools/prep/patch-header.ts <check|retrofit>")
+        (console/error "Usage: bun tools/prep/patch-header.ts <check|retrofit>")
         (.exit process 1)))))
 
 ;; CLI dispatch runs only when invoked directly, never on import.

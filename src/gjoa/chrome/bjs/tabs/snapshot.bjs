@@ -3,7 +3,7 @@
   (:require [gjoa.macros :refer [bool]]))
 (define-mode strict)
 
-(declare-extern [CLOSED-MEMORY console Map] Any)
+(declare-extern [CLOSED-MEMORY] Any)
 (js/export (defn build-envelope [snapshot :- Any] :- Any
   (let [tab-space-map (Map.)]
     (when (and (.-spaces snapshot) (.-tabSpaces (.-spaces snapshot)))
@@ -68,7 +68,7 @@
               (do-save! flags getSnapshot history onErr))))))))
 
 (js/export (defn make-saver! [getSnapshot :- Any history :- Any onError :- Any] :- Any
-  (let [fallback #(.error console "gjoa-tabs: save chain" %)
+  (let [fallback #(console/error "gjoa-tabs: save chain" %)
         onErr (or onError fallback)
         flags :- Any {:inFlight false :pending false}]
     #(do-save! flags getSnapshot history onErr))))

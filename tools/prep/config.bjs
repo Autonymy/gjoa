@@ -4,7 +4,6 @@
             [path :refer [join]]
             [gjoa.tools.prep.paths :refer [REPO-ROOT]]))
 (define-mode strict)
-(declare-extern [JSON] Any)
 
 ;; GjoaConfig shape (was a TS interface; carried as documentation here):
 ;;   name             "Gjoa"
@@ -30,7 +29,7 @@
     (deref cached)
     (let [path (join REPO-ROOT "gjoa.json")
           raw (readFileSync path "utf8")
-          parsed (.parse JSON raw)]
+          parsed (JSON/parse raw)]
       (validate parsed)
       (reset! cached parsed)
       parsed))))

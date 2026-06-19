@@ -8,7 +8,7 @@
             [gjoa.tools.prep.log :refer [log]]
             [gjoa.tools.security.check :refer [check!]]))
 (define-mode strict)
-(declare-extern [process console] Any)
+(declare-extern [process] Any)
 
 (def USAGE :- String
   (.trim "
@@ -50,23 +50,23 @@ After editing src/gjoa/ or gjoa.json: `bun run import`.
                      (= (.-status r) "CRITICAL") "🛑 SECURITY: CRITICAL"
                      (= (.-status r) "STALE")    "⚠  SECURITY: STALE"
                      :else                        "?  SECURITY: UNKNOWN")]
-        (.error console "")
-        (.error console (str "[33m" bar "[0m"))
-        (.error console (str "[1;33m" header "[0m  — " (.-summary r)))
-        (.error console (str "[33m" bar "[0m"))
-        (.error console (.-detail r))
-        (.error console (str "[33m" bar "[0m"))
+        (console/error "")
+        (console/error (str "[33m" bar "[0m"))
+        (console/error (str "[1;33m" header "[0m  — " (.-summary r)))
+        (console/error (str "[33m" bar "[0m"))
+        (console/error (.-detail r))
+        (console/error (str "[33m" bar "[0m"))
         (cond
           (= (.-status r) "CRITICAL")
           (do
-            (.error console (str "[1;31mAction: bump and rebuild within 24 hours. Run:  bun run security:bump[0m"))
-            (.error console (str "[33m" bar "[0m")))
+            (console/error (str "[1;31mAction: bump and rebuild within 24 hours. Run:  bun run security:bump[0m"))
+            (console/error (str "[33m" bar "[0m")))
 
           (= (.-status r) "STALE")
           (do
-            (.error console (str "Action: bump within the SLA in docs/security-policy.md. Run:  bun run security:bump"))
-            (.error console (str "[33m" bar "[0m"))))
-        (.error console "")))))
+            (console/error (str "Action: bump within the SLA in docs/security-policy.md. Run:  bun run security:bump"))
+            (console/error (str "[33m" bar "[0m"))))
+        (console/error "")))))
 
 (defn main! [] :- Any
   (let [cmd (aget (.-argv process) 2)]
@@ -96,11 +96,11 @@ After editing src/gjoa/ or gjoa.json: `bun run import`.
           (info "engine/ already absent")))
 
       (or (= cmd "help") (= cmd "--help") (= cmd "-h"))
-      (.log console USAGE)
+      (console/log USAGE)
 
       :else
       (do
-        (.error console USAGE)
+        (console/error USAGE)
         (when cmd
           (let [err (.-error log)]
             (err (str "unknown command: " cmd))))
@@ -111,5 +111,5 @@ After editing src/gjoa/ or gjoa.json: `bun run import`.
               (let [err-fn (.-error log)]
                 (err-fn (or (.-message err) (String err))))
               (when (.-DEBUG (.-env process))
-                (.error console (.-stack err)))
+                (console/error (.-stack err)))
               (.exit process 1))))

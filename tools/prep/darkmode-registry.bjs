@@ -64,7 +64,7 @@
             [gjoa.tools.prep.paths :refer [REPO-ROOT]]
             [gjoa.tools.prep.log :refer [log]]))
 (define-mode strict)
-(declare-extern [process console Math JSON RegExp Error Number isNaN parseInt parseFloat Bun] Any)
+(declare-extern [process Number] Any)
 
 ;; ---------------------------------------------------------------------------
 ;; Paths
@@ -547,7 +547,7 @@ Reads the local snapshot at tools/prep/darkreader-fixes.snapshot.
         (when (> (.-length (.-unmapped-vars r)) 0)
           (warn (str "  unmapped --darkreader vars (fell back to neutral bg): "
                      (.join (.-unmapped-vars r) ", "))))
-        (.log console (.stringify JSON {(.-host r) (.-entry r)} nil 2))))))
+        (console/log (JSON/stringify {(.-host r) (.-entry r)} nil 2))))))
 
 (defn main! [] :- Any
   (let [argv (.slice (.-argv process) 2)
@@ -559,7 +559,7 @@ Reads the local snapshot at tools/prep/darkreader-fixes.snapshot.
       (.exit process (selftest!))
 
       (= (.-length hosts) 0)
-      (do (.log console USAGE) (.exit process 0))
+      (do (console/log USAGE) (.exit process 0))
 
       :else
       (let [snapshot (read-snapshot!)
@@ -584,13 +584,13 @@ Reads the local snapshot at tools/prep/darkreader-fixes.snapshot.
           (if (= (.-length generated) 0)
             (let [warn (.-warn log)] (warn "nothing to write (no hosts produced entries)"))
             (let [existing (if (existsSync REGISTRY-PATH)
-                             (.parse JSON (readFileSync REGISTRY-PATH "utf8"))
+                             (JSON/parse (readFileSync REGISTRY-PATH "utf8"))
                              {})
                   added []]
               (doseq [r generated]
                 (set! (get existing (.-host r)) (.-entry r))
                 (.push added (.-host r)))
-              (writeFileSync REGISTRY-PATH (str (.stringify JSON existing nil 2) "\n"))
+              (writeFileSync REGISTRY-PATH (str (JSON/stringify existing nil 2) "\n"))
               (let [ok (.-ok log)]
                 (ok (str "merged " (.-length added) " entr" (if (= (.-length added) 1) "y" "ies")
                          " into darkmode-fixes.json: " (.join added ", ")))))))))))

@@ -17,7 +17,7 @@
 ;;   const harness = setup_harness();
 ;;   afterEach(() => harness.cleanup());
 
-(declare-extern [globalThis console Boolean Number String Error Window] Any)
+(declare-extern [globalThis Boolean Number String] Any)
 
 ;; NOTE: Window is from happy-dom npm package.
 ;; The generated JS needs this import prepended manually:
@@ -47,7 +47,7 @@
               #(try
                  (.observe % nil key "")
                  (catch Any e
-                   (.error console "[harness] pref observer threw" e)))))
+                   (console/error "[harness] pref observer threw" e)))))
 
           services {:prefs
                      {:getBoolPref #(if (.has prefs %1)

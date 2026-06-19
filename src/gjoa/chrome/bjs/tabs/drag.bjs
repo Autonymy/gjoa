@@ -3,7 +3,7 @@
   (:require [gjoa.macros :refer [q qa xul-new attr! on! onc! bool has? rmattr! css! tabs! toggle! undef-or last-of]]))
 (define-mode strict)
 
-(declare-extern [document gBrowser Math Set Array requestAnimationFrame INDENT create-logger! state row-of selection moving-tabs all-rows data-of! is-horizontal level-of level-of-row subtree-rows tab-by-id tree-data!] Any)
+(declare-extern [document gBrowser Array requestAnimationFrame create-logger! state row-of selection moving-tabs all-rows data-of! is-horizontal level-of level-of-row subtree-rows tab-by-id tree-data!] Any)
 
 ;; Walk siblings from `start` using `dir` (e.g. .-nextElementSibling),
 ;; return the first node satisfying `pred`, or nil.

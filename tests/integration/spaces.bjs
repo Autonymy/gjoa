@@ -10,7 +10,6 @@
 (ns gjoa.tests.integration.spaces
   (:require [gjoa.tests.dsl :refer [deftest chrome-eval await-true expect expect-eq wait-for]]))
 (define-mode strict)
-(declare-extern [JSON] Any)
 
 ;; Count tab rows actually visible (not [hidden]) in the sidebar.
 (defn visible-tab-rows [] :- String
@@ -24,7 +23,7 @@
      (await-true "return !!window.Spaces && window.Spaces.list().length >= 1;")
      (let [list (chrome-eval "return window.Spaces.list().map(s => ({ name: s.name }));")]
        (expect (and (.-length list) (= (.-name (aget list 0)) "Main"))
-               (str "expected default 'Main', got " (.stringify JSON list))))
+               (str "expected default 'Main', got " (JSON/stringify list))))
      (expect-eq (chrome-eval "return window.Spaces.active().name;") "Main" "active space"))
 
    (deftest "Spaces — creating + switching hides original tabs and shows new-space tabs" [mn]
@@ -122,8 +121,8 @@
         return { vis: window.Spaces.isVisible(t), sid: window.Spaces.spaceOf(t), defId: def };
       ")]
        (expect (:vis orphan)
-               (str "orphan tab should be visible (default-fallback), state=" (.stringify JSON orphan)))
+               (str "orphan tab should be visible (default-fallback), state=" (JSON/stringify orphan)))
        (expect-eq (:sid orphan) (:defId orphan)
-                  (str "orphan should surface in default space, state=" (.stringify JSON orphan)))))]))
+                  (str "orphan should surface in default space, state=" (JSON/stringify orphan)))))]))
 
 (js/export-default tests)

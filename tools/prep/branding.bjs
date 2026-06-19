@@ -23,7 +23,7 @@
 ;; :cmd site; forward-slash the path for bash on Windows. (.fromCharCode String 92)
 ;; is a backslash; no-op on *nix.
 (def BEAGLE-BUILD :- String
-  (.replaceAll (resolve REPO-ROOT ".." "beagle" "bin" "beagle-build") (.fromCharCode String 92) "/"))
+  (.replaceAll (resolve REPO-ROOT ".." "beagle" "bin" "beagle-build") (String/fromCharCode 92) "/"))
 
 ;; Files we string-substitute. Anything else (binary icons, archive formats,
 ;; platform-specific blobs) is copied as-is from the unofficial template.

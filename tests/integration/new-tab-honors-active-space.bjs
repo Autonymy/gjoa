@@ -12,7 +12,6 @@
 (ns gjoa.tests.integration.new-tab-honors-active-space
   (:require [gjoa.tests.dsl :refer [deftest chrome-eval await-true expect expect-eq wait-for]]))
 (define-mode strict)
-(declare-extern [JSON] Any)
 
 (js/export (def tests :- Any
   [(deftest "new-tab-honors-active-space — Ctrl+T while in Workspace places tab in Workspace, NOT Main, even when owner is a Main tab" [mn]
@@ -76,9 +75,9 @@
         };
       ")]
        (expect (not= (.-space sp) (.-main sp))
-               (str "new tab went to Main instead of Workspace. (Owner-inheritance bug.) sp=" (.stringify JSON sp)))
+               (str "new tab went to Main instead of Workspace. (Owner-inheritance bug.) sp=" (JSON/stringify sp)))
        (expect (= (.-space sp) (.-active sp))
-               (str "new tab not in active Workspace. sp=" (.stringify JSON sp))))
+               (str "new tab not in active Workspace. sp=" (JSON/stringify sp))))
 
      ;; And the row must be visible in the sidebar while Workspace is active.
      (let [visible-in-workspace (chrome-eval "

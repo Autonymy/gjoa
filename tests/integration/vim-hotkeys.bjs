@@ -13,8 +13,6 @@
   (:require [gjoa.tests.dsl :refer [deftest chrome-eval await-true expect wait-for sleep]]))
 (define-mode strict)
 
-(declare-extern [Error] Any)
-
 (def setup-js :- String
   "
   // Neutral content page; focus the gjoa panel (chrome, allowed by the handler).

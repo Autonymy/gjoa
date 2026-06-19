@@ -2,7 +2,7 @@
 (ns gjoa.tabs.log)
 (define-mode strict)
 
-(declare-extern [Services Ci PathUtils IOUtils console Date Promise JSON] Any)
+(declare-extern [Services Ci PathUtils] Any)
 
 (def LOG-FILENAME :- String "gjoa-debug.log")
 (def LOG-MAX-BYTES :- Int (* 5 1024 1024))
@@ -43,7 +43,7 @@
                 (flush-lines!)
                 (set! (.-flush-pending state) false))))
             (.catch (fn [e]
-              (.error console "[GJOA:log] write failed" e)
+              (console/error "[GJOA:log] write failed" e)
               (set! (.-flush-pending state) false))))))))
 
 (defn maybe-rotate! [] :- Any
@@ -61,8 +61,8 @@
     (fn [event data]
       (when (.getBoolPref (.-prefs Services) "gjoa.debug" false)
         (maybe-rotate!)
-        (.log console prefix event (or data {}))
-        (.push lines (str (.now Date) " [" tag "] " event " " (.stringify JSON (or data {}))))
+        (console/log prefix event (or data {}))
+        (.push lines (str (Date/now) " [" tag "] " event " " (JSON/stringify (or data {}))))
         (when (not (.-flush-pending state))
           (set! (.-flush-pending state) true)
-          (.then (.resolve Promise) flush-lines!)))))))
+          (.then (Promise/resolve) flush-lines!)))))))

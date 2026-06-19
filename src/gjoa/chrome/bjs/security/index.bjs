@@ -2,7 +2,7 @@
 (ns gjoa.security.index)
 (define-mode strict)
 
-(declare-extern [Services console fetch AbortSignal setTimeout setInterval parseInt RegExp Error Date] Any)
+(declare-extern [Services] Any)
 
 (def PRODUCT-DETAILS-URL :- String
   "https://product-details.mozilla.org/1.0/firefox_versions.json")
@@ -61,12 +61,12 @@
                "Emergency override (one-off, do not habituate):\n"
                "  GJOA_ALLOW_INSECURE=1 gjoa")))
       (catch Any e
-        (.error console "[security] modal failed; quitting anyway" e)))
+        (console/error "[security] modal failed; quitting anyway" e)))
     (try
       (let [startup (.-startup Services)]
         (.quit startup (.-eForceQuit startup)))
       (catch Any e
-        (.error console "[security] startup.quit failed" e)))))
+        (console/error "[security] startup.quit failed" e)))))
 
 (defn probe! [] :- Any
   (let [my-version (.-version (.-appinfo Services))]
@@ -79,45 +79,45 @@
           (let [latest (or (.-LATEST_FIREFOX_VERSION j) nil)]
             (cond
               (not latest)
-              (.warn console "[security] probe response missing LATEST_FIREFOX_VERSION — ignoring")
+              (console/warn "[security] probe response missing LATEST_FIREFOX_VERSION — ignoring")
 
               (not (.test VERSION-RE latest))
-              (.warn console
+              (console/warn
                 (str "[security] probe returned malformed LATEST_FIREFOX_VERSION ("
                      latest ") — ignoring (expected bare dotted numeric)"))
 
               :else
               (do
-                (set! (.-confirmed-at state) (.now Date))
+                (set! (.-confirmed-at state) (Date/now))
                 (if (not (newer? my-version latest))
-                  (.log console (str "[security] OK — " my-version
+                  (console/log (str "[security] OK — " my-version
                                      " matches or exceeds latest stable " latest))
                 (let [my (parse-version my-version)
                       up (parse-version latest)
                       major-behind (- (aget up 0) (aget my 0))]
                   (if (>= major-behind 1)
                     (do
-                      (.error console
+                      (console/error
                         (str "[security] CRITICAL: running " my-version
                              ", latest is " latest
                              " (" major-behind " major(s) behind) — quitting"))
                       (quit-stale! my-version latest))
-                    (.warn console
+                    (console/warn
                       (str "[security] STALE: running " my-version
                            ", latest is " latest
                            " (same major, point behind) — gjoa status will show STALE; rebuild when convenient"))))))))))
         (.catch (fn [e]
           (if (= (.-confirmed-at state) 0)
-            (.warn console
+            (console/warn
               (str "[security] probe failed and has NEVER confirmed current since launch"
                    " — staleness is UNVERIFIED, not known-good (fail-open):")
               (.-message e))
-            (.log console "[security] probe failed — fail-open (offline?, last confirmed current earlier this session):" (.-message e))))))))
+            (console/log "[security] probe failed — fail-open (offline?, last confirmed current earlier this session):" (.-message e))))))))
 
 ;; init
 (defn init-! [] :- Any
   (if (= (get-env "GJOA_ALLOW_INSECURE") "1")
-    (.log console "[security] GJOA_ALLOW_INSECURE=1 — gate disabled for this process")
+    (console/log "[security] GJOA_ALLOW_INSECURE=1 — gate disabled for this process")
     (when (not (.-__gjoaSecurityRunning Services))
       (set! (.-__gjoaSecurityRunning Services) true)
       (setTimeout probe! 2000)

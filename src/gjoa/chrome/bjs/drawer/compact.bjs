@@ -3,7 +3,7 @@
   (:require [gjoa.macros :refer [q xul-new pref-bool pref-int set-pref-bool! on! off! has? attr! rmattr! bool]]))
 (define-mode strict)
 
-(declare-extern [document window Services Math setTimeout clearTimeout requestAnimationFrame parseInt getComputedStyle MutationObserver Object create-logger! collapse-protection-duration-ms] Any)
+(declare-extern [document window Services requestAnimationFrame create-logger! collapse-protection-duration-ms] Any)
 
 (js/import create-logger! "../tabs/log.js" create_logger)
 (js/import collapse-protection-duration-ms "./timing.js" collapse_protection_duration_ms)

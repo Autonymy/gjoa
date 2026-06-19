@@ -17,7 +17,6 @@
 (ns gjoa.tests.integration.adblock-cosmetic-actor
   (:require [gjoa.tests.dsl :refer [deftest chrome-eval await-true wait-for expect]]))
 (define-mode strict)
-(declare-extern [JSON console] Any)
 
 (def TOP :- String "http://127.0.0.1:8975/")
 
@@ -70,12 +69,12 @@
        ;; await-true returns nil on success and throws (timeout) on failure.
        ;; INITIAL path: the at-load .gjoa-probe-static must get hidden.
        (await-true STATIC-HIDDEN 8000)
-       (.log console "\n[M2-ACTOR] at-load .gjoa-probe-static hidden")
+       (console/log "\n[M2-ACTOR] at-load .gjoa-probe-static hidden")
        ;; Control must stay visible.
        (expect (chrome-eval KEEP-VISIBLE) "control .gjoa-keep was hidden — cosmetic over-hiding")
        ;; OBSERVER path: a dynamically-added matching element must get hidden.
        (chrome-eval INJECT-DYN)
        (await-true DYN-HIDDEN 8000)
-       (.log console "[M2-ACTOR] dynamically-added .gjoa-probe-dynamic hidden")))]))
+       (console/log "[M2-ACTOR] dynamically-added .gjoa-probe-dynamic hidden")))]))
 
 (js/export-default tests)

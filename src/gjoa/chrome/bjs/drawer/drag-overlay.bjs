@@ -3,7 +3,6 @@
   (:require [gjoa.macros :refer [qa by-id xul-new pref-bool]]))
 (define-mode strict)
 
-(declare-extern [Math create-logger! ResizeObserver MutationObserver] Any)
 
 (def PREF :- String "gjoa.view.draggable-sidebar")
 
@@ -30,7 +29,7 @@
                   (.-bottom (.getBoundingClientRect last-tab))
                   (.-top asb-rect))
             bottom (.-bottom asb-rect)
-            height (.max Math 0 (- bottom top))]
+            height (Math/max 0 (- bottom top))]
         (set! (.-left (.-style ov)) (str (- (.-left asb-rect) (.-left container-rect)) "px"))
         (set! (.-top (.-style ov)) (str (- top (.-top container-rect)) "px"))
         (set! (.-width (.-style ov)) (str (.-width asb-rect) "px"))

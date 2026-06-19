@@ -2,7 +2,6 @@
 ;; tools/bench/stats.bjs — Statistical utilities for benchmarking.
 (ns gjoa.tools.bench.stats)
 (define-mode strict)
-(declare-extern [Math Number parseFloat] Any)
 
 ;; Student's t critical values for 95% CI (two-tailed, alpha=0.05)
 ;; Index by degrees of freedom (n-1), for n=3..30
@@ -46,8 +45,8 @@
 (js/export (defn geometric-mean [values :- Any] :- Number
   (if (= (.-length values) 0)
     0
-    (let [logSum (.reduce values (fn [acc v] (+ acc (.log Math v))) 0)]
-      (.exp Math (/ logSum (.-length values)))))))
+    (let [logSum (.reduce values (fn [acc v] (+ acc (Math/log v))) 0)]
+      (Math/exp (/ logSum (.-length values)))))))
 
 (js/export (defn arithmetic-mean [values :- Any] :- Number
   (if (= (.-length values) 0)
@@ -58,9 +57,9 @@
   (if (< (.-length values) 2)
     0
     (let [mean (arithmetic-mean values)
-          squaredDiffs (.map values (fn [v] (.pow Math (- v mean) 2)))
+          squaredDiffs (.map values (fn [v] (Math/pow (- v mean) 2)))
           variance (/ (.reduce squaredDiffs (fn [a b] (+ a b)) 0) (- (.-length values) 1))]
-      (.sqrt Math variance)))))
+      (Math/sqrt variance)))))
 
 (js/export (defn confidence-interval95 [values :- Any] :- Any
   (let [n (.-length values)
@@ -70,7 +69,7 @@
       (let [sd (standard-deviation values)
             df (- n 1)
             t (tCritical df)
-            se (/ sd (.sqrt Math n))
+            se (/ sd (Math/sqrt n))
             ci (* t se)]
         {:mean mean :ci ci :low (- mean ci) :high (+ mean ci)})))))
 
@@ -78,7 +77,7 @@
   (if (= (.-length values) 0)
     0
     (let [sorted (.sort [...values] (fn [a b] (- a b)))
-          mid (.floor Math (/ (.-length sorted) 2))]
+          mid (Math/floor (/ (.-length sorted) 2))]
       (if (= (mod (.-length sorted) 2) 0)
         (/ (+ (get sorted (- mid 1)) (get sorted mid)) 2)
         (get sorted mid))))))
@@ -105,6 +104,6 @@
       (let [speedup (/ (.-mean firefoxCI) (.-mean gjoaCI))
             pct (.toFixed (* (- speedup 1) 100) 1)
             dir (if (>= speedup 1) "faster" "slower")
-            absPct (.toFixed (.abs Math (parseFloat pct)) 1)]
+            absPct (.toFixed (Math/abs (parseFloat pct)) 1)]
         (.push lines (str "    Ratio:   " (.toFixed speedup 3) "x — Gjoa is " absPct "% " dir))
         (.join lines "\n"))))))

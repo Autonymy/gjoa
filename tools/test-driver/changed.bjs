@@ -15,7 +15,7 @@
             [path :refer [join]]
             [child_process :refer [spawnSync]]))
 (define-mode strict)
-(declare-extern [process console JSON Set Array RegExp] Any)
+(declare-extern [process] Any)
 
 (def REPO-ROOT :- String (.cwd process))
 (def RUNNER :- String (join REPO-ROOT ".beagle-tools" "gjoa" "tools" "test-driver" "runner.js"))
@@ -48,11 +48,11 @@
         set (Set.)]
     (doseq [f committed] (.add set f))
     (doseq [f dirty] (.add set f))
-    (.from Array set)))
+    (Array/from set)))
 
 (defn load-tags [] :- Any
   (if (existsSync TAGS)
-    (try (.parse JSON (readFileSync TAGS "utf8")) (catch Any e {:sources {}}))
+    (try (JSON/parse (readFileSync TAGS "utf8")) (catch Any e {:sources {}}))
     {:sources {}}))
 
 (defn infra? [path :- String] :- Bool
@@ -82,7 +82,7 @@
         (doseq [k srcKeys]
           (when (.startsWith f k)
             (let [v (get sources k)]
-              (if (.isArray Array v)
+              (if (Array/isArray v)
                 (doseq [s v] (.add subSet s))
                 (.add subSet v)))))))
     {:files fileSet :subs subSet :infra infra}))
@@ -112,10 +112,10 @@
       (let [args []]
         (when (> (.-size fset) 0)
           (.push args "--files")
-          (.push args (.join (.from Array fset) ",")))
+          (.push args (.join (Array/from fset) ",")))
         (when (> (.-size sset) 0)
           (.push args "--subsystem")
-          (.push args (.join (.from Array sset) ",")))
+          (.push args (.join (Array/from sset) ",")))
         (.write (.-stderr process)
           (str "[changed] running: " (.join args " ") "\n"))
         (run-runner! args)))))

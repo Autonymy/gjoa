@@ -3,7 +3,7 @@
   (:require [gjoa.macros :refer [by-id on! onc! on1!]]))
 (define-mode strict)
 
-(declare-extern [document console window make-layout! make-drag-overlay! make-compact! make-urlbar! make-sidebar-button! make-banner!] Any)
+(declare-extern [document console window make-layout! make-drag-overlay! make-compact! make-sidebar-button! make-banner!] Any)
 
 (defn init! [] :- Any
   (let [sidebar-main (by-id "sidebar-main")

@@ -3,7 +3,7 @@
   (:require [gjoa.macros :refer [on! off!]]))
 (define-mode strict)
 
-(declare-extern [gBrowser create-logger!] Any)
+(declare-extern [gBrowser] Any)
 
 (js/export (defn make-tabs-reconciler! [deps :- Any] :- Any
   (let [log (create-logger! "reconciler/tabs")

@@ -8,7 +8,6 @@
 (ns gjoa.tests.integration.scriptlet-engine
   (:require [gjoa.tests.dsl :refer [deftest expect]]))
 (define-mode strict)
-(declare-extern [JSON Error] Any)
 
 (def DRIVE :- String
   (str "\n"

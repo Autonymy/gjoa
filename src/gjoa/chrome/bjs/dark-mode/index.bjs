@@ -14,7 +14,7 @@
                                  set-pref-bool! set-pref-str! set-pref-int! on1!]]))
 (define-mode strict)
 
-(declare-extern [document window Services console] Any)
+(declare-extern [document window Services] Any)
 
 (def PREF-ENABLED :- String "gjoa.darkmode.enabled")
 (def PREF-MODE :- String "gjoa.darkmode.mode")
@@ -138,7 +138,7 @@
       (.setBoolPref d PREF-ENABLED true)
       (.setCharPref d PREF-MODE "system"))
     (catch Any e
-      (.error console "gjoa-darkmode: set-darkmode-defaults! failed" e))))
+      (console/error "gjoa-darkmode: set-darkmode-defaults! failed" e))))
 
 (defn destroy! [] :- Any
   (let [u (.-unsub state)]
@@ -165,6 +165,6 @@
   (set! (.-gjoaDarkMode window)
     {:toggle toggle :cycleMode cycle-mode :isEnabled enabled? :getMode mode-})
   (on1! window "unload" destroy!)
-  (.log console (str "gjoa-darkmode: initialized (enabled=" (enabled?) ", mode=" (mode-) ")")))
+  (console/log (str "gjoa-darkmode: initialized (enabled=" (enabled?) ", mode=" (mode-) ")")))
 
 (init-!)

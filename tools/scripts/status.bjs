@@ -18,7 +18,7 @@
 (define-mode strict)
 ;; `process` comes through the paths.bjs import; `RegExp.`/`Error.` constructors
 ;; don't need the extern declared, so neither is listed here.
-(declare-extern [console fetch AbortSignal Promise JSON Date Math String isNaN] Any)
+(declare-extern [AbortSignal] Any)
 
 ;; REPO-ROOT / ENGINE-DIR come from tools/prep/paths.bjs (cwd-based, since
 ;; tools run via `bun run` from the repo root -- the old .ts used
@@ -106,7 +106,7 @@
 (defn loadOracles! [pinned :- String] :- Any
   (let [errors []]
     ;; Run all the network probes in parallel.
-    (let [probes (js/await (.all Promise
+    (let [probes (js/await (Promise/all
                    [(fetchJson "https://product-details.mozilla.org/1.0/firefox_versions.json" 5000)
                     (fetchText "https://www.mozilla.org/en-US/security/known-vulnerabilities/firefox/" 5000)
                     ;; Zen pins Firefox in surfer.json on the dev branch (their main branch
@@ -129,7 +129,7 @@
             ;; Parse Zen's pinned version out of surfer.json.
             zen (if zenSurfer
                   (try
-                    (let [j (.parse JSON zenSurfer)]
+                    (let [j (JSON/parse zenSurfer)]
                       (or (some-> (.-version j) .-version) nil))
                     (catch Any e
                       (do (.push errors "Zen surfer.json parse failed") nil)))
@@ -190,15 +190,15 @@
   ;; as a "how old is the build" signal. Detect and short-circuit.
   (if (<= (.getFullYear d) 1970)
     "nix-built"
-    (let [ms (- (.now Date) (.getTime d))
+    (let [ms (- (Date/now) (.getTime d))
           min (/ ms 60000)]
       (if (< min 1)
         "just now"
         (if (< min 60)
-          (str (.round Math min) " min ago")
+          (str (Math/round min) " min ago")
           (if (< min (* 60 24))
-            (str (.round Math (/ min 60)) " hr ago")
-            (str (.round Math (/ (/ min 60) 24)) " d ago")))))))
+            (str (Math/round (/ min 60)) " hr ago")
+            (str (Math/round (/ (/ min 60) 24)) " d ago")))))))
 
 (defn gitStatusByLane [] :- Any
   (let [lane1 [] lane2 [] lane3 [] other []
@@ -233,7 +233,7 @@
       rows)))
 
 (defn buildsThisWeek [entries :- Any] :- Any
-  (let [sevenAgo (Date. (- (.now Date) (* 7 86400000)))]
+  (let [sevenAgo (Date. (- (Date/now) (* 7 86400000)))]
     (.-length (.filter entries
                        (fn [e]
                          (let [d (Date. (.-date e))]
@@ -250,15 +250,15 @@
 
 ;; -- Rendering ---------------------------------------------------------------
 (defn section [title :- String] :- Any
-  (.log console "")
-  (.log console (bold (str "▸ " title))))
+  (console/log "")
+  (console/log (bold (str "▸ " title))))
 
 (defn row [label :- Any value :- Any] :- Any
-  (.log console (str "  " (.padEnd label 22) " " value)))
+  (console/log (str "  " (.padEnd label 22) " " value)))
 
 (defn main! [] :- Any
   (let [jsonMode (.includes (.-argv process) "--json")
-        gjoa (.parse JSON (readFileSync GJOA-JSON "utf8"))
+        gjoa (JSON/parse (readFileSync GJOA-JSON "utf8"))
         pinned (.-version (.-firefox gjoa))]
 
     (.write (.-stderr process) (dim "probing oracles…\r"))
@@ -267,7 +267,7 @@
 
       (if jsonMode
         (do
-          (.log console (.stringify JSON {:pinned pinned :oracles oracles} nil 2))
+          (console/log (JSON/stringify {:pinned pinned :oracles oracles} nil 2))
           nil)
         (let [hasMach (existsSync MACH-BIN)
               hasNix (existsSync NIX-RESULT)
@@ -285,7 +285,7 @@
                          (< (cmpVer (parseVer pinned) (parseVer (:mozillaLatest oracles))) 0))
               threat (if critical (red "CRITICAL") (if stale (yellow "STALE") (green "OK")))]
 
-          (.log console (str (bold "gjoa // status") "  " (dim (.replace (.slice (.toISOString (Date.)) 0 19) "T" " ")) "  " threat))
+          (console/log (str (bold "gjoa // status") "  " (dim (.replace (.slice (.toISOString (Date.)) 0 19) "T" " ")) "  " threat))
 
           (section "VERSION POSITION")
           (row "our pin"         (bold pinned))
@@ -327,10 +327,10 @@
               (row "last logged"     (str (.-date last) " (" (.-type last) ") -- " (.-outcome last)))))
 
           (section "WORKING TREE")
-          (.log console (str "  " (dim "Lane 1: chrome TS/CSS -- `gjoa sync` + restart, ~1s, no rebuild")))
-          (.log console (str "  " (dim "Lane 2: Firefox .sys.mjs / patches / branding -- `bun run import && ./mach build faster`, ~30s")))
-          (.log console (str "  " (dim "Lane 3: gjoa.json (version) / flake.nix / C++/Rust -- full mach or nix build, 30-60 min")))
-          (.log console "")
+          (console/log (str "  " (dim "Lane 1: chrome TS/CSS -- `gjoa sync` + restart, ~1s, no rebuild")))
+          (console/log (str "  " (dim "Lane 2: Firefox .sys.mjs / patches / branding -- `bun run import && ./mach build faster`, ~30s")))
+          (console/log (str "  " (dim "Lane 3: gjoa.json (version) / flake.nix / C++/Rust -- full mach or nix build, 30-60 min")))
+          (console/log "")
           (when (.-length (:lane1 lanes)) (row (green "Lane 1") (str (String (.-length (:lane1 lanes))) " file" (if (= (.-length (:lane1 lanes)) 1) "" "s"))))
           (when (.-length (:lane2 lanes)) (row (yellow "Lane 2") (str (String (.-length (:lane2 lanes))) " file" (if (= (.-length (:lane2 lanes)) 1) "" "s"))))
           (when (.-length (:lane3 lanes)) (row (red "Lane 3") (str (String (.-length (:lane3 lanes))) " file" (if (= (.-length (:lane3 lanes)) 1) "" "s"))))
@@ -357,16 +357,16 @@
                 (.push rec (str "  gjoa sync  &&  " (if hasMach "gjoa dev" "gjoa") (dim (str "  (" (if hasMach "mach" "nix") " binary)")))))
               :else
               (.push rec (green "Clean. Launch with `gjoa` or `gjoa dev`.")))
-            (doseq [line rec] (.log console (str "  " line))))
+            (doseq [line rec] (console/log (str "  " line))))
 
           (when (> (.-length (:errors oracles)) 0)
-            (.log console "")
-            (.log console (dim (str "oracles offline: " (.join (:errors oracles) ", ")))))
+            (console/log "")
+            (console/log (dim (str "oracles offline: " (.join (:errors oracles) ", ")))))
 
-          (.log console "")
-          (.log console (dim "docs/ARCHITECTURE.md  ·  CLAUDE.md Rule #0  ·  BUILD-LEDGER.md")))))))
+          (console/log "")
+          (console/log (dim "docs/ARCHITECTURE.md  ·  CLAUDE.md Rule #0  ·  BUILD-LEDGER.md")))))))
 
 ;; Entry point: run via `bun run`. Gated on import.meta.main so the CLI runs
 ;; only when invoked directly, never on import.
 (when (.-main (js/import-meta))
-  (.catch (main!) (fn [e] (.error console e) (.exit process 1))))
+  (.catch (main!) (fn [e] (console/error e) (.exit process 1))))

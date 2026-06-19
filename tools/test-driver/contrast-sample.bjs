@@ -14,7 +14,7 @@
 (ns gjoa.tools.test-driver.contrast-sample
   (:require [pngjs :refer [PNG]]))
 (define-mode strict)
-(declare-extern [Buffer Math] Any)
+(declare-extern [Buffer] Any)
 
 ;; base64 PNG (Marionette TakeScreenshot) -> {:width :height :data}. data is an
 ;; RGBA byte buffer, row-major, 4 bytes/pixel.
@@ -39,20 +39,20 @@
   (let [w (:width png)
         h (:height png)
         data (:data png)
-        x0 (.max Math 0 (.floor Math (* (:x rect) scale)))
-        y0 (.max Math 0 (.floor Math (* (:y rect) scale)))
-        x1 (.min Math (- w 1) (.floor Math (* (+ (:x rect) (:w rect)) scale)))
-        y1 (.min Math (- h 1) (.floor Math (* (+ (:y rect) (:h rect)) scale)))
+        x0 (Math/max 0 (Math/floor (* (:x rect) scale)))
+        y0 (Math/max 0 (Math/floor (* (:y rect) scale)))
+        x1 (Math/min (- w 1) (Math/floor (* (+ (:x rect) (:w rect)) scale)))
+        y1 (Math/min (- h 1) (Math/floor (* (+ (:y rect) (:h rect)) scale)))
         cols 7
         rows 3
         total (* cols rows)
         pts (Array.)]
     (loop [k 0]
       (when (< k total)
-        (let [r (.floor Math (/ k cols))
+        (let [r (Math/floor (/ k cols))
               c (- k (* r cols))
-              px (.round Math (+ x0 (* (/ (+ c 0.5) cols) (- x1 x0))))
-              py (.round Math (+ y0 (* (/ (+ r 0.5) rows) (- y1 y0))))]
+              px (Math/round (+ x0 (* (/ (+ c 0.5) cols) (- x1 x0))))
+              py (Math/round (+ y0 (* (/ (+ r 0.5) rows) (- y1 y0))))]
           (when (and (>= px 0) (< px w) (>= py 0) (< py h))
             (.push pts (pixel-at data w px py))))
         (recur (+ k 1))))
@@ -60,4 +60,4 @@
       (if (= n 0)
         {:r 255 :g 255 :b 255 :a 255}
         (let [sorted (.sort pts (fn [a :- Any b :- Any] :- Any (- (lum-quick a) (lum-quick b))))]
-          (aget sorted (.floor Math (/ n 2)))))))))
+          (aget sorted (Math/floor (/ n 2)))))))))

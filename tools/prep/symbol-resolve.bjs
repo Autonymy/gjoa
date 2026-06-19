@@ -12,7 +12,7 @@
             [path :refer [join dirname]]
             [child_process :refer [execSync]]))
 (define-mode strict)
-(declare-extern [process Error] Any)
+(declare-extern [process] Any)
 
 (def REPO :- String (.cwd process))
 (def ENGINE :- String (join REPO "engine"))

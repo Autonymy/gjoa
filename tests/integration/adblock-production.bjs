@@ -13,7 +13,6 @@
 (ns gjoa.tests.integration.adblock-production
   (:require [gjoa.tests.dsl :refer [deftest expect expect-eq]]))
 (define-mode strict)
-(declare-extern [JSON console Promise] Any)
 
 (def TOP :- String "https://example.com/")
 (def MUST-BLOCK :- Any ["https://www.googletagservices.com/favicon.ico"
@@ -77,8 +76,8 @@
                          "    resolve(JSON.stringify({ testing, enabled, names }));\n"
                          "  })().catch(e => resolve('ERR:' + e));\n")))]
        (expect (not (.startsWith seeded "ERR:")) (str "seed failed: " seeded))
-       (.log console (str "\n[M1-PROD] shipped prefs: " seeded))
-       (let [p (.parse JSON seeded)]
+       (console/log (str "\n[M1-PROD] shipped prefs: " seeded))
+       (let [p (JSON/parse seeded)]
          (expect-eq (.-testing p) false "content.testing is set — not validating the PRODUCTION path")
          (expect-eq (.-enabled p) true "protection.enabled default is not ON — adblock-prefs not shipped")
          (expect (> (.-length (.-names p)) 0) "protection.list_names default is empty — overlay would never run"))
@@ -92,19 +91,19 @@
            (expect navOk (str "top page " TOP " did not load (network?)"))
            (js/await (.setContext client "content"))
            (let [probe (fn [url] (.executeAsyncScript client PROBE-JS [url]))
-                 mustBlockR (js/await (.all Promise (.map MUST-BLOCK probe)))
-                 mustSkipR (js/await (.all Promise (.map MUST-SKIP probe)))
-                 allowedR (js/await (.all Promise (.map ALLOWED probe)))
+                 mustBlockR (js/await (Promise/all (.map MUST-BLOCK probe)))
+                 mustSkipR (js/await (Promise/all (.map MUST-SKIP probe)))
+                 allowedR (js/await (Promise/all (.map ALLOWED probe)))
                  nBlocked (.-length (.filter mustBlockR #(= % "blocked")))
                  nSkipBlocked (.-length (.filter mustSkipR #(= % "blocked")))
                  nOverblock (.-length (.filter allowedR #(= % "blocked")))]
-             (.log console (str "[M1-PROD] must-block -> " (.stringify JSON mustBlockR) " (" nBlocked "/" (.-length MUST-BLOCK) ")"))
-             (.log console (str "[M1-PROD] option-scoped must-skip -> " (.stringify JSON mustSkipR)))
-             (.log console (str "[M1-PROD] controls -> " (.stringify JSON allowedR)))
+             (console/log (str "[M1-PROD] must-block -> " (JSON/stringify mustBlockR) " (" nBlocked "/" (.-length MUST-BLOCK) ")"))
+             (console/log (str "[M1-PROD] option-scoped must-skip -> " (JSON/stringify mustSkipR)))
+             (console/log (str "[M1-PROD] controls -> " (JSON/stringify allowedR)))
              (expect-eq nBlocked (.-length MUST-BLOCK)
-                        (str "PRODUCTION path failed to block via overlay (defaults + setFilterListData): " (.stringify JSON mustBlockR)
+                        (str "PRODUCTION path failed to block via overlay (defaults + setFilterListData): " (JSON/stringify mustBlockR)
                              " — the overlay/prefs/list_names wiring is broken, NOT the engine"))
-             (expect-eq nSkipBlocked 0 (str "over-applied option-scoped rule: " (.stringify JSON mustSkipR)))
-             (expect-eq nOverblock 0 (str "control over-blocked: " (.stringify JSON allowedR))))))))]))
+             (expect-eq nSkipBlocked 0 (str "over-applied option-scoped rule: " (JSON/stringify mustSkipR)))
+             (expect-eq nOverblock 0 (str "control over-blocked: " (JSON/stringify allowedR))))))))]))
 
 (js/export-default tests)

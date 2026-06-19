@@ -13,7 +13,7 @@
   (:require [gjoa.macros :refer [pref-bool pref-str set-pref-bool! set-pref-str! on1!]]))
 (define-mode strict)
 
-(declare-extern [window Services console gBrowser] Any)
+(declare-extern [window Services gBrowser] Any)
 
 (def PREF-ENABLED :- String "gjoa.contentblock.enabled")
 (def PREF-ALLOW-HOSTS :- String "gjoa.contentblock.user.allow-hosts")
@@ -78,6 +78,6 @@
      :hostAllowed host-allowed?
      :toggleHost toggle-host})
   (on1! window "unload" destroy!)
-  (.log console (str "gjoa-blocking: initialized (enabled=" (enabled?) ")")))
+  (console/log (str "gjoa-blocking: initialized (enabled=" (enabled?) ")")))
 
 (init-!)

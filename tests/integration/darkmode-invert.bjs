@@ -14,7 +14,6 @@
 (ns gjoa.tests.integration.darkmode-invert
   (:require [gjoa.tests.dsl :refer [deftest chrome-eval await-true wait-for expect expect-eq]]))
 (define-mode strict)
-(declare-extern [JSON console] Any)
 
 (def TOP :- String "http://127.0.0.1:8975/")
 
@@ -54,8 +53,8 @@
        (expect navOk (str "fixture " TOP " did not load — is cosmetic-fixture-server.mjs on :8975?"))
        (js/await (.setContext mn "content"))
        (let [r (chrome-eval PROBE)
-             d (.parse JSON r)]
-         (.log console (str "\n[DM-P0] injected white-bg/black-text box -> " r))
+             d (JSON/parse r)]
+         (console/log (str "\n[DM-P0] injected white-bg/black-text box -> " r))
          (expect-eq (.-bg d) "rgb(0, 0, 0)"
                     "white background was NOT inverted to black — the cascade color-inversion hook did not fire")
          (expect-eq (.-fg d) "rgb(255, 255, 255)"
@@ -68,8 +67,8 @@
        (expect navOk (str "fixture " TOP " did not load"))
        (js/await (.setContext mn "content"))
        (let [r (chrome-eval PROBE)
-             d (.parse JSON r)]
-         (.log console (str "[DM-P0] flag off -> " r))
+             d (JSON/parse r)]
+         (console/log (str "[DM-P0] flag off -> " r))
          (expect-eq (.-bg d) "rgb(255, 255, 255)"
                     "flag off but background changed — inversion leaked when disabled"))))
    ;; P1: flipping the pref on an ALREADY-loaded tab must live-restyle it
@@ -81,8 +80,8 @@
        (expect navOk (str "fixture " TOP " did not load"))
        (js/await (.setContext mn "content"))
        ;; inject the box while invert is OFF — it renders un-inverted
-       (let [before (.parse JSON (chrome-eval PROBE))]
-         (.log console (str "\n[DM-P1] before toggle -> bg=" (.-bg before)))
+       (let [before (JSON/parse (chrome-eval PROBE))]
+         (console/log (str "\n[DM-P1] before toggle -> bg=" (.-bg before)))
          (expect-eq (.-bg before) "rgb(255, 255, 255)" "box should start un-inverted"))
        ;; flip the flag ON without reloading — engine must restyle the live doc
        (js/await (.setContext mn "chrome"))
@@ -90,7 +89,7 @@
        (js/await (.setContext mn "content"))
        ;; poll (runner-side) until the existing box becomes inverted
        (await-true "const d=document.getElementById('dm-box'); return !!(d && getComputedStyle(d).backgroundColor === 'rgb(0, 0, 0)');" 8000)
-       (.log console "[DM-P1] live toggle restyled the existing box to inverted")))
+       (console/log "[DM-P1] live toggle restyled the existing box to inverted")))
    ;; P2: system colors (the Canvas / default page background) invert too, so the
    ;; full "engine" mode (force-light + invert) gives a dark page — not just dark
    ;; explicit colors. The hook covers the Color::System arm now.
@@ -102,8 +101,8 @@
      (let [r (chrome-eval (str "const c=document.createElement('div'); c.style.backgroundColor='Canvas'; document.body.appendChild(c);"
                                " const bg=getComputedStyle(c).backgroundColor; const m=bg.match(/[0-9]+/g);"
                                " const sum=m?(+m[0]+ +m[1]+ +m[2]):999; return JSON.stringify({bg, dark: sum<200});"))
-           d (.parse JSON r)]
-       (.log console (str "\n[DM-P2] Canvas system-color box -> " r))
+           d (JSON/parse r)]
+       (console/log (str "\n[DM-P2] Canvas system-color box -> " r))
        (expect (.-dark d) (str "Canvas system color (page bg) did not invert to dark: " (.-bg d)))))]))
 
 (js/export-default tests)

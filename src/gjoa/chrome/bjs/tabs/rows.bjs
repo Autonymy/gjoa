@@ -3,7 +3,7 @@
   (:require [gjoa.macros :refer [q qa by-id attr! on! xul htm has? toggle! rmattr! bool tabs!]]))
 (define-mode strict)
 
-(declare-extern [gBrowser Promise String Array requestAnimationFrame cancelAnimationFrame INDENT has-children is-horizontal level-of level-of-row tree-data! data-of! all-rows create-logger! hz-display moving-tabs row-of state] Any)
+(declare-extern [gBrowser cancelAnimationFrame has-children is-horizontal level-of-row tree-data! data-of! all-rows create-logger! hz-display moving-tabs row-of state] Any)
 
 ;; From sibling modules — no import, declare-extern only.
 ;; --- reset-style!: clear all 7 grid/position style properties ---
@@ -358,7 +358,7 @@
         schedule-tree-resync (fn []
           (when (not (.-resync-pending counters))
             (set! (.-resync-pending counters) true)
-            (.then (.resolve Promise) (fn []
+            (.then (Promise/resolve) (fn []
               (set! (.-resync-pending counters) false)
               (.forEach (tabs!)
                 #(when (.get row-of %)

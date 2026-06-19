@@ -11,7 +11,7 @@
             [path :refer [join]]
             [gjoa.tools.bench.stats :refer [format-result]]))
 (define-mode strict)
-(declare-extern [Bun process console Date Error Array RegExp parseInt isNaN setTimeout clearTimeout] Any)
+(declare-extern [Bun process] Any)
 
 (def parsed :- Any
   (parseArgs {:args (.slice (.-argv Bun) 2)
@@ -42,7 +42,7 @@
         (if (and (= (.-exitCode result) 0) path)
           path
           (do
-            (.error console (str "ERROR: cannot find " name " binary. Use --" name "-bin=<path>"))
+            (console/error (str "ERROR: cannot find " name " binary. Use --" name "-bin=<path>"))
             (.exit process 1)))))))
 
 (def GJOA-BIN :- Any (or (get values "gjoa-bin") (findBinary "gjoa")))
@@ -80,15 +80,15 @@
     @totalKB))
 
 (defn measureMemory! [binary :- String label :- String windowPattern :- String] :- Any
-  (let [profileDir (str (join (.cwd process) "tools" "bench") "/.bench-profile-mem-" (.now Date))]
+  (let [profileDir (str (join (.cwd process) "tools" "bench") "/.bench-profile-mem-" (Date/now))]
     (.spawnSync Bun ["mkdir" "-p" profileDir])
     (try
-      (.log console (str "\n  Launching " label "..."))
-      (.log console (str "  Binary: " binary))
-      (.log console (str "  Tabs to open: " NUM-TABS))
+      (console/log (str "\n  Launching " label "..."))
+      (console/log (str "  Binary: " binary))
+      (console/log (str "  Tabs to open: " NUM-TABS))
 
       ;; Build list of URLs — use about:blank for consistent measurement
-      (let [urls (.from Array {:length NUM-TABS} (fn [] "about:blank"))
+      (let [urls (Array/from {:length NUM-TABS} (fn [] "about:blank"))
             ;; Launch with all tabs specified as arguments
             browser (.spawn Bun (.concat [binary
                                           "--no-remote"
@@ -97,7 +97,7 @@
                             {:stdout "ignore"
                              :stderr "ignore"})
             pid (.-pid browser)]
-        (.log console (str "  PID: " pid))
+        (console/log (str "  PID: " pid))
 
         ;; Wait for window to appear
         (let [xdotool (.spawn Bun ["xdotool" "search" "--sync" "--onlyvisible" "--name" windowPattern]
@@ -122,15 +122,15 @@
                                 "Refusing to record a bogus measurement."))))
 
           ;; Let the browser settle — tabs load, GC runs, etc.
-          (.log console (str "  Waiting " (/ SETTLE-MS 1000) "s for settle..."))
+          (console/log (str "  Waiting " (/ SETTLE-MS 1000) "s for settle..."))
           (js/await (.sleep Bun SETTLE-MS))
 
           ;; Measure PSS (proportional set size) across the process tree.
           (let [pssKB (getTreePssKB! pid)
                 totalMB (/ pssKB 1024)
                 perTabMB (/ totalMB NUM-TABS)]
-            (.log console (str "  Total RSS: " (.toFixed totalMB 1) " MB"))
-            (.log console (str "  Per-tab:   " (.toFixed perTabMB 2) " MB"))
+            (console/log (str "  Total RSS: " (.toFixed totalMB 1) " MB"))
+            (console/log (str "  Per-tab:   " (.toFixed perTabMB 2) " MB"))
 
             ;; Kill browser
             (.kill browser)
@@ -144,7 +144,7 @@
 (defn runBenchmark! [binary :- String label :- String windowPattern :- String runs :- Any] :- Any
   (let [results (atom [])]
     (doseq [i (range runs)]
-      (.log console (str "\n  --- " label " run " (+ i 1) "/" runs " ---"))
+      (console/log (str "\n  --- " label " run " (+ i 1) "/" runs " ---"))
       (let [res (js/await (measureMemory! binary label windowPattern))]
         (swap! results conj (.-totalMB res))
         ;; Pause between runs
@@ -155,25 +155,25 @@
 
 ;; Preflight: xdotool is required to detect window visibility.
 (when (= (.which Bun "xdotool") nil)
-  (.error console "ERROR: xdotool not found on PATH. Install it (e.g. `apt install xdotool`).")
+  (console/error "ERROR: xdotool not found on PATH. Install it (e.g. `apt install xdotool`).")
   (.exit process 1))
 
-(.log console "=== Memory Benchmark ===")
-(.log console (str "  Tabs: " NUM-TABS))
-(.log console (str "  Settle time: " (/ SETTLE-MS 1000) "s"))
-(.log console (str "  Gjoa:    " GJOA-BIN))
-(.log console (str "  Firefox: " FIREFOX-BIN))
+(console/log "=== Memory Benchmark ===")
+(console/log (str "  Tabs: " NUM-TABS))
+(console/log (str "  Settle time: " (/ SETTLE-MS 1000) "s"))
+(console/log (str "  Gjoa:    " GJOA-BIN))
+(console/log (str "  Firefox: " FIREFOX-BIN))
 
 (def RUNS :- Any 3)
 (def gjoaResults :- Any (js/await (runBenchmark! GJOA-BIN "Gjoa" "Gjoa|gjoa" RUNS)))
 (def firefoxResults :- Any (js/await (runBenchmark! FIREFOX-BIN "Firefox" "Mozilla Firefox|Firefox" RUNS)))
 
-(.log console "\n=== Comparison ===\n")
-(.log console (format-result (str "Memory (" NUM-TABS " tabs, total PSS MB)") gjoaResults firefoxResults "MB"))
+(console/log "\n=== Comparison ===\n")
+(console/log (format-result (str "Memory (" NUM-TABS " tabs, total PSS MB)") gjoaResults firefoxResults "MB"))
 
 ;; Per-tab summary
 (def gjoaPerTab :- Any (.map gjoaResults (fn [v] (/ v NUM-TABS))))
 (def firefoxPerTab :- Any (.map firefoxResults (fn [v] (/ v NUM-TABS))))
-(.log console "")
-(.log console (format-result "Memory (per-tab MB)" gjoaPerTab firefoxPerTab "MB"))
-(.log console "")
+(console/log "")
+(console/log (format-result "Memory (per-tab MB)" gjoaPerTab firefoxPerTab "MB"))
+(console/log "")

@@ -9,7 +9,7 @@
             [gjoa.tools.prep.paths :refer [BRANDING-SRC REPO-ROOT]]
             [gjoa.tools.prep.log :refer [log]]))
 (define-mode strict)
-(declare-extern [process Bun Promise Error Response String console] Any)
+(declare-extern [process Bun String] Any)
 
 (def SOURCE-SVG :- String (join REPO-ROOT "assets" "gjoa.svg"))
 (def SOURCE-WORDMARK :- String (join REPO-ROOT "assets" "gjoa-wordmark.svg"))
@@ -32,9 +32,9 @@
 ;; mirrors the old `$`…`.quiet()` behavior (silent on success, throws on fail).
 (defn run-quiet [argv :- Any] :- Any
   (let [proc (.spawn Bun {:cmd argv :stdout "pipe" :stderr "pipe"})
-        results (js/await (.all Promise [(.text (Response. (.-stdout proc)))
-                                         (.text (Response. (.-stderr proc)))
-                                         (.-exited proc)]))
+        results (js/await (Promise/all [(.text (Response. (.-stdout proc)))
+                                        (.text (Response. (.-stderr proc)))
+                                        (.-exited proc)]))
         stderr (aget results 1)
         code (aget results 2)]
     (if (not= code 0)
@@ -101,6 +101,6 @@
   (fn [err]
     (.error log (or (.-message err) (String err)))
     (if (.-DEBUG (.-env process))
-      (.error console (.-stack err))
+      (console/error (.-stack err))
       nil)
     (.exit process 1)))

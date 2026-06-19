@@ -14,7 +14,7 @@
 ;; last successful commit is durable. Hash dedupe runs in-memory before
 ;; touching the DB so we don't pay a write cost for no-op saves.
 
-(declare-extern [Services Ci PathUtils IOUtils ChromeUtils console JSON Date crypto TextEncoder Uint8Array String Object Array Error RegExp create-logger!] Any)
+(declare-extern [Services Ci PathUtils ChromeUtils crypto String create-logger!] Any)
 (def SCHEMA-VERSION :- Int 3)
 
 (def INSTANCE-ID-PREF :- String "gjoa.instance.id")
@@ -80,15 +80,15 @@
     ;; `"type":undefined` and the snapshot becomes unparseable forever.
     (= (js/typeof value) "undefined")   "null"
     (= value nil)                       "null"
-    (not= (js/typeof value) "object")   (.stringify JSON value)
-    (.isArray Array value)
+    (not= (js/typeof value) "object")   (JSON/stringify value)
+    (Array/isArray value)
       (str "[" (.join (.map value #(canonicalize %)) ",") "]")
     :else
-      (let [keys (.filter (.sort (.keys Object value))
+      (let [keys (.filter (.sort (Object/keys value))
                    #(not= (js/typeof (aget value %)) "undefined"))]
         (str "{"
              (.join (.map keys
-                      #(str (.stringify JSON %) ":" (canonicalize (aget value %))))
+                      #(str (JSON/stringify %) ":" (canonicalize (aget value %))))
                     ",")
              "}"))))
 
@@ -212,9 +212,9 @@
 ;; one corrupt row can't reject the whole `:restore` / `:history` query.
 (defn decode-row [row :- Any] :- Any
   (let [snap (.getResultByName row "snapshot")
-        parsed (try (.parse JSON snap)
+        parsed (try (JSON/parse snap)
                  (catch Any e
-                   (.warn console "gjoa-tabs: skipping unparseable history snapshot"
+                   (console/warn "gjoa-tabs: skipping unparseable history snapshot"
                      (.getResultByName row "id") (.-message e))
                    nil))]
     (when parsed
@@ -280,7 +280,7 @@
            (-> (sha256-hex canon)
                (.then (fn [hash]
                  (when (not= hash (.-lastHash state))
-                   (let [ts (.now Date)
+                   (let [ts (Date/now)
                          inst-id (load-instance-id!)
                          result {:insertedId nil}]
                      (.then
@@ -387,7 +387,7 @@
                                 (.getIntPref (.-prefs Services) "gjoa.history.retainDays" 30))
                        max-rows (or (and opts (.-maxRows opts))
                                     (.getIntPref (.-prefs Services) "gjoa.history.maxRows" 10000))
-                       cutoff (- (.now Date) (* days 24 60 60 1000))
+                       cutoff (- (Date/now) (* days 24 60 60 1000))
                        result {:deleted 0}]
            (-> (.executeTransaction %
                  (fn []

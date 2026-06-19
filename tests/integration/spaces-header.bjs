@@ -8,8 +8,6 @@
   (:require [gjoa.tests.dsl :refer [deftest chrome-eval await-true expect expect-eq wait-for]]))
 (define-mode strict)
 
-(declare-extern [Math JSON] Any)
-
 ;; Reset all non-default spaces between subtests so each one starts clean.
 (defn reset-spaces [mn :- Any] :- Any
   (chrome-eval
@@ -57,9 +55,9 @@
              names (chrome-eval "return window.Spaces.list().map(s => s.name);")]
          (expect-eq after before
                     (str ":sp should be unknown — but a space was created. before=" before " after=" after " "
-                         "names=" (.stringify JSON names)))
+                         "names=" (JSON/stringify names)))
          (expect (not (.includes names "Ghost"))
-                 (str ":sp created a \"Ghost\" space — alias was not removed. names=" (.stringify JSON names))))))
+                 (str ":sp created a \"Ghost\" space — alias was not removed. names=" (JSON/stringify names))))))
 
    (deftest "Spaces header — element exists in sidebar above tab panel" [mn]
      (js/await (reset-spaces mn))
@@ -144,7 +142,7 @@
        ;; And the label's left edge should be within ~12px of the leftmost
        ;; nav-bar icon — i.e. on the same visual content rail.
        (when (not= (.-firstNavIconLeft r) nil)
-         (let [drift (.abs Math (- (.-labelLeft r) (.-firstNavIconLeft r)))]
+         (let [drift (Math/abs (- (.-labelLeft r) (.-firstNavIconLeft r)))]
            (expect (not (> drift 24))
                    (str "Header label not aligned with nav-bar icons: labelLeft=" (.-labelLeft r) " "
                         "firstNavIconLeft=" (.-firstNavIconLeft r) " drift=" drift "px (expected ≤24px)."))))))

@@ -10,7 +10,7 @@
             [gjoa.tools.chrome-bundle.build-config :refer [entries]]))
 (define-mode strict)
 
-(declare-extern [process console Array Promise] Any)
+(declare-extern [process] Any)
 
 ;; tools run via `bun run` from repo root; import.meta.dir is repo-relative.
 (def REPO-ROOT :- String (.cwd process))
@@ -67,14 +67,14 @@
                           (.push blocks (str "{\n" code "\n}"))
                           false)
                         (catch Any err
-                          (.error console (str "✗ " file ": " (.-message err)))
+                          (console/error (str "✗ " file ": " (.-message err)))
                           true)))]
                 (if fail
                   true
                   (recur (+ i 1)))))))]
     (if failed
       false
-      (let [unique (.from Array (Set. all-exports))
+      (let [unique (Array/from (Set. all-exports))
             var-decl (if (> (.-length unique) 0)
                        (str "var " (.join unique ", ") ";\n\n")
                        "")
@@ -83,10 +83,10 @@
             output (str (.-banner entry) "\n\n" iife)
             out-path (join OUT-DIR (.-out entry))]
         (js/await (writeFile out-path output))
-        (.log console (str "✓ " out-path "  (" (.-length body) " bytes)"))
+        (console/log (str "✓ " out-path "  (" (.-length body) " bytes)"))
         true))))
 
 (js/await (mkdir OUT-DIR {:recursive true}))
-(def results :- Any (js/await (.all Promise (.map entries build-one))))
+(def results :- Any (js/await (Promise/all (.map entries build-one))))
 (when (.some results (fn [ok] (not ok)))
   (.exit process 1))

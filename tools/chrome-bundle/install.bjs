@@ -23,7 +23,7 @@
             [fs/promises :refer [rm symlink]]
             [path :refer [join]]))
 (define-mode strict)
-(declare-extern [process console] Any)
+(declare-extern [process] Any)
 
 ;; tools/chrome-bundle/install.ts used resolve(import.meta.dir, "..", "..")
 ;; to reach the repo root. Tools run via `bun run` from the repo root, so
@@ -40,10 +40,10 @@
 
 (defn main! [] :- Any
   (when (not (existsSync DIST-CHROME))
-    (.error console "✗ dist/chrome/ not built — run `bun run chrome:dist` first")
+    (console/error "✗ dist/chrome/ not built — run `bun run chrome:dist` first")
     (.exit process 1))
   (when (not (existsSync INSTALL-ROOT))
-    (.error console
+    (console/error
       (str "✗ install root not found at " INSTALL-ROOT " — has gjoa been built "
            "via mach? (`cd engine && ./mach build`)"))
     (.exit process 1))
@@ -53,9 +53,9 @@
     (js/await (rm GJOA-DEV {:recursive true :force true})))
   (js/await (symlink DIST-CHROME GJOA-DEV "dir"))
 
-  (.log console (str "✓ symlinked " DIST-CHROME " → " GJOA-DEV))
-  (.log console "\nLaunch:")
-  (.log console (str "  " INSTALL-ROOT "/gjoa --no-remote --profile <profile_dir>"))
-  (.log console "\nDaily loop: edit src/gjoa/chrome/bjs/* → `bun run chrome:dist` → restart gjoa."))
+  (console/log (str "✓ symlinked " DIST-CHROME " → " GJOA-DEV))
+  (console/log "\nLaunch:")
+  (console/log (str "  " INSTALL-ROOT "/gjoa --no-remote --profile <profile_dir>"))
+  (console/log "\nDaily loop: edit src/gjoa/chrome/bjs/* → `bun run chrome:dist` → restart gjoa."))
 
 (js/await (main!))

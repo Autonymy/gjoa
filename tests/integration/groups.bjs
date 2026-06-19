@@ -24,7 +24,6 @@
 
 ;; IntegrationTest / MarionetteClient are TypeScript type-only imports —
 ;; erased at runtime, so nothing to require here.
-(declare-extern [JSON setTimeout] Any)
 
 ;; Wait until gjoa-tabs has rendered N rows in the sidebar panel.
 (defn wait-for-rows [mn :- Any n :- Any] :- Any
@@ -54,7 +53,7 @@
       "      after:  tRect.bottom - 2,\n"
       "      into:   tRect.top + (tRect.height / 2),\n"
       "    };\n"
-      "    const clientY = yByPosition[" (.stringify JSON position) "];\n"
+      "    const clientY = yByPosition[" (JSON/stringify position) "];\n"
       "    const clientX = tRect.left + (tRect.width / 2);\n"
       "    const dt = new DataTransfer();\n"
       "    function fire(el, type, x, y) {\n"
@@ -234,30 +233,30 @@
              (when (< group-idx 0)
                (throw (Error.
                         (str "expected a group row in the tree after Create Group. "
-                             "before=" (.stringify JSON before) ", after=" (.stringify JSON after)))))
+                             "before=" (JSON/stringify before) ", after=" (JSON/stringify after)))))
              (let [group-level (aget (aget after group-idx) 0)
                    parent-idx (.findIndex after (fn [row] (and (= (aget row 1) "tab") (.includes (aget row 2) "about:blank?p"))))
                    a-idx (.findIndex after (fn [row] (and (= (aget row 1) "tab") (.includes (aget row 2) "about:blank?a"))))
                    b-idx (.findIndex after (fn [row] (and (= (aget row 1) "tab") (.includes (aget row 2) "about:blank?b"))))]
                (when (or (< parent-idx 0) (< a-idx 0) (< b-idx 0))
-                 (throw (Error. (str "tabs missing in after-tree: " (.stringify JSON after)))))
+                 (throw (Error. (str "tabs missing in after-tree: " (JSON/stringify after)))))
                (let [expected (+ group-level 1)]
                  (when (not= (aget (aget after parent-idx) 0) expected)
                    (throw (Error.
                             (str "parent tab level should be " expected " (group.level + 1), "
-                                 "got " (aget (aget after parent-idx) 0) ". tree=" (.stringify JSON after)))))
+                                 "got " (aget (aget after parent-idx) 0) ". tree=" (JSON/stringify after)))))
                  (when (or (<= (aget (aget after a-idx) 0) expected) (<= (aget (aget after b-idx) 0) expected))
                    (throw (Error.
                             (str "children should be indented deeper than parent (" expected "), "
                                  "got A=" (aget (aget after a-idx) 0) " B=" (aget (aget after b-idx) 0) ". "
-                                 "tree=" (.stringify JSON after)))))
+                                 "tree=" (JSON/stringify after)))))
                  ;; Group should sit at the parent's old position (before the parent
                  ;; in DOM order). Since groupIdx < parentIdx already, that's covered.
                  (when (>= group-idx parent-idx)
                    (throw (Error.
                             (str "group should be inserted BEFORE the parent tab. "
                                  "groupIdx=" group-idx " parentIdx=" parent-idx ". "
-                                 "tree=" (.stringify JSON after))))))))))))
+                                 "tree=" (JSON/stringify after))))))))))))
 
    (deftest "#12b drop tab AS CHILD of a non-empty group lands AT END of subtree (after last child)" [mn]
      (js/await (ensure-sidebar-expanded mn))
@@ -317,7 +316,7 @@
                seed-idx (.findIndex all-rows-before (fn [r] (.includes (.-label r) "about:blank?seed")))
                dropper-idx (.findIndex all-rows-before (fn [r] (.includes (.-label r) "about:blank?dropper2")))]
            (when (or (< latest-group-idx 0) (< seed-idx 0) (< dropper-idx 0))
-             (throw (Error. (str "setup: latestGroupIdx=" latest-group-idx " seedIdx=" seed-idx " dropperIdx=" dropper-idx ", rows=" (.stringify JSON all-rows-before)))))
+             (throw (Error. (str "setup: latestGroupIdx=" latest-group-idx " seedIdx=" seed-idx " dropperIdx=" dropper-idx ", rows=" (JSON/stringify all-rows-before)))))
            (chrome-eval (build-drag-script
                           {:sourceIndex seed-idx
                            :targetIndex latest-group-idx
@@ -340,7 +339,7 @@
                        acc))
                    new-dropper-idx (.findIndex all-rows-mid (fn [r] (.includes (.-label r) "about:blank?dropper2")))]
                (when (or (< mid-group-idx 0) (< new-dropper-idx 0))
-                 (throw (Error. (str "mid: groupIdx=" mid-group-idx " dropperIdx=" new-dropper-idx ", rows=" (.stringify JSON all-rows-mid)))))
+                 (throw (Error. (str "mid: groupIdx=" mid-group-idx " dropperIdx=" new-dropper-idx ", rows=" (JSON/stringify all-rows-mid)))))
                (chrome-eval (build-drag-script
                               {:sourceIndex new-dropper-idx
                                :targetIndex mid-group-idx
@@ -360,23 +359,23 @@
                        post-seed-idx (.findIndex after (fn [row] (and (= (aget row 1) "tab") (.includes (aget row 2) "about:blank?seed"))))
                        post-dropper-idx (.findIndex after (fn [row] (and (= (aget row 1) "tab") (.includes (aget row 2) "about:blank?dropper2"))))]
                    (when (or (< post-group-idx 0) (< post-seed-idx 0) (< post-dropper-idx 0))
-                     (throw (Error. (str "after: postGroupIdx=" post-group-idx " postSeedIdx=" post-seed-idx " postDropperIdx=" post-dropper-idx ", tree=" (.stringify JSON after)))))
+                     (throw (Error. (str "after: postGroupIdx=" post-group-idx " postSeedIdx=" post-seed-idx " postDropperIdx=" post-dropper-idx ", tree=" (JSON/stringify after)))))
                    ;; (1) dropper2 must sit AFTER the group row in DOM order
                    (when (<= post-dropper-idx post-group-idx)
                      (throw (Error.
                               (str "BUG: dropper2 should land AFTER (below) the group row, but is at DOM idx " post-dropper-idx " "
-                                   "vs group at " post-group-idx ". tree=" (.stringify JSON after)))))
+                                   "vs group at " post-group-idx ". tree=" (JSON/stringify after)))))
                    ;; (2) dropper2 must sit AFTER the seed (end of subtree)
                    (when (<= post-dropper-idx post-seed-idx)
                      (throw (Error.
                               (str "dropper2 should land AT END of subtree, after seed. "
-                                   "dropper@" post-dropper-idx " seed@" post-seed-idx ". tree=" (.stringify JSON after)))))
+                                   "dropper@" post-dropper-idx " seed@" post-seed-idx ". tree=" (JSON/stringify after)))))
                    ;; (3) Indented (level > group's level)
                    (let [group-lv (aget (aget after post-group-idx) 0)]
                      (when (<= (aget (aget after post-dropper-idx) 0) group-lv)
                        (throw (Error.
                                 (str "dropper2 should be indented (level > " group-lv "), got " (aget (aget after post-dropper-idx) 0) ". "
-                                     "tree=" (.stringify JSON after))))))))))))))
+                                     "tree=" (JSON/stringify after))))))))))))))
 
    (deftest "#12 drop tab AS CHILD of an empty group lands inside (indented), not above" [mn]
      (js/await (ensure-sidebar-expanded mn))
@@ -433,7 +432,7 @@
       ")]
            (let [dropper-idx (.findIndex all-rows (fn [r] (.includes (.-label r) "about:blank?dropper")))]
              (when (or (< dropper-idx 0) (< group-idx 0))
-               (throw (Error. (str "setup: dropperIdx=" dropper-idx " groupIdx=" group-idx ", tree=" (.stringify JSON all-rows)))))
+               (throw (Error. (str "setup: dropperIdx=" dropper-idx " groupIdx=" group-idx ", tree=" (JSON/stringify all-rows)))))
 
              (chrome-eval (build-drag-script
                             {:sourceIndex dropper-idx
@@ -445,15 +444,15 @@
                (let [new-dropper-idx (.findIndex after (fn [row] (and (= (aget row 1) "tab") (.includes (aget row 2) "about:blank?dropper"))))
                      new-group-idx (.findIndex after (fn [row] (= (aget row 1) "group")))]
                  (when (or (< new-dropper-idx 0) (< new-group-idx 0))
-                   (throw (Error. (str "after-drop: dropperIdx=" new-dropper-idx " groupIdx=" new-group-idx ", tree=" (.stringify JSON after)))))
+                   (throw (Error. (str "after-drop: dropperIdx=" new-dropper-idx " groupIdx=" new-group-idx ", tree=" (JSON/stringify after)))))
                  (when (<= new-dropper-idx new-group-idx)
                    (throw (Error.
                             (str "dropper should land AFTER (inside) the group, but is at " new-dropper-idx " "
-                                 "vs group at " new-group-idx ". tree=" (.stringify JSON after)))))
+                                 "vs group at " new-group-idx ". tree=" (JSON/stringify after)))))
                  (let [group-level (aget (aget after new-group-idx) 0)]
                    (when (<= (aget (aget after new-dropper-idx) 0) group-level)
                      (throw (Error.
                               (str "dropper should be indented (level > " group-level "), "
-                                   "got level=" (aget (aget after new-dropper-idx) 0) ". tree=" (.stringify JSON after)))))))))))))]))
+                                   "got level=" (aget (aget after new-dropper-idx) 0) ". tree=" (JSON/stringify after)))))))))))))]))
 
 (js/export-default tests)

@@ -3,7 +3,7 @@
   (:require [gjoa.macros :refer [guard! quiet!]]))
 (define-mode strict)
 
-(declare-extern [Services console] Any)
+(declare-extern [Services] Any)
 
 (js/export (defn on [topic :- String handler :- Any] :- Any
   (let [observer {:observe (fn [subject _topic data]

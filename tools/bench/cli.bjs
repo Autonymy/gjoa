@@ -4,12 +4,12 @@
 ;; Subcommands: cold-start, memory, all
 (ns gjoa.tools.bench.cli)
 (define-mode strict)
-(declare-extern [Bun process console] Any)
+(declare-extern [Bun process] Any)
 
 (def subcommand :- Any (aget (.-argv Bun) 2))
 
 (defn usage [] :- Any
-  (.log console (str "
+  (console/log (str "
 Usage: bun tools/bench/cli.ts <command> [options]
 
 Commands:
@@ -72,12 +72,12 @@ Prepare environment first:
 (defn print-environment-status [] :- Any
   (let [warnings (.-warnings (check-environment))]
     (if (= (.-length warnings) 0)
-      (.log console "  Environment: OK (turbo off, performance governor, ASLR off)")
+      (console/log "  Environment: OK (turbo off, performance governor, ASLR off)")
       (do
-        (.log console "  Environment warnings:")
+        (console/log "  Environment warnings:")
         (doseq [w warnings]
-          (.log console (str "    WARN: " w)))))
-    (.log console "")))
+          (console/log (str "    WARN: " w)))))
+    (console/log "")))
 
 (defn find-binary [name :- String] :- Any
   (if (= name "gjoa")
@@ -110,14 +110,14 @@ Prepare environment first:
     (.exit process 0))
   (do
     ;; Print header
-    (.log console "\n=== Gjoa Benchmark Suite ===\n")
+    (console/log "\n=== Gjoa Benchmark Suite ===\n")
 
     ;; Auto-detect binaries
     (let [gjoa-bin (find-binary "gjoa")
           firefox-bin (find-binary "firefox")]
-      (.log console (str "  Gjoa binary:    " (or gjoa-bin "NOT FOUND")))
-      (.log console (str "  Firefox binary: " (or firefox-bin "NOT FOUND")))
-      (.log console ""))
+      (console/log (str "  Gjoa binary:    " (or gjoa-bin "NOT FOUND")))
+      (console/log (str "  Firefox binary: " (or firefox-bin "NOT FOUND")))
+      (console/log ""))
 
     ;; Environment check
     (print-environment-status)
@@ -131,6 +131,6 @@ Prepare environment first:
       ;; Already printed above
       ["env-check" nil]
       [_ (do
-           (.error console (str "Unknown command: " subcommand))
+           (console/error (str "Unknown command: " subcommand))
            (usage)
            (.exit process 1))])))

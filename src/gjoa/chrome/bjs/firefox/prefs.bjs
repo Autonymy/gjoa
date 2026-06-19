@@ -5,7 +5,7 @@
                                  guard! quiet!]]))
 (define-mode strict)
 
-(declare-extern [Services ChromeUtils console] Any)
+(declare-extern [Services ChromeUtils] Any)
 
 (js/export (defn get-bool [name :- String default-value :- Any] :- Any
   (pref-bool name (or default-value false))))

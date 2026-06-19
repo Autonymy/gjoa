@@ -16,7 +16,6 @@
 (ns gjoa.tests.integration.darkmode-hybrid
   (:require [gjoa.tests.dsl :refer [deftest chrome-eval await-true wait-for expect expect-eq]]))
 (define-mode strict)
-(declare-extern [JSON] Any)
 
 (def TOP :- String "http://127.0.0.1:8975/") ;; no-bg page (UA-dark under hybrid)
 (def LIGHT-TOP :- String "http://127.0.0.1:8975/light") ;; hardcoded-light themeless site

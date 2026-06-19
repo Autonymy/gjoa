@@ -2,8 +2,6 @@
 (ns gjoa.tabs.state)
 (define-mode strict)
 
-(declare-extern [WeakMap Set] Any)
-
 (js/export (def state :- Any
   {:panel nil
    :spacer nil

@@ -14,7 +14,7 @@
             [path :refer [join basename]]
             [gjoa.tools.prep.symbol-resolve :refer [check-contract]]))
 (define-mode strict)
-(declare-extern [process console JSON parseInt Array String] Any)
+(declare-extern [process] Any)
 
 ;; The old .ts used `resolve(import.meta.dir, "..", "..")` to climb from
 ;; tools/scripts/ to the repo root. There is no import.meta in beagle, and
@@ -70,7 +70,7 @@
 ;; ── Gate A: patches apply cleanly against fresh source ─────────────────────
 (defn gateA [] :- Any
   (let [cache (str (.-HOME (.-env process)) "/.cache/gjoa/sources")
-        gjoa (.parse JSON (readFileSync GJOA-JSON "utf8"))
+        gjoa (JSON/parse (readFileSync GJOA-JSON "utf8"))
         tarball (str cache "/firefox-" (.-version (.-firefox gjoa)) ".source.tar.xz")]
     (if (not (existsSync tarball))
       (fail "A" "patches apply clean on fresh source"
@@ -282,16 +282,16 @@
       (let [loader (readFileSync loaderPath "utf8")
             jar (readFileSync jarPath "utf8")
             bake (readFileSync bakePath "utf8")
-            loaderScripts (.sort (.map (.from Array (.matchAll loader (RegExp. "\"(gjoa-[a-z-]+\\.uc\\.js)\"" "g"))) (fn [m] (aget m 1))))
-            jarScripts (.sort (.filter (.map (.from Array (.matchAll jar (RegExp. "scripts/(gjoa-[a-z-]+\\.uc\\.js)" "g"))) (fn [m] (aget m 1)))
+            loaderScripts (.sort (.map (Array/from (.matchAll loader (RegExp. "\"(gjoa-[a-z-]+\\.uc\\.js)\"" "g"))) (fn [m] (aget m 1))))
+            jarScripts (.sort (.filter (.map (Array/from (.matchAll jar (RegExp. "scripts/(gjoa-[a-z-]+\\.uc\\.js)" "g"))) (fn [m] (aget m 1)))
                                        (fn [v i a] (= (.indexOf a v) i))))
-            bakeScripts (.sort (.map (.from Array (.matchAll bake (RegExp. "\"(gjoa-[a-z-]+\\.uc\\.js)\"" "g"))) (fn [m] (aget m 1))))
+            bakeScripts (.sort (.map (Array/from (.matchAll bake (RegExp. "\"(gjoa-[a-z-]+\\.uc\\.js)\"" "g"))) (fn [m] (aget m 1))))
             ;; CSS bundles include the bare `gjoa.uc.css` (no hyphen suffix), so the
             ;; style pattern must allow an optional `-...` segment.
-            loaderStyles (.sort (.map (.from Array (.matchAll loader (RegExp. "\"(gjoa(?:-[a-z-]+)?\\.uc\\.css)\"" "g"))) (fn [m] (aget m 1))))
-            jarStyles (.sort (.filter (.map (.from Array (.matchAll jar (RegExp. "styles/(gjoa(?:-[a-z-]+)?\\.uc\\.css)" "g"))) (fn [m] (aget m 1)))
+            loaderStyles (.sort (.map (Array/from (.matchAll loader (RegExp. "\"(gjoa(?:-[a-z-]+)?\\.uc\\.css)\"" "g"))) (fn [m] (aget m 1))))
+            jarStyles (.sort (.filter (.map (Array/from (.matchAll jar (RegExp. "styles/(gjoa(?:-[a-z-]+)?\\.uc\\.css)" "g"))) (fn [m] (aget m 1)))
                                       (fn [v i a] (= (.indexOf a v) i))))
-            bakeStyles (.sort (.map (.from Array (.matchAll bake (RegExp. "\"(gjoa(?:-[a-z-]+)?\\.uc\\.css)\"" "g"))) (fn [m] (aget m 1))))
+            bakeStyles (.sort (.map (Array/from (.matchAll bake (RegExp. "\"(gjoa(?:-[a-z-]+)?\\.uc\\.css)\"" "g"))) (fn [m] (aget m 1))))
             eq (fn [a :- Any b :- Any]
                  (and (= (.-length a) (.-length b))
                       (.every a (fn [x i] (= x (aget b i))))))]
@@ -393,9 +393,9 @@
 
 ;; ── Run + render ──────────────────────────────────────────────────────────
 (defn main! [] :- Any
-  (.log console (bold "gjoa preflight"))
-  (.log console (dim "Mandatory gate before any nix or full-mach build (CLAUDE.md Rule #0)."))
-  (.log console "")
+  (console/log (bold "gjoa preflight"))
+  (console/log (dim "Mandatory gate before any nix or full-mach build (CLAUDE.md Rule #0)."))
+  (console/log "")
 
   (let [gates [["A" gateA] ["B" gateB] ["C" gateC] ["D" gateD]
                ["E" gateE] ["F" gateF] ["G" gateG] ["H" gateH]
@@ -409,25 +409,25 @@
     (let [mark (cond (.-warned r) (yellow "⚠")
                      (.-passed r) (green "✓")
                      :else (red "✗"))]
-      (.log console (str mark "  " (bold (.-id r)) "  " (.-name r)))
-      (.log console (str "     " (dim (.-detail r))))
+      (console/log (str mark "  " (bold (.-id r)) "  " (.-name r)))
+      (console/log (str "     " (dim (.-detail r))))
       (when (and (not (.-passed r)) (.-fix r))
-        (.log console (str "     " (yellow (str "fix: " (.join (.split (.-fix r) "\n") "\n          "))))))))
+        (console/log (str "     " (yellow (str "fix: " (.join (.split (.-fix r) "\n") "\n          "))))))))
 
   (let [failed (.-length (.filter results (fn [r] (not (.-passed r)))))]
-    (.log console "")
+    (console/log "")
     (if (= failed 0)
       (do
-        (.log console (str (green (bold "PREFLIGHT GREEN")) (dim (str "  — " (.-length results) "/" (.-length results) " gates passed"))))
-        (.log console (dim "Safe to propose a rebuild. Show this output in the proposal."))
+        (console/log (str (green (bold "PREFLIGHT GREEN")) (dim (str "  — " (.-length results) "/" (.-length results) " gates passed"))))
+        (console/log (dim "Safe to propose a rebuild. Show this output in the proposal."))
         (.exit process 0))
       (do
-        (.log console (str (red (bold "PREFLIGHT FAILED")) (dim (str "  — " failed "/" (.-length results) " gates failed"))))
-        (.log console (red "Do NOT kick off a build until every gate is green."))
+        (console/log (str (red (bold "PREFLIGHT FAILED")) (dim (str "  — " failed "/" (.-length results) " gates failed"))))
+        (console/log (red "Do NOT kick off a build until every gate is green."))
         (.exit process 1)))))
 
 ;; The .ts guarded on `import.meta.main`; there is no import.meta in beagle, and
 ;; Errors abort with exit 1, matching the original `.catch` handler. Guarded so
 ;; the CLI runs only when invoked directly, never on import.
 (when (.-main (js/import-meta))
-  (.catch (main!) (fn [e] (.error console e) (.exit process 1))))
+  (.catch (main!) (fn [e] (console/error e) (.exit process 1))))

@@ -14,7 +14,6 @@
 
 ;; IntegrationTest / MarionetteClient are TypeScript type-only imports —
 ;; no runtime presence, so nothing to require here.
-(declare-extern [Date JSON] Any)
 
 ;; Reset the pref + spaces between subtests.
 (defn reset [mn :- Any] :- Any
@@ -39,10 +38,10 @@
      ;; walk the rendered rows and capture their inline padding (the
      ;; visual indent gjoa applies = level * 14 + 8 pixels). All single-
      ;; script so we don't lose state across marionette sandboxes.
-     (let [stamp (str "tabpos-default-" (.now Date))
+     (let [stamp (str "tabpos-default-" (Date/now))
            data (chrome-eval
                   (str
-                    "        const stamp = " (.stringify JSON stamp) ";\n"
+                    "        const stamp = " (JSON/stringify stamp) ";\n"
                     "        const principal = Services.scriptSecurityManager.getSystemPrincipal();\n"
                     "        const root = gBrowser.addTab(\"about:blank\", { triggeringPrincipal: principal });\n"
                     "        root.setAttribute(\"gjoa-test-marker\", stamp + \"-root\");\n"
@@ -67,16 +66,16 @@
                     "        });\n"
                     "      "))]
        (when (not= (.-length data) 4)
-         (throw (Error. (str "expected 4 marker tabs, got " (.-length data) ": " (.stringify JSON data)))))
+         (throw (Error. (str "expected 4 marker tabs, got " (.-length data) ": " (JSON/stringify data)))))
        ;; Root-level rows have padding-inline-start = 8px (level 0 * 14 + 8).
        (let [non-root (.filter data (fn [r] (or (not= (.-pad r) 8) (not= (.-parentId r) nil))))]
          (when (> (.-length non-root) 0)
-           (throw (Error. (str "expected all root (pad=8, parentId=null); got: " (.stringify JSON data))))))))
+           (throw (Error. (str "expected all root (pad=8, parentId=null); got: " (JSON/stringify data))))))))
 
    (deftest "tabpos default — Ctrl+T while a CHILD tab is selected spawns a sibling at same depth" [mn]
      (await-true "return !!document.getElementById(\"gjoa-tab-panel\");" 2000)
      (js/await (reset mn))
-     (let [stamp (str "tabpos-sibling-" (.now Date))]
+     (let [stamp (str "tabpos-sibling-" (Date/now))]
        (chrome-eval (str "window.__stamp = \"" stamp "\";"))
 
        ;; Build: parent → child. Select the child.
@@ -133,7 +132,7 @@
        ;; Open: parent → child → grandchild via the pref. With "root",
        ;; EVERY new tab should be at parentId=null even when an ownerTab
        ;; is supplied.
-       (let [stamp (str "tabpos-root-" (.now Date))]
+       (let [stamp (str "tabpos-root-" (Date/now))]
          (chrome-eval
            (str
              "        const principal = Services.scriptSecurityManager.getSystemPrincipal();\n"
@@ -156,13 +155,13 @@
                            "      "))
                non-root (.filter parents (fn [r] (not= (.-p r) nil)))]
            (when (> (.-length non-root) 0)
-             (throw (Error. (str ":tabpos root broken — non-root tabs: " (.stringify JSON parents)))))))))
+             (throw (Error. (str ":tabpos root broken — non-root tabs: " (JSON/stringify parents)))))))))
 
    (deftest ":tabpos child — switching the pref makes new tabs nest under their owner" [mn]
      (await-true "return !!window.gjoaTest;" 2000)
      (js/await (reset mn))
      (chrome-eval "window.gjoaTest.vim.runExCommand(\"tabpos child\");")
-     (let [stamp (str "tabpos-child-" (.now Date))]
+     (let [stamp (str "tabpos-child-" (Date/now))]
        (chrome-eval
          (str
            "        const principal = Services.scriptSecurityManager.getSystemPrincipal();\n"

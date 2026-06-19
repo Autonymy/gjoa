@@ -9,7 +9,7 @@
   (:require [gjoa.macros :refer [pref-bool pref-int on1!]]))
 (define-mode strict)
 
-(declare-extern [window console Services ChromeUtils JSON Map Promise Math setTimeout clearTimeout] Any)
+(declare-extern [window Services ChromeUtils] Any)
 
 ;; Resolved lazily (inside spawn!) so the module imports cleanly in a unit test
 ;; where ChromeUtils doesn't exist — reduce-event/switch-to-space stay pure.
@@ -73,12 +73,12 @@
               (set! (.-__niriDriving st) true)
               (try
                 (switch-to-space spaces n)
-                (catch Any e (.error console "gjoa-niri: switch failed" e))
+                (catch Any e (console/error "gjoa-niri: switch failed" e))
                 (finally (set! (.-__niriDriving st) false))))))
         delay))))
 
 (defn handle-line! [line :- String] :- Any
-  (let [ev (try (.parse JSON line) (catch Any _e nil))]
+  (let [ev (try (JSON/parse line) (catch Any _e nil))]
     (when ev
       (let [r (reduce-event (.-cache st) ev)]
         (set! (.-cache st) (.-cache r))
@@ -120,13 +120,13 @@
               (set! (.-proc st) proc)
               (set! (.-alive st) true)
               (set! (.-backoff st) 500)
-              (.log console "gjoa-niri: event-stream attached")
+              (console/log "gjoa-niri: event-stream attached")
               (-> (pump! proc)
                   (.then (fn [_]
                     (set! (.-proc st) nil)
                     (when (.-alive st) (schedule-respawn!))))))))))
       (.catch (fn [e]
-        (.error console "gjoa-niri: spawn failed (niri on PATH?)" e)
+        (console/error "gjoa-niri: spawn failed (niri on PATH?)" e)
         (when (.-alive st) (schedule-respawn!)))))))
 
 (defn teardown! [] :- Any
@@ -142,12 +142,12 @@
         sock (try (.get (.-env Services) "NIRI_SOCKET") (catch Any _e ""))]
     (cond
       (not enabled)
-      (.log console "gjoa-niri: disabled via pref")
+      (console/log "gjoa-niri: disabled via pref")
       (or (not sock) (= sock ""))
-      (.log console "gjoa-niri: NIRI_SOCKET unset — not a niri session, skipping")
+      (console/log "gjoa-niri: NIRI_SOCKET unset — not a niri session, skipping")
       :else
       (do
         (set! (.-alive st) true)
         (spawn!)
         (on1! window "unload" teardown!)
-        (.log console "gjoa-niri: started"))))))
+        (console/log "gjoa-niri: started"))))))

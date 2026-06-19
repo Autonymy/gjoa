@@ -12,7 +12,7 @@
             [gjoa.tools.prep.patch-header :refer [check-all]]
             [gjoa.tools.prep.log :refer [log]]))
 (define-mode strict)
-(declare-extern [Bun Array] Any)
+(declare-extern [Bun] Any)
 
 (def APPLIED-LOG :- String ".gjoa-applied-patches")
 
@@ -46,7 +46,7 @@
 
 (defn recordApplied [applied :- Any] :- Any
   (let [path (join ENGINE-DIR APPLIED-LOG)
-        sorted (.sort (.from Array applied))]
+        sorted (.sort (Array/from applied))]
     (js/await (.write Bun path (str (.join sorted "\n") "\n")))))
 
 ;; Patch-header lint. Non-fatal — we always apply patches regardless, but a

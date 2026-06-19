@@ -10,7 +10,6 @@
 ;; IntegrationTest is a type-only import in the .ts source; types live in
 ;; .ts and have no runtime form in beagle, so the test objects are plain
 ;; maps typed Any.
-(declare-extern [console JSON] Any)
 
 ;; The chrome-script run inside the browser by executeAsyncScript. It has
 ;; no `${}` interpolation, so it's a plain string literal.
@@ -55,6 +54,6 @@
 (js/export (def tests :- Any
   [(deftest "sqlite: report version + FTS3/FTS5 availability" [mn]
      (let [probe (js/await (.executeAsyncScript mn PROBE-SCRIPT))]
-       (.error console "[sqlite probe]" (.stringify JSON probe nil 2))))]))
+       (console/error "[sqlite probe]" (JSON/stringify probe nil 2))))]))
 
 (js/export-default tests)

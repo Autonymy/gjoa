@@ -21,7 +21,7 @@
             [child_process :refer [spawnSync]]
             [readline :refer [createInterface]]))
 (define-mode strict)
-(declare-extern [process console JSON Date Math] Any)
+(declare-extern [process] Any)
 
 (def REPO-ROOT :- String (.cwd process))
 (def LEDGER :- String (join REPO-ROOT ".test-metrics" "runs.jsonl"))
@@ -53,7 +53,7 @@
 ;; --- ledger append (capped) ----------------------------------------------
 (defn append-run! [record :- Any] :- Any
   (mkdirSync (dirname LEDGER) {:recursive true})
-  (let [line (.stringify JSON record)
+  (let [line (JSON/stringify record)
         prior (if (existsSync LEDGER) (readFileSync LEDGER "utf8") "")
         lines (.filter (.split prior "\n") (fn [l] (not= (.trim l) "")))
         all (.concat lines [line])
@@ -72,7 +72,7 @@
         (.write (.-stdout process) (str line "\n"))
         ;; parse NDJSON events (ignore non-JSON noise lines)
         (try
-          (let [ev (.parse JSON line)
+          (let [ev (JSON/parse line)
                 t (.-type ev)]
             (cond
               (or (= t "test:pass") (= t "test:fail") (= t "test:skip"))
@@ -99,7 +99,7 @@
                       :tests tests}]
           (try (append-run! record)
             (catch Any e
-              (.error console (str "[record-metrics] ledger write failed: " (or (.-message e) e)))))
+              (console/error (str "[record-metrics] ledger write failed: " (or (.-message e) e)))))
           ;; Re-exit with the runner's fail status so the pipe doesn't mask
           ;; test failures (CI would otherwise green on a failed run).
           (.exit process (if (> fail 0) 1 0)))))))

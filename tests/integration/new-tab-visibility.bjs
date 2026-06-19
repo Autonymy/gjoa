@@ -12,8 +12,6 @@
   (:require [gjoa.tests.dsl :refer [deftest chrome-eval await-true expect wait-for]]))
 (define-mode strict)
 
-;; Ambient globals: Error (for the final invariant throw).
-(declare-extern [Error] Any)
 
 (def visibleTabRows :- String
   "

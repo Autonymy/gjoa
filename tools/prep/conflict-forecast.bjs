@@ -13,7 +13,7 @@
             [path :refer [join]]
             [child_process :refer [execSync]]))
 (define-mode strict)
-(declare-extern [process console JSON Error] Any)
+(declare-extern [process] Any)
 
 (def REPO :- String (.cwd process))
 (def PATCHES-DIR :- String (join REPO "patches"))
@@ -30,11 +30,11 @@
   (str "FIREFOX_" (.replaceAll v "." "_") "_RELEASE"))
 
 (defn gjoa-version [] :- String
-  (.-version (.-firefox (.parse JSON (readFileSync (join REPO "gjoa.json") "utf8")))))
+  (.-version (.-firefox (JSON/parse (readFileSync (join REPO "gjoa.json") "utf8")))))
 
 (defn latest-stable [] :- String
   (let [out (sh "curl -s 'https://product-details.mozilla.org/1.0/firefox_versions.json' 2>/dev/null")]
-    (if (= out "") "" (.-LATEST_FIREFOX_VERSION (.parse JSON out)))))
+    (if (= out "") "" (.-LATEST_FIREFOX_VERSION (JSON/parse out)))))
 
 ;; mozilla files a patch touches (exclude the depends-on contract lines)
 (defn touches [text :- String] :- Any
@@ -56,15 +56,15 @@
         from (or (aget argv 0) (gjoa-version))
         to (or (aget argv 1) (latest-stable))]
     (cond
-      (or (= from "") (= to "")) (.log console "forecast: could not determine from/to versions")
-      (= from to) (.log console (str "forecast: already at " to " — nothing to forecast"))
+      (or (= from "") (= to "")) (console/log "forecast: could not determine from/to versions")
+      (= from to) (console/log (str "forecast: already at " to " — nothing to forecast"))
       :else
       (let [delta (.filter (.split (sh (str "git -C " FF " diff --name-only " (version->tag from) " " (version->tag to) " 2>/dev/null")) "\n")
                            (fn [s :- String] :- Bool (> (.-length s) 0)))]
         (if (= (.-length delta) 0)
-          (.log console (str "forecast " from " -> " to ": empty delta — are the release tags present in " FF "?"))
+          (console/log (str "forecast " from " -> " to ": empty delta — are the release tags present in " FF "?"))
           (do
-            (.log console (str "conflict forecast: Firefox " from " -> " to "  (" (.-length delta) " files changed upstream)\n"))
+            (console/log (str "conflict forecast: Firefox " from " -> " to "  (" (.-length delta) " files changed upstream)\n"))
             (let [names (.sort (.filter (readdirSync PATCHES-DIR) (fn [p :- String] :- Bool (.endsWith p ".patch"))))
                   affected []]
               (doseq [n names]
@@ -73,12 +73,12 @@
                   (when (> (.-length hits) 0)
                     (.push affected {:name n :rung (rung-name files) :hits hits}))))
               (if (= (.-length affected) 0)
-                (.log console "  CLEAN — no gjoa patch touches a changed file. All patches apply unchanged.")
+                (console/log "  CLEAN — no gjoa patch touches a changed file. All patches apply unchanged.")
                 (do
-                  (.log console (str "  " (.-length affected) " patch(es) in the blast radius (review highest-tier first):"))
+                  (console/log (str "  " (.-length affected) " patch(es) in the blast radius (review highest-tier first):"))
                   (doseq [a affected]
-                    (.log console (str "    [" (.-rung a) "] " (.-name a)))
-                    (doseq [h (.-hits a)] (.log console (str "        ~ " h)))))))))))))
+                    (console/log (str "    [" (.-rung a) "] " (.-name a)))
+                    (doseq [h (.-hits a)] (console/log (str "        ~ " h)))))))))))))
 
 (when (.-main (js/import-meta))
   (main!))

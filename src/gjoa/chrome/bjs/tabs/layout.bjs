@@ -3,7 +3,7 @@
   (:require [gjoa.macros :refer [by-id xul-new attr! pref-bool has? rmattr! toggle! on!]]))
 (define-mode strict)
 
-(declare-extern [gBrowser ResizeObserver requestAnimationFrame create-logger! all-rows data-of! level-of-row row-of state] Any)
+(declare-extern [gBrowser create-logger! all-rows data-of! level-of-row row-of state] Any)
 
 (js/export (defn make-layout! [deps :- Any] :- Any
   (let [sidebar-main (.-sidebarMain deps)

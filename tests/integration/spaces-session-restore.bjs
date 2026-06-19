@@ -7,7 +7,6 @@
 (ns gjoa.tests.integration.spaces-session-restore
   (:require [gjoa.tests.dsl :refer [deftest chrome-eval expect expect-eq]]))
 (define-mode strict)
-(declare-extern [JSON] Any)
 
 (def RESET-JS :- String
   (str "\n"

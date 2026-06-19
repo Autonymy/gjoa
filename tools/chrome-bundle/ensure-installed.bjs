@@ -22,7 +22,7 @@
             [crypto :refer [createHash]]
             [child_process :refer [spawnSync]]))
 (define-mode strict)
-(declare-extern [process console RegExp] Any)
+(declare-extern [process] Any)
 
 (def REPO-ROOT :- String (.cwd process))
 (def BJS-ROOT :- String (join REPO-ROOT "src" "gjoa" "chrome" "bjs"))
@@ -121,16 +121,16 @@
         prev (if (existsSync STAMP) (.trim (readFileSync STAMP "utf8")) "")
         force (.-GJOA_CHROME_FORCE (.-env process))]
     (if (and (not force) (= prev h) (outputs-present?))
-      (.log console (str "chrome bundle up to date (stamp " (.slice h 0 8) ") — skipping dist+install"))
+      (console/log (str "chrome bundle up to date (stamp " (.slice h 0 8) ") — skipping dist+install"))
       (do
         (run-script! "chrome:dist")
         (run-script! "chrome:install")
         (mkdirSync (dirname STAMP) {:recursive true})
         (writeFileSync STAMP h)
-        (.log console (str "chrome bundle installed (stamp " (.slice h 0 8) ")"))))))
+        (console/log (str "chrome bundle installed (stamp " (.slice h 0 8) ")"))))))
 
 (when (.-main (js/import-meta))
   (try (main!)
     (catch Any e
-      (.error console (str "ensure-installed failed: " (or (.-message e) e)))
+      (console/error (str "ensure-installed failed: " (or (.-message e) e)))
       (.exit process 1))))

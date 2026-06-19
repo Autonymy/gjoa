@@ -19,7 +19,7 @@
             [gjoa.tools.prep.paths :refer [ENGINE-DIR REPO-ROOT SOURCES-CACHE CONFIGS-DIR]]
             [gjoa.tools.prep.log :refer [log]]))
 (define-mode strict)
-(declare-extern [Bun fetch Number Error] Any)
+(declare-extern [Bun Number] Any)
 
 ;; Mozilla "Software Releases" signing key fingerprint (rsa4096, pub 2015-07-17,
 ;; uid <release@mozilla.com>). Pinned in-repo so a GPG verify of SHA256SUMS.asc

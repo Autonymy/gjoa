@@ -11,7 +11,6 @@
 (ns gjoa.tests.integration.adblock-cosmetic
   (:require [gjoa.tests.dsl :refer [deftest expect expect-eq]]))
 (define-mode strict)
-(declare-extern [JSON console] Any)
 
 ;; Generic class + generic id + a domain-specific element-hide rule. Generic
 ;; rules surface via getHiddenClassIdSelectors (class/id-triggered); the
@@ -23,7 +22,7 @@
        "  const svc = Cc['@mozilla.org/content-classifier-service;1']\n"
        "    .getService(Ci.nsIContentClassifierService);\n"
        "  const bytes = Array.from(new TextEncoder().encode("
-       (.stringify JSON LIST) "));\n"
+       (JSON/stringify LIST) "));\n"
        "  svc.setFilterListData('gjoa-cosmetic-test', bytes);\n"
        "  Services.prefs.setCharPref(\n"
        "    'privacy.trackingprotection.content.protection.list_names',\n"
@@ -43,8 +42,8 @@
   [(deftest "adblock M2: cosmetic selectors flow through the native service" [mn ctx]
      (js/await (.setContext mn "chrome"))
      (let [r (js/await (.executeScript mn EVAL-JS))
-           d (.parse JSON r)]
-       (.log console (str "\n[M2-COSMETIC] " r))
+           d (JSON/parse r)]
+       (console/log (str "\n[M2-COSMETIC] " r))
        (expect (.includes (.-generic d) ".gjoa-probe")
                "generic class rule ##.gjoa-probe did not come back from getHiddenClassIdSelectors")
        (expect (.includes (.-generic d) "#gjoa-id-probe")

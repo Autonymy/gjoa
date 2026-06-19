@@ -4,7 +4,7 @@
 (define-mode strict)
 
 ;; Browser globals
-(declare-extern [document window gBrowser Services console setTimeout clearTimeout Event CustomEvent URL Map Set Math Array Date MutationObserver RegExp CHORD-TIMEOUT all-rows data-of! has-children is-horizontal level-of level-of-row subtree-rows tab-by-id tree-data! create-logger! hz-display row-of saved-tab-queue selection state tree-of make-picker!] Any)
+(declare-extern [document window gBrowser Services setTimeout clearTimeout Math Array all-rows data-of! has-children is-horizontal level-of level-of-row subtree-rows tab-by-id tree-data! create-logger! hz-display row-of saved-tab-queue selection state tree-of make-picker!] Any)
 
 ;; Sibling module externs (no import)
 (defn insert-after-each [anchor :- Any rows-arr :- Any] :- Any
@@ -14,10 +14,10 @@
       (set! (.-ref cur) r)))))
 
 (defn hide-children [el :- Any] :- Any
-  (.forEach (.from Array (.-children el)) #(set! (.-hidden %) true)))
+  (.forEach (Array/from (.-children el)) #(set! (.-hidden %) true)))
 
 (defn show-children [el :- Any] :- Any
-  (.forEach (.from Array (.-children el)) #(set! (.-hidden %) false)))
+  (.forEach (Array/from (.-children el)) #(set! (.-hidden %) false)))
 
 (def PRIVILEGED-BAIL-URI-PREFIXES :- Any
   ["about:preferences" "about:addons" "about:debugging"
@@ -236,7 +236,7 @@
           (if (.-_group row)
             (let [d (.-_group row)]
               (when (> (or (.-level d) 0) 0)
-                (set! (.-level d) (.max Math 0 (- (.-level d) 1)))
+                (set! (.-level d) (Math/max 0 (- (.-level d) 1)))
                 (.syncAnyRow rows row)))
             (when (.-_tab row)
               (let [td (tree-data! (.-_tab row))]
@@ -385,7 +385,7 @@
                 (when (.-isOpen target)
                   (set! (.-selectedTab gBrowser) target))
                 (catch Any e
-                  (.error console "gjoa-tabs: toggleLastTab failed" e))))))
+                  (console/error "gjoa-tabs: toggleLastTab failed" e))))))
 
         key-enabled (fn [name] :- Bool
           (pref-bool (str "gjoa.keys." name ".enabled") true))
@@ -591,7 +591,7 @@
         close-focused (fn []
           (if (> (.-size selection) 1)
             ;; Multi-select
-            (let [sel (.from Array selection)]
+            (let [sel (Array/from selection)]
               (clearSelection)
               (let [last-r (aget sel (- (.-length sel) 1))
                     find-valid (fn [n]
@@ -631,7 +631,7 @@
                                           (when (> lv my-level)
                                             (when (.-_group nxt)
                                               (set! (.-level (.-_group nxt))
-                                                    (.max Math 0 (- (or (.-level (.-_group nxt)) 0) 1)))
+                                                    (Math/max 0 (- (or (.-level (.-_group nxt)) 0) 1)))
                                               (.syncGroupRow rows nxt))
                                             (dec-groups (.-nextElementSibling nxt))))))]
                       (dec-groups (.-nextElementSibling (.-cursor state))))
@@ -753,23 +753,23 @@
             (if (.startsWith tag "checkpoint:") "checkpoint" "session")))
 
         relative-time (fn [ts] :- String
-          (let [now (.now Date)
+          (let [now (Date/now)
                 delta (- now ts)
-                mins (.floor Math (/ delta 60000))]
+                mins (Math/floor (/ delta 60000))]
             (cond
               (< mins 1) "just now"
               (< mins 60) (str mins "m ago")
               :else
-              (let [hrs (.floor Math (/ mins 60))]
+              (let [hrs (Math/floor (/ mins 60))]
                 (cond
                   (< hrs 24) (str hrs "h ago")
                   :else
-                  (let [days (.floor Math (/ hrs 24))]
+                  (let [days (Math/floor (/ hrs 24))]
                     (cond
                       (= days 1) "yesterday"
                       (< days 7) (str days "d ago")
                       :else
-                      (let [weeks (.floor Math (/ days 7))]
+                      (let [weeks (Math/floor (/ days 7))]
                         (if (< weeks 5)
                           (str weeks "w ago")
                           (.toLocaleDateString (Date. ts) []
@@ -888,7 +888,7 @@
                         (.forEach src-rows (fn [r]
                           (when (.-_group r)
                             (set! (.-level (.-_group r))
-                                  (.max Math 0 (+ (or (.-level (.-_group r)) 0) delta))))))))
+                                  (Math/max 0 (+ (or (.-level (.-_group r)) 0) delta))))))))
                     (let [tgt-sub (subtree-rows target)]
                       (insert-after-each (aget tgt-sub (- (.-length tgt-sub) 1)) src-rows))
                     (.forEach src-rows #(.syncAnyRow rows %))
@@ -941,7 +941,7 @@
                                        (set! (.-v lv-ref) plv))
                                      (when (not= plv 0)
                                        (walk-anc (.-previousElementSibling prev) lv-ref)))))]
-                  (.forEach (.from Array matched) (fn [row]
+                  (.forEach (Array/from matched) (fn [row]
                     (walk-anc (.-previousElementSibling row)
                               {:v (level-of-row row)}))))
                 (.forEach all-r #(set! (.-hidden %) (not (.has matched %))))))))

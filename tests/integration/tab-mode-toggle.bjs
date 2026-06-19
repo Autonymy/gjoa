@@ -17,7 +17,6 @@
 (ns gjoa.tests.integration.tab-mode-toggle
   (:require [gjoa.tests.dsl :refer [deftest chrome-eval await-true expect expect-eq wait-for]]))
 (define-mode strict)
-(declare-extern [Date JSON] Any)
 
 ;; --- helpers -----------------------------------------------------------------
 
@@ -82,7 +81,7 @@
   [(deftest "mode toggle — an expanded tree is still expanded after horizontal<->vertical" [mn]
      (await-true "return !!window.gjoaTest && !!document.getElementById(\"gjoa-tab-panel\");" 3000)
      (js/await (reset! mn))
-     (let [stamp (str "mt-expand-" (.now Date))]
+     (let [stamp (str "mt-expand-" (Date/now))]
        (chrome-eval (build-tree-js stamp "A"))
        (await-true
          (str "return [...gBrowser.tabs].some(t => t.getAttribute(\"gjoa-test-marker\") === \"" stamp "-A-c2\");") 3000)
@@ -99,7 +98,7 @@
    (deftest "mode toggle — a user-collapsed tree stays collapsed (persisted state preserved)" [mn]
      (await-true "return !!window.gjoaTest;" 3000)
      (js/await (reset! mn))
-     (let [stamp (str "mt-collapsed-" (.now Date))]
+     (let [stamp (str "mt-collapsed-" (Date/now))]
        (chrome-eval (build-tree-js stamp "A"))
        (await-true
          (str "return [...gBrowser.tabs].some(t => t.getAttribute(\"gjoa-test-marker\") === \"" stamp "-A-c2\");") 3000)
@@ -118,7 +117,7 @@
    (deftest "mode toggle — does not collapse trees in other spaces" [mn]
      (await-true "return !!window.gjoaTest && !!window.Spaces;" 3000)
      (js/await (reset! mn))
-     (let [stamp (str "mt-spaces-" (.now Date))]
+     (let [stamp (str "mt-spaces-" (Date/now))]
        ;; Tree in Main.
        (chrome-eval (build-tree-js stamp "main"))
        ;; Create Work, switch to it, build a tree there.
@@ -147,7 +146,7 @@
    (deftest "mode toggle — horizontal layout-collapse is transient, never written to the saved tree" [mn]
      (await-true "return !!window.gjoaTest;" 3000)
      (js/await (reset! mn))
-     (let [stamp (str "mt-transient-" (.now Date))]
+     (let [stamp (str "mt-transient-" (Date/now))]
        ;; Two sibling root trees; select a tab in A so B is inactive.
        (chrome-eval (build-tree-js stamp "A"))
        (chrome-eval (build-tree-js stamp "B"))
@@ -174,7 +173,7 @@
    (deftest "mode toggle — selected tab stays selected and visible" [mn]
      (await-true "return !!window.gjoaTest;" 3000)
      (js/await (reset! mn))
-     (let [stamp (str "mt-select-" (.now Date))]
+     (let [stamp (str "mt-select-" (Date/now))]
        (chrome-eval (build-tree-js stamp "A"))
        (await-true
          (str "return [...gBrowser.tabs].some(t => t.getAttribute(\"gjoa-test-marker\") === \"" stamp "-A-c2\");") 3000)
@@ -197,7 +196,7 @@
    (deftest "mode toggle — repeated toggling is idempotent (collapsed map unchanged)" [mn]
      (await-true "return !!window.gjoaTest;" 3000)
      (js/await (reset! mn))
-     (let [stamp (str "mt-idem-" (.now Date))]
+     (let [stamp (str "mt-idem-" (Date/now))]
        (chrome-eval (build-tree-js stamp "A"))
        (chrome-eval (build-tree-js stamp "B"))
        (chrome-eval (build-tree-js stamp "C"))
@@ -216,7 +215,7 @@
          (js/await (to-horizontal! mn)) (js/await (to-vertical! mn))
          (js/await (to-horizontal! mn)) (js/await (to-vertical! mn))
          (let [after (chrome-eval snap-js)]
-           (expect-eq (.stringify JSON after) (.stringify JSON before)
+           (expect-eq (JSON/stringify after) (JSON/stringify before)
                       "persisted collapsed map must be identical after repeated toggles")))))]))
 
 (js/export-default tests)

@@ -3,7 +3,7 @@
   (:require [gjoa.macros :refer [by-id xul-new xul-id attr! on! off! has?]]))
 (define-mode strict)
 
-(declare-extern [document gBrowser js/clearTimeout create-logger!] Any)
+(declare-extern [document gBrowser] Any)
 
 (def SHOW-DELAY-MS :- Int 2000)
 

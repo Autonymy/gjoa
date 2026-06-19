@@ -3,7 +3,7 @@
   (:require [gjoa.macros :refer [by-id q xul-id attr! mi sep pref-bool set-pref-bool! on! off! has?]]))
 (define-mode strict)
 
-(declare-extern [console window getComputedStyle create-logger!] Any)
+(declare-extern [window create-logger!] Any)
 
 (defn install! [sidebar-button :- Any sidebar-main :- Any compact :- Any] :- Any
   (let [og-icon (q sidebar-button ".toolbarbutton-icon")
@@ -46,7 +46,7 @@
                                       (.click sidebar-button)
                                       (set! (.-display (.-style sidebar-button)) prev-display))
                                     (catch Any e
-                                      (.error console "[GJOA:drawer] collapse layout failed" e)))))
+                                      (console/error "[GJOA:drawer] collapse layout failed" e)))))
 
                 sidebar-item (mi "Enable Sidebar"
                                (fn []
@@ -60,9 +60,9 @@
                                      (let [cmd (by-id "cmd_toggleSidebar")]
                                        (if (and cmd (.-doCommand cmd))
                                          (.doCommand cmd)
-                                         (.error console "[GJOA:drawer] no sidebar-toggle API available"))))
+                                         (console/error "[GJOA:drawer] no sidebar-toggle API available"))))
                                    (catch Any e
-                                     (.error console "[GJOA:drawer] sidebar toggle failed" e)))))
+                                     (console/error "[GJOA:drawer] sidebar toggle failed" e)))))
 
                 layout-item (mi "Horizontal Tabs"
                               #(let [vertical (pref-bool "sidebar.verticalTabs" true)]
@@ -77,7 +77,7 @@
                                          (when (and native (.-click native))
                                            (.click native))))
                                      (catch Any e
-                                       (.error console "gjoa: customize sidebar failed" e)))))
+                                       (console/error "gjoa: customize sidebar failed" e)))))
                 block-item (mi "Disable Blocking"
                              #(when (.-gjoaBlocking window) (.toggle (.-gjoaBlocking window))))]
 

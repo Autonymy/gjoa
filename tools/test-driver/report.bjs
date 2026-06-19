@@ -11,7 +11,7 @@
   (:require [fs :refer [existsSync readFileSync]]
             [path :refer [join]]))
 (define-mode strict)
-(declare-extern [process console JSON Math Number Map] Any)
+(declare-extern [process Math] Any)
 
 (def REPO-ROOT :- String (.cwd process))
 (def LEDGER :- String (join REPO-ROOT ".test-metrics" "runs.jsonl"))
@@ -38,7 +38,7 @@
           out []]
       (doseq [line (.split text "\n")]
         (when (.trim line)
-          (try (.push out (.parse JSON line)) (catch Any e nil))))
+          (try (.push out (JSON/parse line)) (catch Any e nil))))
       out)))
 
 (defn secs [ms :- Any] :- Any
@@ -48,7 +48,7 @@
   (if (= (.-length nums) 0)
     0
     (let [sorted (.sort (.slice nums) (fn [a b] (- a b)))
-          mid (.floor Math (/ (.-length sorted) 2))]
+          mid (Math/floor (/ (.-length sorted) 2))]
       (if (= (mod (.-length sorted) 2) 1)
         (aget sorted mid)
         (/ (+ (aget sorted (- mid 1)) (aget sorted mid)) 2)))))
@@ -72,7 +72,7 @@
         same (.filter runs
                (fn [r] (and (= (.-lane r) lane)
                             (= (.-kind (.-binary r)) kind))))
-        window (.slice same (.max Math 0 (- (.-length same) WINDOW)))
+        window (.slice same (Math/max 0 (- (.-length same) WINDOW)))
         excluded (- (.-length runs) (.-length same))
         durations (.map window (fn [r] (.-durationMs (.-totals r))))
         slowest (.sort (.slice (or (.-tests last) []))
@@ -87,7 +87,7 @@
         (when (and (> m 0) (> d (* m 1.5)) (> d 250))
           (.push regressions {:file (.-file t) :name (.-name t)
                               :durationMs d :medianMs m
-                              :pct (.round Math (* 100 (- (/ d m) 1)))}))))
+                              :pct (Math/round (* 100 (- (/ d m) 1)))}))))
     {:lane lane
      :binaryKind kind
      :ts (.-ts last)
@@ -105,53 +105,53 @@
     (let [bars ["▁" "▂" "▃" "▄" "▅" "▆" "▇" "█"]
           mn (.apply (.-min Math) nil nums)
           mx (.apply (.-max Math) nil nums)
-          range (.max Math 1 (- mx mn))
+          range (Math/max 1 (- mx mn))
           out []]
       (doseq [v nums]
-        (let [idx (.min Math 7 (.floor Math (* (/ (- v mn) range) 7)))]
+        (let [idx (Math/min 7 (Math/floor (* (/ (- v mn) range) 7)))]
           (.push out (aget bars idx))))
       (.join out ""))))
 
 (defn render [rep :- Any] :- Any
   (let [tot (.-totals rep)]
-    (.log console (str (bold "gjoa integration test report") "  "
+    (console/log (str (bold "gjoa integration test report") "  "
                        (dim (str "(lane: " (.-lane rep) " · binary: " (.-binaryKind rep)
                                  " · " (.slice (or (.-ts rep) "") 0 19) ")"))))
-    (.log console (str "  Total: " (secs (.-durationMs tot)) " · "
+    (console/log (str "  Total: " (secs (.-durationMs tot)) " · "
                        (.-count tot) " tests · "
                        (green (str (.-pass tot) " pass")) " / "
                        (if (> (.-fail tot) 0) (red (str (.-fail tot) " fail")) (str (.-fail tot) " fail")) " / "
                        (.-skip tot) " skip"))
-    (.log console "")
-    (.log console (bold "  Slowest (this run)"))
+    (console/log "")
+    (console/log (bold "  Slowest (this run)"))
     (let [slow (.-slowest rep)
-          n (if showAll (.-length slow) (.min Math TOP (.-length slow)))]
+          n (if showAll (.-length slow) (Math/min TOP (.-length slow)))]
       (loop [i 0]
         (when (< i n)
           (let [t (aget slow i)]
-            (.log console (str "    " (.padStart (secs (.-durationMs t)) 8) "  "
+            (console/log (str "    " (.padStart (secs (.-durationMs t)) 8) "  "
                                (.padEnd (or (.-file t) "") 26) " " (or (.-name t) ""))))
           (recur (+ i 1))))
       (when (and (not showAll) (> (.-length slow) TOP))
-        (.log console (dim (str "    … " (- (.-length slow) TOP) " more (--all for full)")))))
-    (.log console "")
+        (console/log (dim (str "    … " (- (.-length slow) TOP) " more (--all for full)")))))
+    (console/log "")
     (let [trend (.-trend rep)]
-      (.log console (bold (str "  Trend — " (.-lane rep) " lane, " (.-binaryKind rep)
+      (console/log (bold (str "  Trend — " (.-lane rep) " lane, " (.-binaryKind rep)
                               " (last " (.-length trend) " runs, oldest→newest)")))
       (if (< (.-length trend) 2)
-        (.log console (dim "    (need ≥2 runs for a trend)"))
-        (.log console (str "    " (secs (aget trend (- (.-length trend) 1))) "  "
+        (console/log (dim "    (need ≥2 runs for a trend)"))
+        (console/log (str "    " (secs (aget trend (- (.-length trend) 1))) "  "
                            (sparkline trend) "   "
                            (dim (str "median " (secs (.-trendMedian rep)))))))
       (when (> (.-excludedFromTrend rep) 0)
-        (.log console (dim (str "    ⚠ " (.-excludedFromTrend rep)
+        (console/log (dim (str "    ⚠ " (.-excludedFromTrend rep)
                                " run(s) on a different lane/binary excluded from trend")))))
-    (.log console "")
+    (console/log "")
     (let [regs (.-regressions rep)]
       (when (> (.-length regs) 0)
-        (.log console (bold (yellow (str "  Regressions (>1.5× " (.-length (.-trend rep)) "-run median)"))))
+        (console/log (bold (yellow (str "  Regressions (>1.5× " (.-length (.-trend rep)) "-run median)"))))
         (doseq [r regs]
-          (.log console (str "    " (yellow (.-file r)) " / " (.-name r) "   "
+          (console/log (str "    " (yellow (.-file r)) " / " (.-name r) "   "
                              (secs (.-durationMs r)) " "
                              (dim (str "(median " (secs (.-medianMs r)) ", +" (.-pct r) "%)")))))))))
 
@@ -160,16 +160,16 @@
     (if (= (.-length runs) 0)
       (do
         (if jsonMode
-          (.log console (.stringify JSON {:error "no runs recorded yet"}))
-          (.log console (dim "no test runs recorded yet — run `bun run test:integration` first")))
+          (console/log (JSON/stringify {:error "no runs recorded yet"}))
+          (console/log (dim "no test runs recorded yet — run `bun run test:integration` first")))
         nil)
       (let [rep (compute runs)]
         (if jsonMode
-          (.log console (.stringify JSON rep nil 2))
+          (console/log (JSON/stringify rep nil 2))
           (render rep))))))
 
 (when (.-main (js/import-meta))
   (try (main!)
     (catch Any e
-      (.error console (str "report failed: " (or (.-stack e) e)))
+      (console/error (str "report failed: " (or (.-stack e) e)))
       (.exit process 1))))

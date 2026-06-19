@@ -19,7 +19,7 @@
 (ns gjoa.tools.test-driver.marionette
   (:require [net :refer [connect]]))
 (define-mode strict)
-(declare-extern [Buffer JSON Array String Date Error setTimeout] Any)
+(declare-extern [Buffer String Error] Any)
 
 ;; MarionetteError carries an optional `remote` payload (the raw server error).
 (js/export
@@ -35,7 +35,7 @@
   (let [o (or opts {})
         host (or (.-host o) "127.0.0.1")
         port (or (.-port o) 2828)
-        deadline (+ (.now Date) (or (.-connectTimeoutMs o) 30000))
+        deadline (+ (Date/now) (or (.-connectTimeoutMs o) 30000))
         ;; Mutable scan state — `socket`/`lastErr` accumulate across poll attempts.
         scan {:socket nil :lastErr nil}]
     ;; Both the loop and the inner try contain js/await, so beagle wraps each in
@@ -43,7 +43,7 @@
     ;; loop spins synchronously without ever waiting for the socket.
     (js/await
       (loop []
-        (if (and (< (.now Date) deadline) (not (.-socket scan)))
+        (if (and (< (Date/now) deadline) (not (.-socket scan)))
           (do
             (js/await
               (try
@@ -88,10 +88,10 @@
               (if (< colonIdx 0)
                 nil ;; need more data for header
                 (let [lenStr (.toString (.subarray buf 0 colonIdx) "utf8")
-                      len (.parseInt Number lenStr 10)]
-                  (if (or (not (.isFinite Number len)) (< len 0))
+                      len (Number/parseInt lenStr 10)]
+                  (if (or (not (Number/isFinite len)) (< len 0))
                     (do
-                      (.destroy socket (MarionetteError. (str "invalid framing header: " (.stringify JSON lenStr)) nil))
+                      (.destroy socket (MarionetteError. (str "invalid framing header: " (JSON/stringify lenStr)) nil))
                       nil)
                     (let [totalNeeded (+ colonIdx 1 len)]
                       (if (< (.-length buf) totalNeeded)
@@ -103,7 +103,7 @@
                               _adv (set! (.-buf recv) (.subarray buf totalNeeded))
                               parseState {:parsed nil :failed false}
                               _parse (try
-                                       (set! (.-parsed parseState) (.parse JSON payload))
+                                       (set! (.-parsed parseState) (JSON/parse payload))
                                        (catch Error e
                                          (do
                                            (.destroy socket (MarionetteError. (str "malformed JSON from server: " payload) e))
@@ -117,7 +117,7 @@
                                                     r (.-resolve bannerSeen)]
                                                 (r))
                                               ;; Response: [1, msgId, error|null, result|null]
-                                              (if (and (.isArray Array parsed) (= (.-length parsed) 4) (= (aget parsed 0) 1))
+                                              (if (and (Array/isArray parsed) (= (.-length parsed) 4) (= (aget parsed 0) 1))
                                                 (let [msgId (aget parsed 1)
                                                       err (aget parsed 2)
                                                       result (aget parsed 3)
@@ -135,7 +135,7 @@
 
     (.on socket "error"
       (fn [e]
-        (doseq [pair (.from Array (.entries inflight))]
+        (doseq [pair (Array/from (.entries inflight))]
           (let [id (aget pair 0)
                 w (aget pair 1)
                 rej (.-reject w)]
@@ -143,7 +143,7 @@
             (.delete inflight id)))))
     (.on socket "close"
       (fn []
-        (doseq [pair (.from Array (.entries inflight))]
+        (doseq [pair (Array/from (.entries inflight))]
           (let [id (aget pair 0)
                 w (aget pair 1)
                 rej (.-reject w)]
@@ -158,7 +158,7 @@
                  (let [p (or params {})
                        id (.-nextId idState)]
                    (set! (.-nextId idState) (+ id 1))
-                   (let [cmd (.stringify JSON [0 id name p])
+                   (let [cmd (JSON/stringify [0 id name p])
                          framed (str (.byteLength Buffer cmd "utf8") ":" cmd)]
                      (Promise. (fn [resolve reject]
                                  (.set inflight id {:resolve resolve :reject reject})
@@ -222,7 +222,7 @@
        :getWindowHandles
        (fn [] :- Any
          (let [r (js/await (send "WebDriver:GetWindowHandles" {}))]
-           (if (.isArray Array r) r (.-value r))))
+           (if (Array/isArray r) r (.-value r))))
 
        :switchToWindow
        (fn [handle :- String] :- Any
@@ -235,7 +235,7 @@
          ;; For our case (gjoa runs as a chrome-window-level extension) we
          ;; want to close the entire window, hence Marionette:CloseChromeWindow.
          (let [r (js/await (send "WebDriver:CloseChromeWindow" {}))]
-           (if (.isArray Array r) r (.-value r))))
+           (if (Array/isArray r) r (.-value r))))
 
        :performActions
        (fn [actions :- Any] :- Any

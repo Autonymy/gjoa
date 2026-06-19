@@ -4,7 +4,7 @@
             [gjoa.tabs.constants :refer [SPACE-ATTR]]))
 (define-mode strict)
 
-(declare-extern [crypto Date Array] Any)
+(declare-extern [crypto] Any)
 
 (def DEFAULT-NAME :- String "Main")
 
@@ -17,12 +17,12 @@
         spaces (Map.)
         tab-space (WeakMap.)
         state :- Any {:active-id nil}
-        default-space {:id (uuid) :name DEFAULT-NAME :createdAt (.now Date)}]
+        default-space {:id (uuid) :name DEFAULT-NAME :createdAt (Date/now)}]
 
     (.set spaces (.-id default-space) default-space)
     (set! (.-active-id state) (.-id default-space))
 
-    (let [list-in-order #(.from Array (.values spaces))
+    (let [list-in-order #(Array/from (.values spaces))
 
           default-id #(.-id (aget (list-in-order) 0))]
 
@@ -50,7 +50,7 @@
                    (default-id))))))
 
        :create (fn [name icon]
-         (let [s {:id (uuid) :name (or name "Untitled") :createdAt (.now Date)}]
+         (let [s {:id (uuid) :name (or name "Untitled") :createdAt (Date/now)}]
            (when icon (set! (.-icon s) icon))
            (.set spaces (.-id s) s)
            (on-change)

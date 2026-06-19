@@ -12,7 +12,7 @@
             [path :refer [join]]
             [gjoa.tools.prep.paths :refer [REPO-ROOT]]))
 (define-mode strict)
-(declare-extern [process console fetch AbortSignal JSON] Any)
+(declare-extern [fetch AbortSignal] Any)
 
 (def PRODUCT-DETAILS-URL :- String
   "https://product-details.mozilla.org/1.0/firefox_versions.json")
@@ -33,20 +33,20 @@
                  (.-LATEST_FIREFOX_VERSION versions))
         path (join REPO-ROOT "gjoa.json")
         text (js/await (readFile path "utf8"))
-        cfg (.parse JSON text)
+        cfg (JSON/parse text)
         oldVersion (.-version (.-firefox cfg))]
 
     (if (= oldVersion latest)
       (do
-        (.error console (str "[bump] gjoa.json already at " latest " — no change."))
+        (console/error (str "[bump] gjoa.json already at " latest " — no change."))
         (.exit process 0))
       nil)
 
-    (.error console (str "[bump] " oldVersion "  →  " latest (if esrMode "  (ESR)" "")))
+    (console/error (str "[bump] " oldVersion "  →  " latest (if esrMode "  (ESR)" "")))
 
     (if checkOnly
       (do
-        (.error console "[bump] --check: not writing. Re-run without --check to apply.")
+        (console/error "[bump] --check: not writing. Re-run without --check to apply.")
         (.exit process 0))
       nil)
 
@@ -57,18 +57,18 @@
     ;; Preserve the user's indentation by re-stringifying with 2 spaces (the
     ;; existing file uses 2-space indent and ends with a single trailing
     ;; newline, per Mozilla convention).
-    (js/await (writeFile path (str (.stringify JSON cfg nil 2) "\n") "utf8"))
-    (.error console "[bump] wrote gjoa.json")
-    (.error console "")
-    (.error console "Next steps:")
-    (.error console "  1. bun run import      # re-download tarball, re-apply overlays")
-    (.error console "  2. nix build .#gjoa --impure   # full rebuild (Lane 3)")
-    (.error console "  3. relaunch — verify everything still works")
-    (.error console "")
-    (.error console "If the new version breaks something, restore the pin from git:")
-    (.error console "  git checkout gjoa.json")))
+    (js/await (writeFile path (str (JSON/stringify cfg nil 2) "\n") "utf8"))
+    (console/error "[bump] wrote gjoa.json")
+    (console/error "")
+    (console/error "Next steps:")
+    (console/error "  1. bun run import      # re-download tarball, re-apply overlays")
+    (console/error "  2. nix build .#gjoa --impure   # full rebuild (Lane 3)")
+    (console/error "  3. relaunch — verify everything still works")
+    (console/error "")
+    (console/error "If the new version breaks something, restore the pin from git:")
+    (console/error "  git checkout gjoa.json")))
 
 (.catch (main!)
   (fn [err]
-    (.error console (str "[bump] failed: " (.-message err)))
+    (console/error (str "[bump] failed: " (.-message err)))
     (.exit process 1)))

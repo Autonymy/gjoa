@@ -24,7 +24,6 @@
             [gjoa.tools.test-driver.contrast-score :refer [parse-rgb evaluate-box score-page]]
             [gjoa.tools.test-driver.contrast-sample :refer [decode-png sample-backdrop]]))
 (define-mode strict)
-(declare-extern [JSON console] Any)
 
 (def BASE :- String "http://127.0.0.1:8976/")
 
@@ -97,7 +96,7 @@
     (expect navOk (str "fixture " url " did not load — is contrast-fixture-server on :8976?"))
     (js/await (sleep 800))
     (js/await (.setContext mn "content"))
-    (let [meta (.parse JSON (js/await (.executeScript mn ENUMERATE-JS)))
+    (let [meta (JSON/parse (js/await (.executeScript mn ENUMERATE-JS)))
           shot (js/await (.takeScreenshot mn))
           png (decode-png shot)
           page-w (.-pageWidth meta)
@@ -112,12 +111,12 @@
           score (score-page results)
           ratio (:passRatio score)
           baseline (or (get BASELINES name) 0)]
-      (.log console (str "\n[contrast] " name ": passRatio=" (.toFixed ratio 3)
+      (console/log (str "\n[contrast] " name ": passRatio=" (.toFixed ratio 3)
                          " (" (:passes score) "/" (:total score) ") minRatio="
                          (.toFixed (:minRatio score) 2) " baseline=" baseline))
       (doseq [w (:worst5 score)]
         (when (not (:pass w))
-          (.log console (str "    FAIL box ratio=" (.toFixed (:ratio w) 2)
+          (console/log (str "    FAIL box ratio=" (.toFixed (:ratio w) 2)
                              " need=" (:thr w) " \"" (:text w) "\""))))
       (expect (>= ratio baseline)
               (str name " contrast regressed: passRatio " (.toFixed ratio 3) " < baseline " baseline)))))

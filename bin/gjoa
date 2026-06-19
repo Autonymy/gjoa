@@ -52,11 +52,14 @@ if [ "${GJOA_ALLOW_INSECURE:-}" = "1" ]; then
     echo "" >&2
     echo "⚠  GJOA_ALLOW_INSECURE=1 → bypassing security gate" >&2
   fi
-elif [ "$SEC_EXIT" -ge 2 ]; then
+elif [ "$SEC_EXIT" -ge 3 ]; then
+  # CRITICAL only — refuse. A point-release lag (STALE) must NOT block the dev
+  # loop; you'd be unable to launch the local binary every time upstream ships a
+  # dot release. Only a genuine CRITICAL advisory hard-stops the launch.
   bar="$(printf '═%.0s' {1..72})"
   echo "" >&2
   echo "$bar" >&2
-  echo "🛑 REFUSED TO LAUNCH — gjoa is out of date." >&2
+  echo "🛑 REFUSED TO LAUNCH — gjoa firefox pin has a CRITICAL advisory." >&2
   echo "$bar" >&2
   echo "" >&2
   echo "To fix, run:" >&2
@@ -68,8 +71,11 @@ elif [ "$SEC_EXIT" -ge 2 ]; then
   echo "  GJOA_ALLOW_INSECURE=1 gjoa" >&2
   echo "" >&2
   exit "$SEC_EXIT"
+elif [ "$SEC_EXIT" -eq 2 ]; then
+  echo "⚠  firefox pin is STALE — a newer release is out. Launching dev anyway." >&2
+  echo "   (bun run security:bump → import → rebuild to update.)" >&2
 fi
-# SEC_EXIT 0 (OK) and 1 (UNKNOWN — offline) both pass through.
+# SEC_EXIT 0 (OK) and 1 (UNKNOWN — offline) both pass through; 2 (STALE) warns above.
 
 echo "→ refreshing chrome bundle" >&2
 bun run chrome:dist >&2

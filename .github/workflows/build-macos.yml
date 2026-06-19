@@ -5,15 +5,27 @@ on:
 
 jobs:
   build:
-    # macos-26 (Tahoe) ships the macOS 26 SDK, which has NSGlassEffectView — the
-    # Jun-13 build on macos-15 failed with "use of undeclared identifier
-    # 'NSGlassEffectView'" because FF 151+ uses macOS 26's Liquid Glass API.
-    runs-on: macos-26
+    # Needs the macOS 26 SDK: FF 151+ uses Liquid Glass (NSGlassEffectView) and
+    # FF 152's webauthn uses the SDK 26.4 ASAuthorization `prf` API. Blacksmith's
+    # macos-26 image ships Xcode 26.0-26.4 but DEFAULTS to 26.2, whose SDK lacks
+    # `prf` (verified: 26.0-26.3 fail to compile it, 26.4 succeeds) — so the
+    # "Select newest Xcode" step below is required on this runner.
+    runs-on: blacksmith-6vcpu-macos-26
     timeout-minutes: 300
     env:
       FF_VERSION: "152.0"
     steps:
       - uses: actions/checkout@v4
+
+      # Blacksmith's macos-26 defaults to Xcode 26.2, whose SDK lacks the
+      # ASAuthorization `prf` API FF 152's dom/webauthn references (26.0-26.3
+      # fail to compile it; 26.4 compiles). Select the newest installed Xcode.
+      - name: Select newest Xcode (needs SDK 26.4+ for webauthn prf)
+        run: |
+          NEWEST=$(ls -d /Applications/Xcode_*.app 2>/dev/null | sort -V | tail -1)
+          echo "selecting $NEWEST"
+          sudo xcode-select -s "$NEWEST/Contents/Developer"
+          xcodebuild -version
 
       - name: Install bun
         uses: oven-sh/setup-bun@v2

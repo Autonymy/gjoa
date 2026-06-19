@@ -14,7 +14,7 @@ on:
 
 jobs:
   build:
-    runs-on: ubuntu-24.04
+    runs-on: blacksmith-16vcpu-ubuntu-2404
     timeout-minutes: 360
     env:
       FF_VERSION: "152.0"
@@ -202,7 +202,7 @@ jobs:
           # Headless: fxc2 runs under wine with the NULL display driver selected in
           # Setup (~/.wine), so no X server is needed — its window/OLE init is a
           # no-op and the shader compile proceeds.
-          ./mach build -j2
+          ./mach build -j$(nproc)
 
       - name: Package
         working-directory: engine

@@ -8,7 +8,7 @@ jobs:
     # macos-26 (Tahoe) ships the macOS 26 SDK, which has NSGlassEffectView — the
     # Jun-13 build on macos-15 failed with "use of undeclared identifier
     # 'NSGlassEffectView'" because FF 151+ uses macOS 26's Liquid Glass API.
-    runs-on: macos-26
+    runs-on: blacksmith-6vcpu-macos-26
     timeout-minutes: 300
     env:
       FF_VERSION: "152.0"

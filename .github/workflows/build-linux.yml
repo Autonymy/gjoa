@@ -5,7 +5,7 @@ on:
 
 jobs:
   build:
-    runs-on: ubuntu-24.04
+    runs-on: blacksmith-16vcpu-ubuntu-2404
     timeout-minutes: 300
     env:
       FF_VERSION: "152.0"
@@ -134,7 +134,7 @@ jobs:
 
       - name: Build
         working-directory: engine
-        run: ./mach build -j2
+        run: ./mach build -j$(nproc)
 
       # Dark-mode contrast verification — runs the WCAG-AA harness against the
       # freshly-built binary in a clean xvfb env (the agent shell can't launch the

@@ -7,8 +7,9 @@
 # SHA256SUMS still fails verification (the attacker cannot change this file).
 #
 # Format is `sha256sum -c` compatible: `<hash>  <path-as-listed-in-SHA256SUMS>`.
-# To bump FF_VERSION: add a configs/firefox-<version>.sha256 with the value from
-# https://archive.mozilla.org/pub/firefox/releases/<version>/SHA256SUMS, after
-# verifying that file's GPG signature (SHA256SUMS.asc) against Mozilla's
-# release-signing key fingerprint 14F26682D0916CDD81E37B6D61B7B526D98F0353.
+# To bump FF_VERSION, generate this file with `bun run pin:firefox <version>`,
+# which fetches SHA256SUMS, REQUIRES its GPG signature (SHA256SUMS.asc) verify
+# against Mozilla's release key (fingerprint 14F26682D0916CDD81E37B6D61B7B526D98F0353),
+# and only then writes the pin — so a pin can never be created from an unsigned
+# (TLS-only) checksum. (gnupg must be installed for that step.)
 bff037bd04f0df25a330daa7133bea6eee5a02b7ce39da30581580271502f15e  source/firefox-152.0.1.source.tar.xz

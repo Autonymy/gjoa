@@ -49,7 +49,7 @@
 ;; Parse a SHA256SUMS body for the tarball's hash. Mozilla lists files with
 ;; subdirectory prefixes, e.g. `source/firefox-150.0.source.tar.xz` — match by
 ;; basename. Returns nil if the tarball isn't listed.
-(defn hashFromSums [text :- String version :- String] :- Any
+(js/export (defn hashFromSums [text :- String version :- String] :- Any
   (let [want (tarballName version)
         lines (.split text "\n")]
     (loop [i 0]
@@ -60,7 +60,7 @@
               file (aget parts 1)]
           (if (and file (or (= file want) (.endsWith file (str "/" want))))
             hash
-            (recur (+ i 1))))))))
+            (recur (+ i 1)))))))))
 
 ;; Read the in-repo pinned hash for this version (the F9 trust anchor). The
 ;; committed file is `sha256sum -c`-shaped (`<hash>  <path>`); the same parser
@@ -84,12 +84,21 @@
 ;; gpg isn't installed we log and skip (the pinned-hash assertion below is the
 ;; load-bearing check, so absence of gpg never weakens the happy path). Returns
 ;; true if verified, false if skipped/unavailable; throws on an actual bad sig.
-(defn verifySignature [version :- String sumsText :- String] :- Any
-  (let [probe (.spawnSync Bun ["gpg" "--version"] {:stdout "ignore" :stderr "ignore"})]
-    (if (not (.-success probe))
-      (do
-        (.warn log "gpg not available; skipping SHA256SUMS.asc signature check (pinned in-repo hash still enforced)")
-        false)
+(js/export (defn verifySignature [version :- String sumsText :- String strict :- Bool] :- Any
+  ;; Bun.spawnSync THROWS ("Executable not found") when gpg is absent entirely,
+  ;; rather than returning {success:false} — so probe under try/catch. A missing
+  ;; gpg must degrade to a clean skip (non-strict daily build) or a clear refusal
+  ;; (strict pin creation), never an opaque crash mid-build.
+  (let [available (try (.-success (.spawnSync Bun ["gpg" "--version"] {:stdout "ignore" :stderr "ignore"}))
+                    (catch Any _e false))]
+    (if (not available)
+      (if strict
+        (throw (Error. (str "gpg is REQUIRED to establish a Firefox source pin but is not installed.\n"
+                            "  the committed pin must be proven signed by Mozilla's release key "
+                            MOZILLA-SIGNING-FPR " before it can be trusted; install gnupg and retry.")))
+        (do
+          (.warn log "gpg not available; skipping SHA256SUMS.asc signature check (pinned in-repo hash still enforced)")
+          false))
       (let [ascRes (js/await (fetch (signatureUrl version)))]
         (when-not (.-ok ascRes)
           (throw (Error. (str "failed to fetch SHA256SUMS.asc: " (.-status ascRes)))))
@@ -121,7 +130,7 @@
                 (throw (Error. (str "SHA256SUMS.asc not signed by pinned Mozilla key "
                                     MOZILLA-SIGNING-FPR "\n  gpg --status output:\n" out))))
               (.ok log (str "SHA256SUMS.asc GPG-verified against pinned Mozilla key " MOZILLA-SIGNING-FPR))
-              true)))))))
+              true))))))))
 
 (defn fetchSha256 [version :- String] :- Any
   (.step log (str "fetching upstream SHA256SUMS for firefox " version))
@@ -142,8 +151,10 @@
                               ".\n  pinned: " pinned
                               "\n  live:   " liveHash
                               "\n  refusing to trust same-origin checksum over the committed pin.")))))
-      ;; Defense-in-depth: verify the detached signature when gpg is present.
-      (js/await (verifySignature version text))
+      ;; Defense-in-depth on the daily build: verify the detached signature when
+      ;; gpg is present (non-strict — the committed pin is the load-bearing anchor,
+      ;; and it was itself GPG-established by `pin-firefox`).
+      (js/await (verifySignature version text false))
       liveHash)))
 
 (defn sha256OfFile [path :- String] :- Any

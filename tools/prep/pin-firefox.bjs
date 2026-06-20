@@ -1,0 +1,53 @@
+#lang beagle/js
+;; tools/prep/pin-firefox.bjs — establish the in-repo Firefox source pin with
+;; MANDATORY GPG verification.
+;;
+;; The committed configs/firefox-<v>.sha256 is the daily build's trust anchor:
+;; download.bjs asserts the downloaded tarball against it and refuses a live
+;; SHA256SUMS that disagrees. But a pin is only as trustworthy as the moment it
+;; was created — if you pin by trusting TLS to archive.mozilla.org, the pin only
+;; proves "matches what the archive served then", not "Mozilla authored it". This
+;; tool closes that: it fetches SHA256SUMS + its detached signature, REQUIRES that
+;; the signature verify against Mozilla's release key (fingerprint pinned in
+;; download.bjs), and only then writes the pin. gpg absent or a bad/wrong-key
+;; signature => refuse to write. Daily builds then ride the committed pin and
+;; re-check the signature best-effort.
+;;
+;;   bun .beagle-tools/gjoa/tools/prep/pin-firefox.js <version>
+(ns gjoa.tools.prep.pin-firefox
+  (:require [fs :refer [writeFileSync existsSync]]
+            [path :refer [join]]
+            [gjoa.tools.prep.paths :refer [CONFIGS-DIR]]
+            [gjoa.tools.prep.download :refer [verifySignature hashFromSums]]
+            [gjoa.tools.prep.log :refer [log]]))
+(define-mode strict)
+(declare-extern [process console] Any)
+
+(defn checksumUrl [version :- String] :- String
+  (str "https://archive.mozilla.org/pub/firefox/releases/" version "/SHA256SUMS"))
+
+(defn tarballName [version :- String] :- String
+  (str "firefox-" version ".source.tar.xz"))
+
+(js/export (defn pin-firefox! [version :- String] :- Any
+  (let [p (join CONFIGS-DIR (str "firefox-" version ".sha256"))]
+    (when (existsSync p)
+      (.warn log (str "pin already exists (" p "); re-deriving after GPG-verify")))
+    (.step log (str "fetching SHA256SUMS for firefox " version))
+    (let [res (js/await (fetch (checksumUrl version)))]
+      (when-not (.-ok res)
+        (throw (Error. (str "failed to fetch SHA256SUMS: " (.-status res)))))
+      (let [text (js/await (.text res))]
+        ;; MANDATORY proof: refuse to create a pin without a Mozilla-signed sums.
+        (js/await (verifySignature version text true))
+        (let [hash (hashFromSums text version)]
+          (when-not hash
+            (throw (Error. (str "SHA256SUMS does not list " (tarballName version)))))
+          (writeFileSync p (str hash "  source/" (tarballName version) "\n"))
+          (.ok log (str "wrote GPG-verified pin " p "\n  " hash))))))))
+
+(when (.-main (js/import-meta))
+  (let [v (aget (.-argv process) 2)]
+    (if (not v)
+      (do (console/error "usage: pin-firefox <version>") (.exit process 1))
+      (js/await (pin-firefox! v)))))

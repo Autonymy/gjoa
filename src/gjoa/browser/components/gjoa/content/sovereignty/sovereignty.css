@@ -1,0 +1,171 @@
+/* about:sovereignty — gjoa egress trust panel. Forced-dark, matching the gjoa
+   navigator aesthetic. The proof line is visually the heaviest element; the badge
+   colors track the REAL state (matched build / live probes), never a fixed green. */
+
+:root {
+  --bg: #0d0f12;
+  --panel: #14171c;
+  --ink: #e8eaed;
+  --muted: #9aa0a6;
+  --faint: #5f6368;
+  --ok: #34d399;
+  --warn: #f5b454;
+  --line: #23272e;
+  --accent: #7aa2f7;
+}
+
+* { box-sizing: border-box; }
+
+html, body {
+  margin: 0;
+  height: 100%;
+  background: var(--bg);
+  color: var(--ink);
+  font: 15px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+#panel {
+  max-width: 620px;
+  margin: 0 auto;
+  padding: 9vh 28px 64px;
+}
+
+.brand {
+  font-size: 12px;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--faint);
+  margin-bottom: 28px;
+}
+
+/* Headline: the conservative, audit-proven core. */
+.headline {
+  display: flex;
+  align-items: baseline;
+  gap: 20px;
+  margin-bottom: 18px;
+}
+.count {
+  font-size: 76px;
+  font-weight: 700;
+  line-height: 0.9;
+  color: var(--ink);
+  font-variant-numeric: tabular-nums;
+}
+.count-lead { font-size: 19px; font-weight: 600; }
+.count-sub { color: var(--muted); margin-top: 2px; }
+
+.assertions {
+  color: var(--muted);
+  font-size: 13.5px;
+  margin: 0 0 26px;
+  padding-bottom: 22px;
+  border-bottom: 1px solid var(--line);
+}
+
+/* The proof line — the centerpiece. Heaviest box on the page. */
+.proof {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 16px 18px;
+  margin-bottom: 22px;
+}
+.proof-verdict { font-weight: 600; font-size: 15px; }
+.proof-verdict.ok { color: var(--ok); }
+.proof-verdict.warn { color: var(--warn); }
+.proof-build {
+  margin-top: 7px;
+  font-family: ui-monospace, "SF Mono", "Cascadia Code", monospace;
+  font-size: 12.5px;
+  color: var(--muted);
+  word-break: break-all;
+}
+
+/* Toggle — flipping it visibly changes the panel state. */
+.toggle-row { margin-bottom: 22px; }
+.toggle {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  cursor: pointer;
+  user-select: none;
+}
+.toggle input { position: absolute; opacity: 0; width: 0; height: 0; }
+.toggle-track {
+  flex: none;
+  width: 42px;
+  height: 24px;
+  border-radius: 999px;
+  background: var(--line);
+  position: relative;
+  transition: background 0.15s ease;
+}
+.toggle-thumb {
+  position: absolute;
+  top: 3px; left: 3px;
+  width: 18px; height: 18px;
+  border-radius: 50%;
+  background: var(--muted);
+  transition: transform 0.15s ease, background 0.15s ease;
+}
+.toggle input:checked + .toggle-track { background: rgba(52, 211, 153, 0.32); }
+.toggle input:checked + .toggle-track .toggle-thumb {
+  transform: translateX(18px);
+  background: var(--ok);
+}
+.toggle input:focus-visible + .toggle-track { outline: 2px solid var(--accent); outline-offset: 2px; }
+.toggle-title { font-weight: 600; }
+.toggle-state { display: block; font-size: 12.5px; color: var(--muted); }
+.lockdown-off .toggle-state { color: var(--warn); }
+.lockdown-on .toggle-state { color: var(--ok); }
+
+/* Progressive disclosure — the stark ledger lives one click down. */
+.disclose-btn {
+  background: none;
+  border: none;
+  color: var(--accent);
+  font: inherit;
+  font-size: 13.5px;
+  padding: 4px 0;
+  cursor: pointer;
+  display: inline-flex;
+  gap: 8px;
+}
+.disclose-btn:hover { text-decoration: underline; }
+.ledger { margin-top: 14px; }
+.ledger-h {
+  font-size: 12px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--faint);
+  margin: 18px 0 8px;
+}
+.ledger-list { list-style: none; margin: 0; padding: 0; }
+.ledger-item {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 8px;
+  padding: 7px 0;
+  border-top: 1px solid var(--line);
+  font-size: 13px;
+}
+.ledger-endpoint { font-family: ui-monospace, monospace; color: var(--ink); }
+.ledger-what { color: var(--muted); }
+.ledger-basis {
+  margin-left: auto;
+  font-size: 11px;
+  color: var(--faint);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 1px 8px;
+}
+.ledger-note { color: var(--muted); font-size: 12.5px; margin: 4px 0 8px; }
+
+.foot {
+  margin-top: 34px;
+  color: var(--faint);
+  font-size: 11.5px;
+}

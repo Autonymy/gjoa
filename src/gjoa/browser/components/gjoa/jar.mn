@@ -24,6 +24,13 @@ browser.jar:
   content/gjoa/styles/gjoa.uc.css (content/styles/gjoa.uc.css)
   content/gjoa/styles/gjoa-tabs.uc.css (content/styles/gjoa-tabs.uc.css)
   content/gjoa/styles/gjoa-which-key.uc.css (content/styles/gjoa-which-key.uc.css)
+# about:sovereignty — the egress trust panel. PRIVILEGED (under the `gjoa` package,
+# NOT contentaccessible): it reads build-provenance prefs + the lockdown toggle and
+# is registered as about:sovereignty at runtime by GjoaLoader.
+  content/gjoa/sovereignty/sovereignty.html (content/sovereignty/sovereignty.html)
+  content/gjoa/sovereignty/sovereignty.css (content/sovereignty/sovereignty.css)
+  content/gjoa/sovereignty/sovereignty.js (content/sovereignty/sovereignty.js)
+  content/gjoa/sovereignty/manifest.json (content/sovereignty/manifest.json)
 
 # The new-tab page is the only gjoa chrome that loads as a *content* document
 # (via AboutNewTab.newTabURL in GjoaLoader). It gets its own package marked

@@ -51,7 +51,7 @@
 ;; =============================================================================
 (ns gjoa.browser.components.gjoa.loader)
 (define-mode strict)
-(declare-extern [ChromeUtils Cc Ci Services] Any)
+(declare-extern [ChromeUtils Cc Ci Services Components] Any)
 
 (def lazy :- Any {})
 
@@ -296,6 +296,37 @@
 (def lockdown-observer :- Any
   {:observe (fn [_subject :- Any _topic :- Any _data :- Any] :- Any (apply-lockdown!))})
 
+;; --- about:sovereignty -------------------------------------------------------
+;; Register the egress trust panel as a real about: page at runtime (no rebuild,
+;; no Mozilla-source patch). It maps to the privileged chrome page, so the panel
+;; can read build-provenance prefs + the lockdown toggle and render the verifiable
+;; truth. (NOTE: about-module flag/principal semantics are FF-version-sensitive;
+;; this needs one in-browser confirmation on the next build — wrapped so a failure
+;; only logs and never blocks startup.)
+(def SOVEREIGNTY-URL :- String "chrome://gjoa/content/sovereignty/sovereignty.html")
+(def SOVEREIGNTY-CLASS-ID :- String "{6a7c1e90-5b3d-4c2a-9f81-7e0d3a6b2c54}")
+(def SOVEREIGNTY-CONTRACT :- String "@mozilla.org/network/protocol/about;1?what=sovereignty")
+
+(defn register-about-sovereignty! [] :- Any
+  (try
+    (let [about-module
+          {:QueryInterface (.generateQI ChromeUtils ["nsIAboutModule"])
+           :newChannel (fn [uri :- Any load-info :- Any] :- Any
+                         (let [ch (.newChannelFromURIWithLoadInfo (.-io Services)
+                                    (.newURI (.-io Services) SOVEREIGNTY-URL) load-info)]
+                           (set! (.-originalURI ch) uri)
+                           ch))
+           :getURIFlags (fn [_uri :- Any] :- Any (.-ALLOW_SCRIPT (.-nsIAboutModule Ci)))}
+          factory
+          {:QueryInterface (.generateQI ChromeUtils ["nsIFactory"])
+           :createInstance (fn [iid :- Any] :- Any (.QueryInterface about-module iid))}
+          registrar (.QueryInterface (.-manager Components) (.-nsIComponentRegistrar Ci))]
+      (.registerFactory registrar (.ID Components SOVEREIGNTY-CLASS-ID)
+        "about:sovereignty" SOVEREIGNTY-CONTRACT factory)
+      (console/log "gjoa-loader: registered about:sovereignty"))
+    (catch Any e
+      (console/error "gjoa-loader: register about:sovereignty failed" e))))
+
 (js/export (def GjoaLoader :- Any
   {:start (fn [] :- Any
     (when (not (.-observer-registered st))
@@ -303,6 +334,7 @@
       (set-defaults)
       (apply-lockdown!)
       (.addObserver (.-prefs Services) LOCKDOWN-PREF lockdown-observer)
+      (register-about-sovereignty!)
       (set-new-tab-url!)
       (register-cosmetic-actor)
       (register-darkmode-actor)

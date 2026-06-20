@@ -1,0 +1,60 @@
+<!DOCTYPE html>
+<!-- about:sovereignty — gjoa's egress trust panel.
+     A PRIVILEGED chrome page (system principal): it reads build-provenance prefs
+     and the maximal-lockdown toggle directly. It renders the VERIFIABLE TRUTH —
+     the badge degrades to the real current state (incl. the toggle); it never
+     asserts a slogan the audit doesn't support. Data: ./manifest.json (the
+     source-derived egress audit), checked against the running build's commit. -->
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta http-equiv="Content-Security-Policy"
+          content="default-src chrome:; img-src chrome: data:; style-src chrome: 'unsafe-inline'; script-src chrome:;" />
+    <title>Sovereignty</title>
+    <link rel="stylesheet" href="chrome://gjoa/content/sovereignty/sovereignty.css" />
+  </head>
+  <body>
+    <main id="panel" aria-live="polite">
+      <header class="brand">gjoa · sovereignty</header>
+
+      <section class="headline">
+        <div class="count" id="unattended-count">—</div>
+        <div class="count-label">
+          <div class="count-lead" id="count-lead">unattended network call</div>
+          <div class="count-sub" id="count-sub"></div>
+        </div>
+      </section>
+
+      <p class="assertions" id="assertions"></p>
+
+      <!-- The proof line: the centerpiece. Ties the claim to the exact running
+           build and says whether this audit was generated against THESE bytes. -->
+      <section class="proof" id="proof">
+        <div class="proof-verdict" id="proof-verdict">checking build…</div>
+        <div class="proof-build" id="proof-build"></div>
+      </section>
+
+      <section class="toggle-row">
+        <label class="toggle">
+          <input type="checkbox" id="lockdown" />
+          <span class="toggle-track"><span class="toggle-thumb"></span></span>
+          <span class="toggle-text">
+            <span class="toggle-title">Maximal lockdown</span>
+            <span class="toggle-state" id="lockdown-state"></span>
+          </span>
+        </label>
+      </section>
+
+      <section class="disclose">
+        <button id="disclose-btn" class="disclose-btn" aria-expanded="false">
+          <span id="disclose-caret">▸</span>
+          <span id="disclose-label">show the audited egress points</span>
+        </button>
+        <div id="ledger" class="ledger" hidden></div>
+      </section>
+
+      <footer class="foot" id="foot"></footer>
+    </main>
+    <script src="chrome://gjoa/content/sovereignty/sovereignty.js"></script>
+  </body>
+</html>

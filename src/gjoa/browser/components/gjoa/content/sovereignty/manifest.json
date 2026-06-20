@@ -1,0 +1,32 @@
+{
+  "claim": "This build makes 1 unattended network call: the Firefox version check.",
+  "gjoaVersion": "0.1.1",
+  "auditedCommit": "cd768e2",
+  "generated": "2026-06-20",
+  "method": "static AST audit of all authored chrome (.sys.mjs + emitted .bjs), 57 sources, every source parsed",
+  "ownCode": {
+    "unattendedExternal": [
+      { "endpoint": "https://product-details.mozilla.org/1.0/firefox_versions.json", "what": "Firefox version freshness check", "file": "security/index.js", "line": 53, "basis": "resolved endpoint" }
+    ],
+    "userEnabledNetwork": [
+      { "endpoint": "adblock filter lists (https-only)", "what": "filter-list updates when adblock is on", "file": "ContentClassifierRemoteSettingsClient.sys.mjs", "line": 323, "basis": "https scheme guard" }
+    ],
+    "local": [
+      { "endpoint": "resource://gre/modules/scriptlet-resources.json", "what": "bundled scriptlet resources", "basis": "resolved endpoint" },
+      { "endpoint": "resource://gre/modules/darkmode-fixes.json", "what": "bundled dark-mode fixes", "basis": "resolved endpoint" },
+      { "endpoint": "page-icon: (local favicon cache)", "what": "quick-open favicon", "file": "tabs/picker.js", "line": 99, "basis": "page-icon scheme guard" }
+    ],
+    "unproven": [
+      { "endpoint": "page's own background image", "what": "dark-mode image analysis (re-reads an image the page already loaded)", "file": "GjoaDarkmodeChild.sys.mjs", "line": 510, "basis": "no static guard — flagged for review" }
+    ]
+  },
+  "inheritedEgress": {
+    "disabled": 15,
+    "catalogued": 17,
+    "note": "Firefox built-in egress vectors gjoa disables by default (telemetry, Normandy, Pocket, Contile, sponsored, FxA, ...). SafeBrowsing kept (security).",
+    "toggleGated": [
+      { "pref": "network.captive-portal-service.enabled", "what": "captive-portal / 'sign in to wifi' detection" },
+      { "pref": "network.connectivity-service.enabled", "what": "connectivity check" }
+    ]
+  }
+}

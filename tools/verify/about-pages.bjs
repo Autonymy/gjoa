@@ -1,0 +1,99 @@
+#lang beagle/js
+;; Live verification of gjoa's about: registrations + the Firefox-Settings
+;; pointer actor, against a real baked binary.
+;;
+;; Spawns gjoa headless under Marionette and drives PRIVILEGED chrome JS:
+;;   1. about:sovereignty / about:gjoa / about:knobs each resolve to a
+;;      registered nsIAboutModule (getURIFlags succeeds = the factory is live).
+;;   2. about:preferences gets the gjoa pointer injected (#gjoa-prefs-pointer)
+;;      by the GjoaAboutPrefs child actor — proving the window-actor wiring.
+;;
+;; executeScript runs in the JS+DOM layer, NOT the compositor, so this works in
+;; a display-less environment where `--screenshot` can't map a framebuffer.
+;;
+;; Usage:  bun about-pages.js <path-to-gjoa-bin>   (run inside `nix develop .#mach`)
+(ns gjoa.tools.verify.about-pages
+  (:require [child_process :refer [spawn]]
+            [fs :as fs]
+            [os :as os]
+            [path :as path]
+            [gjoa.tools.test-driver.marionette :refer [connect-marionette]]))
+(define-mode strict)
+(declare-extern [process console JSON Promise Error setTimeout Object] Any)
+
+(defn sleep [ms :- Any] :- Any
+  (Promise. (fn [r] (setTimeout (fn [] (r nil)) ms))))
+
+(defn make-profile! [] :- String
+  (let [dir (.mkdtempSync fs (.join path (.tmpdir os) "gjoa-verify-"))]
+    (.writeFileSync fs (.join path dir "prefs.js")
+      (str "user_pref(\"marionette.port\", 2828);\n"
+           "user_pref(\"marionette.enabled\", true);\n"))
+    dir))
+
+;; Chrome-context: does each about: name resolve to a live nsIAboutModule?
+(def ABOUT-PROBE :- String
+  (str "const out = [];\n"
+       "for (const what of ['sovereignty','gjoa','knobs']) {\n"
+       "  const contract = '@mozilla.org/network/protocol/about;1?what=' + what;\n"
+       "  let registered = contract in Components.classes;\n"
+       "  let flags = null, err = null;\n"
+       "  if (registered) { try {\n"
+       "    const mod = Components.classes[contract].getService(Ci.nsIAboutModule);\n"
+       "    flags = mod.getURIFlags(Services.io.newURI('about:' + what));\n"
+       "  } catch(e) { err = String(e); } }\n"
+       "  out.push({what, registered, flags, err});\n"
+       "}\n"
+       "return out;"))
+
+;; Chrome-context async: open about:preferences and wait for the actor to inject.
+(def POINTER-PROBE :- String
+  (str "const done = arguments[arguments.length - 1];\n"
+       "const win = Services.wm.getMostRecentWindow('navigator:browser');\n"
+       "const tab = win.gBrowser.addTab('about:preferences', {triggeringPrincipal: Services.scriptSecurityManager.getSystemPrincipal()});\n"
+       "win.gBrowser.selectedTab = tab;\n"
+       "const b = tab.linkedBrowser;\n"
+       "let tries = 0;\n"
+       "const iv = win.setInterval(() => {\n"
+       "  tries++;\n"
+       "  let doc = null; try { doc = b.contentDocument; } catch(e) {}\n"
+       "  const ptr = doc && doc.getElementById('gjoa-prefs-pointer');\n"
+       "  if (ptr || tries > 80) {\n"
+       "    win.clearInterval(iv);\n"
+       "    done({url: doc ? doc.documentURI : null, pointer: !!ptr, navEntry: !!(doc && doc.getElementById('category-gjoa-link')), tries});\n"
+       "  }\n"
+       "}, 250);"))
+
+(defn run! [] :- Any
+  (when (not (or (aget (.-argv process) 2) (get (.-env process) "GJOA_BIN")))
+    (.error console "usage: about-pages <gjoa-bin>  (or set $GJOA_BIN)")
+    (.exit process 2))
+  (let [bin (or (aget (.-argv process) 2) (get (.-env process) "GJOA_BIN"))
+        profile (make-profile!)
+        child (spawn bin
+                     ;; --no-remote: never hand off to a stray running instance.
+                     ;; --remote-allow-system-access: required for Marionette's
+                     ;; privileged ("chrome") context on modern Firefox.
+                     ["--profile" profile "--marionette" "--no-remote"
+                      "--remote-allow-system-access" "--headless"]
+                     {:stdio "ignore"
+                      :env (.assign Object {} (.-env process)
+                             {"GJOA_ALLOW_INSECURE" "1" "MOZ_HEADLESS" "1"})})
+        client (js/await (connect-marionette {:connectTimeoutMs 45000}))
+        _sess (js/await (.newSession client))
+        _ctx (js/await (.setContext client "chrome"))
+        about (js/await (.executeScript client ABOUT-PROBE []))
+        pointer (js/await (.executeAsyncScript client POINTER-PROBE []))
+        _log (.log console (JSON/stringify {:about about :pointer pointer} nil 2))
+        _quit (js/await (.quit client ["eForceQuit"]))
+        _disc (.disconnect client)
+        _kill (.kill child)
+        ok-about (.every about (fn [r :- Any] :- Any (.-registered r)))
+        ok-ptr (.-pointer pointer)]
+    (.log console (str "\nVERDICT: about-pages=" (if ok-about "PASS" "FAIL")
+                       "  settings-pointer=" (if ok-ptr "PASS" "FAIL")))
+    (.exit process (if (and ok-about ok-ptr) 0 1))))
+
+(.catch (run!) (fn [e :- Any] :- Any
+                 (.error console (str "verify failed: " (or (.-stack e) e)))
+                 (.exit process 1)))

@@ -26,6 +26,7 @@
     "sovereignty:egress": "bun run tools:compile && bun .beagle-tools/gjoa/tools/sovereignty/egress-scan.js",
     "sovereignty:inherited": "bun run tools:compile && bun .beagle-tools/gjoa/tools/sovereignty/inherited-egress.js",
     "sovereignty:manifest": "bun run tools:compile && bun .beagle-tools/gjoa/tools/sovereignty/egress-scan.js manifest",
+    "verify:about-pages": "bun run tools:compile && bun .beagle-tools/gjoa/tools/verify/about-pages.js",
     "release:notes": "bun run tools:compile && bun .beagle-tools/gjoa/tools/release/release-notes.js",
     "release:notes:check": "bun run tools:compile && bun .beagle-tools/gjoa/tools/release/release-notes.js check",
     "firefox-api-drift": "bun run tools:compile && bun .beagle-tools/gjoa/tools/prep/firefox-api-surface.js",

@@ -1,0 +1,161 @@
+#lang beagle/js
+;; Alt+h / Alt+l in HORIZONTAL mode fold the selected tab into its left / right
+;; neighbour (#94 correction). Drives REAL Alt-modified keypresses via Marionette
+;; and asserts the parentId actually changed — the data-model tab-tree tests do
+;; NOT exercise the keydown path, which is how the cursor-not-set no-op shipped.
+(ns gjoa.tests.integration.horizontal-fold-hotkeys
+  (:require [gjoa.tests.dsl :refer [deftest chrome-eval await-true wait-for expect expect-eq sleep]]))
+(define-mode strict)
+
+(defn reset! [mn :- Any] :- Any
+  (js/await (.executeScript mn
+    (str
+      "    try { Services.prefs.setBoolPref(\"sidebar.verticalTabs\", true); } catch {}\n"
+      "    const marked = [...gBrowser.tabs].filter(t => t.getAttribute && t.getAttribute(\"gjoa-test-marker\"));\n"
+      "    if (marked.length < gBrowser.tabs.length) { for (const t of marked) { try { gBrowser.removeTab(t); } catch {} } }\n"
+      "  ")))
+  (await-true "return !document.getElementById('gjoa-tab-panel').hasAttribute('gjoa-horizontal');" 3000))
+
+(defn to-horizontal! [mn :- Any] :- Any
+  (chrome-eval "Services.prefs.setBoolPref('sidebar.verticalTabs', false);")
+  (await-true "return document.getElementById('gjoa-tab-panel').hasAttribute('gjoa-horizontal');" 3000))
+
+;; Alt + <ch> as a WebDriver key chord (U+E00A = Alt).
+(defn key-alt [ch :- String] :- Any
+  [{:type "key" :id "kbd"
+    :actions [{:type "keyDown" :value ""}
+              {:type "keyDown" :value ch}
+              {:type "keyUp" :value ch}
+              {:type "keyUp" :value ""}]}])
+
+;; Build n root marker tabs <stamp>-r0..r(n-1).
+(defn build-roots-js [stamp :- String n :- Int] :- String
+  (str "
+    const p = Services.scriptSecurityManager.getSystemPrincipal();
+    const T = window.gjoaTest.treeOf;
+    for (let i = 0; i < " n "; i++) {
+      const t = gBrowser.addTab('about:blank', { triggeringPrincipal: p });
+      t.setAttribute('gjoa-test-marker', '" stamp "-r' + i);
+      T.get(t).parentId = null;
+    }
+    window.gjoaTest.rows.scheduleTreeResync();
+    window.gjoaTest.rows.updateVisibility();
+    return true;"))
+
+;; Select marker tab `key`, place the vim cursor on it + focus the panel.
+(defn place-cursor-js [stamp :- String key :- String] :- String
+  (str "
+    const t = [...gBrowser.tabs].find(x => x.getAttribute('gjoa-test-marker') === '" stamp "-" key "');
+    if (!t) throw new Error('no marker " stamp "-" key "');
+    gBrowser.selectedTab = t;
+    const row = window.gjoaTest.rowOf.get(t);
+    window.gjoaTest.vim.activateVim(row);
+    return true;"))
+
+;; parentId of marker tab `key` as a string (or 'null').
+(defn parent-of-js [stamp :- String key :- String] :- String
+  (str "
+    const t = [...gBrowser.tabs].find(x => x.getAttribute('gjoa-test-marker') === '" stamp "-" key "');
+    const pid = window.gjoaTest.treeOf.get(t).parentId;
+    return pid == null ? 'null' : String(pid);"))
+
+(defn id-of-js [stamp :- String key :- String] :- String
+  (str "
+    const t = [...gBrowser.tabs].find(x => x.getAttribute('gjoa-test-marker') === '" stamp "-" key "');
+    return String(window.gjoaTest.treeOf.get(t).id);"))
+
+;; Nest marker `child` under marker `parent`.
+(defn nest-js [stamp :- String child :- String parent :- String] :- String
+  (str "
+    const T = window.gjoaTest.treeOf;
+    const find = m => [...gBrowser.tabs].find(x => x.getAttribute('gjoa-test-marker') === '" stamp "-' + m);
+    const c = find('" child "'), p = find('" parent "');
+    T.get(c).parentId = T.get(p).id;
+    T.get(p).collapsed = false;
+    window.gjoaTest.rows.scheduleTreeResync();
+    window.gjoaTest.rows.updateVisibility();
+    return true;"))
+
+;; 'true' if marker `a`'s row precedes marker `b`'s row in DOM, else a debug str.
+(defn row-before-js [stamp :- String a :- String b :- String] :- String
+  (str "
+    const rows = [...document.querySelectorAll('#gjoa-tab-panel .gjoa-tab-row')];
+    const find = m => rows.findIndex(r => r._tab && r._tab.getAttribute('gjoa-test-marker') === '" stamp "-' + m);
+    const ia = find('" a "'), ib = find('" b "');
+    return (ia >= 0 && ib >= 0 && ia < ib) ? 'true' : ('false ia=' + ia + ' ib=' + ib);"))
+
+(js/export (def tests :- Any
+  [(deftest "horizontal Alt+h folds the selected tab into its LEFT neighbour" [mn]
+     (await-true "return !!window.gjoaTest;" 5000)
+     (js/await (reset! mn))
+     (let [stamp (str "hf-h-" (Date/now))]
+       (chrome-eval (build-roots-js stamp 2))
+       (await-true (str "return [...gBrowser.tabs].some(t => t.getAttribute('gjoa-test-marker') === '" stamp "-r1');") 3000)
+       (js/await (to-horizontal! mn))
+       (js/await (sleep 200))
+       (chrome-eval (place-cursor-js stamp "r1"))
+       (js/await (sleep 150))
+       (js/await (.performActions mn (key-alt "h")))
+       (js/await (sleep 350))
+       (let [parent-b (chrome-eval (parent-of-js stamp "r1"))
+             id-a (chrome-eval (id-of-js stamp "r0"))]
+         (expect-eq parent-b id-a
+           (str "Alt+h must fold r1 into its left neighbour r0 (parentId " parent-b " should be r0 id " id-a ")")))))
+
+   (deftest "horizontal Alt+l folds the selected tab into its RIGHT neighbour" [mn]
+     (await-true "return !!window.gjoaTest;" 5000)
+     (js/await (reset! mn))
+     (let [stamp (str "hf-l-" (Date/now))]
+       (chrome-eval (build-roots-js stamp 3))
+       (await-true (str "return [...gBrowser.tabs].some(t => t.getAttribute('gjoa-test-marker') === '" stamp "-r2');") 3000)
+       (js/await (to-horizontal! mn))
+       (js/await (sleep 200))
+       (chrome-eval (place-cursor-js stamp "r1"))
+       (js/await (sleep 150))
+       (js/await (.performActions mn (key-alt "l")))
+       (js/await (sleep 350))
+       (let [parent-b (chrome-eval (parent-of-js stamp "r1"))
+             id-c (chrome-eval (id-of-js stamp "r2"))]
+         (expect-eq parent-b id-c
+           (str "Alt+l must fold r1 into its right neighbour r2 (parentId " parent-b " should be r2 id " id-c ")")))))
+
+   (deftest "horizontal Alt+l on a nested CHILD unfolds it out to a root" [mn]
+     (await-true "return !!window.gjoaTest;" 5000)
+     (js/await (reset! mn))
+     (let [stamp (str "hf-u-" (Date/now))]
+       (chrome-eval (build-roots-js stamp 3))
+       (await-true (str "return [...gBrowser.tabs].some(t => t.getAttribute('gjoa-test-marker') === '" stamp "-r2');") 3000)
+       (chrome-eval (nest-js stamp "r1" "r0"))
+       (js/await (sleep 200))
+       (js/await (to-horizontal! mn))
+       (js/await (sleep 200))
+       (chrome-eval (place-cursor-js stamp "r1"))
+       (js/await (sleep 150))
+       (js/await (.performActions mn (key-alt "l")))
+       (js/await (sleep 350))
+       (let [parent-r1 (chrome-eval (parent-of-js stamp "r1"))]
+         (expect-eq parent-r1 "null"
+           (str "Alt+l on nested child r1 must unfold it to a root (parentId " parent-r1 " should be null)")))))
+
+   (deftest "horizontal Alt+h on a nested CHILD unfolds it out to a root BEFORE its parent" [mn]
+     (await-true "return !!window.gjoaTest;" 5000)
+     (js/await (reset! mn))
+     (let [stamp (str "hf-uh-" (Date/now))]
+       (chrome-eval (build-roots-js stamp 3))
+       (await-true (str "return [...gBrowser.tabs].some(t => t.getAttribute('gjoa-test-marker') === '" stamp "-r2');") 3000)
+       (chrome-eval (nest-js stamp "r2" "r1"))
+       (js/await (sleep 200))
+       (js/await (to-horizontal! mn))
+       (js/await (sleep 200))
+       (chrome-eval (place-cursor-js stamp "r2"))
+       (js/await (sleep 150))
+       (js/await (.performActions mn (key-alt "h")))
+       (js/await (sleep 350))
+       (let [parent-r2 (chrome-eval (parent-of-js stamp "r2"))
+             before (chrome-eval (row-before-js stamp "r2" "r1"))]
+         (expect-eq parent-r2 "null"
+           (str "Alt+h on nested child r2 must unfold it to a root (parentId " parent-r2 ")"))
+         (expect-eq before "true"
+           (str "unfolded r2 must land BEFORE its former parent r1 (" before ")")))))]))
+
+(js/export-default tests)

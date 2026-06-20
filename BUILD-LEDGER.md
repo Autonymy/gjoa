@@ -483,3 +483,44 @@ fixed before the build, which then passed first try.
 renders with the UA *dark* canvas — correctly NOT inverted. A real themeless-light
 site hardcodes a light bg; added a `/light` fixture for the invert assertion (the
 plain `/` no-bg page is not a valid themeless-light case under hybrid).
+
+## 2026-06-21 — session-integration: full `mach build` FAILED → `build faster` shipped frontend
+
+**Trigger:** batch of session fixes on `build/session-integration` (horizontal
+mode, cards/nova, close-×, framing, dark-mode actor + new: #90 adblock
+cache-fallback, #98 link-preview disable, #90-PART1 content-classifier-service
+contract). `bun run import` (clean, all 7 patches "already applied") → preflight
+GREEN → full `./mach build`.
+
+**Outcome — full build FAILED at ~26 min** in `StaticComponents.cpp:12205`:
+`use of undeclared identifier 'T'` ×4. Root cause: re-adding patch 0008's
+`@mozilla.org/content-classifier-service;1` contract entry with
+**`'type': 'nsIContentClassifierService'` (the INTERFACE)**. FF152's
+`gen_static_components.py` emits `using T =
+RemoveAlreadyAddRefed<decltype(GetSingleton())>::Type;` then
+`is_base_of<nsIContentClassifierService, T>` — interface-as-`type` fails to
+deduce `T` and cascades. This is **why the contract was missing all along**: the
+hunk was backed out of the engine to keep builds green while patch 0008 stayed
+marked "applied". Working singleton-getters (e.g. `mozilla::dom::Geolocation` /
+`NonWindowSingleton`) use the **concrete class** as `type`. **Follow-up fix:** set
+`'type'` to the concrete `mozilla::ContentClassifierService` (or drop `type`),
+then one full build.
+
+**Recovery:** reverted the contract entry → `./mach build faster` (2 s, 0 warn).
+The DEV binary loads chrome via the `gjoa-dev/` symlink, toolkit `.sys.mjs` via
+`dist/bin/.../*.sys.mjs` symlinks into engine source, and gjoa pref defaults via
+`dist/.../firefox-branding.js` — so the frontend fixes are LIVE without a relink.
+
+**Validation (dev binary):** newtab/misc 13/0, tabs+spaces 48/1 (the 1 =
+`groups #11`, a cross-test `Project-A` state leak — passes 1/1 in isolation, not a
+regression), close-× 1/1, tab-tree-machine 5/5, horizontal move-skip green, vim
+green. Live-confirmed: `browser.ml.linkPreview.enabled=false`, GjoaLoader
+`floatingCards`/`nova` defaults, RS-client cache-fallback. **Two RED = expected:**
+`scriptlet-engine` + `adblock M2 cosmetic` both `content-classifier-service is
+undefined` (the reverted contract) — so **cosmetic element-hiding is the one
+feature still down** pending the concrete-type fix + one full build. Curated
+YouTube player-prune still passes (works via the actor, not the contract).
+
+**New gate idea (M):** preflight should reject a `components.conf`
+`'constructor'`+`'singleton'` entry whose `'type'` is an XPCOM interface (not a
+concrete class), so it fails preflight, not a 26-min build.

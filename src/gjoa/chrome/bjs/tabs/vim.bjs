@@ -300,6 +300,62 @@
                 (.updateVisibility rows)
                 (scheduleSave)))))
 
+        ;; Fold a row INTO its next same-level neighbour — it becomes that
+        ;; neighbour's last child. The horizontal-mode counterpart to
+        ;; make-child-of-above (which folds into the PREVIOUS neighbour): Alt+l
+        ;; in horizontal "folds b into the tab on its right".
+        make-child-of-next (fn [row]
+          (when (and row (.-_tab row))
+            (let [my-level (level-of-row row)
+                  sub (subtree-rows row)
+                  last-row (aget sub (- (.-length sub) 1))
+                  next-row (.-nextElementSibling last-row)]
+              (when (and next-row (not= next-row (.-spacer state))
+                         (= (level-of-row next-row) my-level))
+                (if (.-_group next-row)
+                  (set! (.-parentId (tree-data! (.-_tab row))) (.-id (.-_group next-row)))
+                  (when (.-_tab next-row)
+                    (set! (.-parentId (tree-data! (.-_tab row)))
+                          (.-id (tree-data! (.-_tab next-row))))))
+                (let [next-sub (subtree-rows next-row)
+                      anchor (aget next-sub (- (.-length next-sub) 1))]
+                  (insert-after-each anchor sub))
+                (commit-tree (subtree-rows row))))))
+
+        ;; Parent row of `row` = the nearest preceding row at a shallower level.
+        parent-row-of (fn [row]
+          (let [my-level (level-of-row row)]
+            (loop [el (.-previousElementSibling row)]
+              (cond
+                (not el) nil
+                (< (level-of-row el) my-level) el
+                :else (recur (.-previousElementSibling el))))))
+
+        ;; Unfold a nested row OUT to root, landing just AFTER its parent's whole
+        ;; column (Alt+l on a child). In column-major DOM a lone child already
+        ;; sits right after the parent, so that's a plain outdent; a middle child
+        ;; is first moved past the parent's remaining subtree.
+        unfold-right (fn [row]
+          (when (and row (.-_tab row) (.-parentId (tree-data! (.-_tab row))))
+            (let [sub (subtree-rows row)
+                  p (parent-row-of row)
+                  p-sub (when p (subtree-rows p))
+                  anchor (when p-sub (aget p-sub (- (.-length p-sub) 1)))]
+              (set! (.-parentId (tree-data! (.-_tab row))) nil)
+              (when (and anchor (not (.includes sub anchor)))
+                (insert-after-each anchor sub))
+              (commit-tree (subtree-rows row)))))
+
+        ;; Unfold a nested row OUT to root, landing just BEFORE its parent's
+        ;; column (Alt+h on a child) — the mirror of unfold-right.
+        unfold-left (fn [row]
+          (when (and row (.-_tab row) (.-parentId (tree-data! (.-_tab row))))
+            (let [sub (subtree-rows row)
+                  p (parent-row-of row)]
+              (set! (.-parentId (tree-data! (.-_tab row))) nil)
+              (when p (.forEach sub #(.before p %)))
+              (commit-tree (subtree-rows row)))))
+
 
         create-modeline (fn []
           (let [ml (xul-id "hbox" "gjoa-modeline")
@@ -1389,6 +1445,14 @@
         handle-normal-key (fn [e] :- Bool
           (when (and (not= (.-key e) "J") (not= (.-key e) "K"))
             (set! (.-selection-anchor vs) nil))
+          ;; Place the vim cursor on the selected tab BEFORE any action runs. The
+          ;; Alt+hjkl move branches (fold / outdent / reorder) and friends guard
+          ;; on (.-cursor state), so a fresh tab selection followed by Alt+h would
+          ;; silently no-op. This used to live only in the bare-key :else arm,
+          ;; which is why Alt-moves did nothing until you first pressed j/k/h/l.
+          (when (and (not (.-cursor state)) (.includes "jklhG/rnNx" (.-key e)))
+            (let [row (.get row-of (.-selectedTab gBrowser))]
+              (when row (set-cursor row))))
           (cond
             (.-pending-ctrl-w vs)
             (do (set! (.-pending-ctrl-w vs) false)
@@ -1433,22 +1497,38 @@
             (key= e "i")
             (do (blur-panel) (.focus (.-selectedBrowser gBrowser)) true)
 
-            ;; Alt+hjkl MOVES the tab. The reorder axis follows the layout: in
-            ;; VERTICAL the sequence runs ↕ (j/k reorder, h/l change depth); in
-            ;; HORIZONTAL it runs ↔ (h/l reorder, j/k change depth — children stack
-            ;; below the parent in its column). So the h/l and j/k actions transpose
-            ;; with the mode — Alt+h is always "move left", Alt+j always "move down".
+            ;; Alt+hjkl MOVES the focused tab, mode-relative.
+            ;; VERTICAL:   h = outdent (to root), l = indent (fold into the tab
+            ;;             above), j = reorder down, k = reorder up.
+            ;; HORIZONTAL: h = fold into the LEFT neighbour, l = fold into the
+            ;;             RIGHT neighbour, k = outdent/unfold, j = reorder later.
+            ;; Arrows track their letters.
             (and (.-altKey e) (or (key= e "h") (= (.-code e) "KeyH") (key= e "ArrowLeft")))
             (do (when (.-cursor state)
-                  (if (is-horizontal) (swap-up (.-cursor state)) (move-to-root (.-cursor state)))) true)
+                  (let [c (.-cursor state)]
+                    (if (is-horizontal)
+                      ;; Move LEFT through the tree: a CHILD unfolds OUT to the
+                      ;; left (lands before its parent's column); a ROOT folds
+                      ;; INTO its left neighbour.
+                      (if (and (.-_tab c) (.-parentId (tree-data! (.-_tab c))))
+                        (unfold-left c)
+                        (make-child-of-above c))
+                      (move-to-root c)))) true)
 
             (and (.-altKey e) (or (key= e "l") (= (.-code e) "KeyL") (key= e "ArrowRight")))
             (do (when (.-cursor state)
-                  (if (is-horizontal) (swap-down (.-cursor state)) (make-child-of-above (.-cursor state)))) true)
+                  (let [c (.-cursor state)]
+                    (if (is-horizontal)
+                      ;; Move RIGHT through the tree: a CHILD unfolds OUT to the
+                      ;; right (lands after its parent's column); a ROOT folds
+                      ;; INTO its right neighbour.
+                      (if (and (.-_tab c) (.-parentId (tree-data! (.-_tab c))))
+                        (unfold-right c)
+                        (make-child-of-next c))
+                      (make-child-of-above c)))) true)
 
             (and (.-altKey e) (or (key= e "j") (= (.-code e) "KeyJ") (key= e "ArrowDown")))
-            (do (when (.-cursor state)
-                  (if (is-horizontal) (make-child-of-above (.-cursor state)) (swap-down (.-cursor state)))) true)
+            (do (when (.-cursor state) (swap-down (.-cursor state))) true)
 
             (and (.-altKey e) (or (key= e "k") (= (.-code e) "KeyK") (key= e "ArrowUp")))
             (do (when (.-cursor state)

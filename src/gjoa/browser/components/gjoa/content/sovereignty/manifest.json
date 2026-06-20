@@ -1,7 +1,7 @@
 {
   "claim": "This build makes 1 unattended network call: the Firefox version check.",
   "gjoaVersion": "0.3.3",
-  "auditedCommit": "e2c4aeb",
+  "auditedCommit": "07ab51d",
   "generated": "2026-06-20",
   "method": "static AST audit of all authored chrome (.sys.mjs + emitted .bjs + content .js), every source parsed",
   "ownCode": {
@@ -19,7 +19,7 @@
         "endpoint": "(dynamic)",
         "what": "fetch call",
         "file": "src/gjoa/toolkit/components/content-classifier/ContentClassifierRemoteSettingsClient.sys.mjs",
-        "line": 323,
+        "line": 344,
         "basis": "guard(url)"
       }
     ],
@@ -28,7 +28,7 @@
         "endpoint": "resource://gre/modules/scriptlet-resources.json",
         "what": "fetch call",
         "file": "src/gjoa/toolkit/components/content-classifier/ContentClassifierRemoteSettingsClient.sys.mjs",
-        "line": 236,
+        "line": 237,
         "basis": "endpoint"
       },
       {

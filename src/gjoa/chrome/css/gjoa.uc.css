@@ -156,9 +156,9 @@
    * sidebar + the content render as two rounded cards inset from the window
    * edges with a gap between; a FLOATING (compact) or hidden (zen/fullscreen)
    * sidebar lets content fill the whole window. */
-  --gjoa-card-gap: 6px;
-  --gjoa-card-radius: 8px;
-  --gjoa-card-shadow: 0 1px 6px rgba(0, 0, 0, 0.22);
+  --gjoa-card-gap: 8px;
+  --gjoa-card-radius: 10px;
+  --gjoa-card-shadow: 0 2px 12px rgba(0, 0, 0, 0.35);
   --gjoa-transition-duration: 0.25s;
   --gjoa-transition-easing: linear(
     0 0%, 0.003 1%, 0.011 2%, 0.023 3%, 0.039 4%, 0.058 5%, 0.08 6%,
@@ -657,6 +657,23 @@ Preserve these (security warnings):
   box-shadow: 0 12px 40px rgba(0, 0, 0, 0.5) !important;
 }
 
+/* Breathing room at the panel top so the input doesn't butt against (and look
+ * clipped by) the rounded command-palette edge — the FF152 urlbar restyle left
+ * the input flush. Applies in both the floating and in-toolbar expanded popouts. */
+:root[gjoa-urlbar-floating] #urlbar,
+#gjoa-urlbar-toolbar #urlbar[breakout-extend] {
+  padding-block-start: 8px !important;
+}
+
+/* Vertically center the security icon / text / star within the input row.
+ * FF/nova leaves `.urlbar-input-container` at align-items:normal (≈stretch),
+ * which top-aligns fixed-size children (the shield icon) instead of centering
+ * them against the text — the "not quite centered" look in the expanded state. */
+:root[gjoa-urlbar-floating] #urlbar .urlbar-input-container,
+#gjoa-urlbar-toolbar #urlbar[breakout-extend] .urlbar-input-container {
+  align-items: center !important;
+}
+
 @media (prefers-reduced-motion: reduce) {
   #gjoa-urlbar-backdrop { animation: none !important; }
 }
@@ -861,22 +878,31 @@ Preserve these (security warnings):
 
 @media -moz-pref("gjoa.layout.floatingCards") {
 
-  /* STATIC: launcher visible AND in-flow → inset the row, gap the cards. */
+  /* STATIC: launcher visible AND in-flow → inset the row, gap the cards.
+   * #browser's own background goes TRANSPARENT so the inter-card gap + the
+   * outer inset reveal the backdrop behind the chrome (the desktop through a
+   * translucent window, or the window root) — that's what makes the two cards
+   * read as floating instead of a same-colour seam you can't see. */
   #browser:has(> #sidebar-main:not([data-gjoa-compact]):not([hidden])) {
     gap: var(--gjoa-card-gap) !important;
     padding: var(--gjoa-card-gap) !important;
+    background-color: transparent !important;
+    background-image: none !important;
   }
 
+  /* Round the SIDEBAR card (chrome — safe to clip). The CONTENT card is left
+   * UN-rounded + UN-clipped: clipping a remote <browser> to a rounded corner
+   * leaves a triangular compositor artifact at the top-left, and the rounding
+   * would be hidden behind the opaque page anyway. The gap + shadow already
+   * make it read as a floating card. */
+  #browser:has(> #sidebar-main:not([data-gjoa-compact]):not([hidden])) > #sidebar-main {
+    border-radius: var(--gjoa-card-radius) !important;
+  }
   #browser:has(> #sidebar-main:not([data-gjoa-compact]):not([hidden])) > #sidebar-main,
   #browser:has(> #sidebar-main:not([data-gjoa-compact]):not([hidden])) > #tabbrowser-tabbox {
-    border-radius: var(--gjoa-card-radius) !important;
     box-shadow: var(--gjoa-card-shadow) !important;
   }
-
-  /* Content card: clip web content to the rounded corners + give it a card
-   * background so the rounding reads even before a page paints. */
   #browser:has(> #sidebar-main:not([data-gjoa-compact]):not([hidden])) > #tabbrowser-tabbox {
-    overflow: hidden !important;
     background-color: var(--gjoa-bg) !important;
   }
 

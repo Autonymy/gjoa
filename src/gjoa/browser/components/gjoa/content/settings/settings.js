@@ -62,15 +62,23 @@
       inp.addEventListener("change", () => { setInt(s.pref, parseInt(inp.value, 10)); rerender(); });
       return inp;
     }
-    // string / other: read-only, edit via about:config
+    if (s.type === "string") {
+      const inp = document.createElement("input");
+      inp.type = "text"; inp.className = "control-text"; inp.value = String(cur);
+      if (s.placeholder) inp.placeholder = s.placeholder;
+      inp.addEventListener("change", () => { setStr(s.pref, inp.value); rerender(); });
+      return inp;
+    }
+    // other: read-only, edit via about:config
     return el("span", "control-ro", String(cur));
   }
 
   function costText(m) {
     if (!m) return "";
-    if (m.method === "unmeasured" || m.value == null) {
-      return "cost: unmeasured" + (m.method && m.method !== "unmeasured" ? " (" + m.method + ")" : "");
-    }
+    if (m.method === "egress") return "cost: egress → " + (m.endpoint || "?");
+    if (m.method === "feature") return "cost: feature toggle" + (m.endpoint ? " (" + m.endpoint + ")" : "");
+    if (m.method === "cve-surface") return "security gate — not a perf knob";
+    if (m.method === "unmeasured" || m.value == null) return "cost: unmeasured";
     return "cost: " + m.value + " " + (m.unit || "") + " (" + (m.confidence || "") + ")";
   }
 
@@ -79,7 +87,11 @@
     const main = el("div", "row-main");
     main.appendChild(el("div", "row-title", s.title));
     if (s.help) main.appendChild(el("div", "row-help", s.help));
-    if (s.measurement) main.appendChild(el("div", "row-cost", costText(s.measurement)));
+    if (s.measurement) {
+      const cost = el("div", "row-cost", costText(s.measurement));
+      if (s.measurement.basis) cost.title = s.measurement.basis;
+      main.appendChild(cost);
+    }
     const pref = el("a", "row-pref");
     pref.textContent = s.pref;
     pref.href = "about:config";
@@ -112,6 +124,20 @@
           ul.appendChild(li);
         }
         card.appendChild(ul);
+      }
+      if (p.leaves && p.leaves.length) {
+        const det = document.createElement("details");
+        det.className = "leaves";
+        det.appendChild(el("summary", "leaves-sum", "Flips " + p.leaves.length + " preferences"));
+        const ul = el("ul", "leaves-list");
+        for (const lf of p.leaves) {
+          const li = el("li", "leaf");
+          li.appendChild(el("span", "leaf-pref", lf.pref));
+          li.appendChild(el("span", "leaf-val", " → " + lf.on));
+          ul.appendChild(li);
+        }
+        det.appendChild(ul);
+        card.appendChild(det);
       }
       root.appendChild(card);
     }

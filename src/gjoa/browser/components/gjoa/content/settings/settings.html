@@ -1,0 +1,41 @@
+<!DOCTYPE html>
+<!-- about:gjoa — gjoa's settings home. A PRIVILEGED chrome page: it reads + flips
+     prefs directly. gjoa OWNS this surface (no Firefox-preferences patching); Firefox
+     Settings carries a thin pointer here. Every feature stays PRESENT and reversible;
+     costs are measured or honestly unmeasured. textContent-only render + CSP. -->
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta http-equiv="Content-Security-Policy"
+          content="default-src chrome:; style-src chrome: 'unsafe-inline'; script-src chrome:; img-src chrome: data:;" />
+    <title>gjoa Settings</title>
+    <link rel="stylesheet" href="chrome://gjoa/content/settings/settings.css" />
+  </head>
+  <body>
+    <main id="panel" aria-live="polite">
+      <header class="brand">gjoa · settings</header>
+      <p class="intro">
+        gjoa's settings live here. Firefox's own settings stay in
+        <a href="about:preferences">Firefox Settings</a>; raw prefs are in
+        <a href="about:config">about:config</a>. Every gjoa feature stays present and
+        reversible — flip it back any time.
+      </p>
+
+      <section>
+        <h2 class="h2">Profiles</h2>
+        <p class="sub">A profile flips a whole bundle of settings at once, and reverts cleanly when off.</p>
+        <div id="profiles"></div>
+      </section>
+
+      <div id="sections"></div>
+
+      <section>
+        <h2 class="h2">More</h2>
+        <div id="links"></div>
+      </section>
+
+      <footer class="foot" id="foot"></footer>
+    </main>
+    <script src="chrome://gjoa/content/settings/settings.js"></script>
+  </body>
+</html>

@@ -1,0 +1,54 @@
+{
+  "note": "The about:gjoa settings registry. gjoa's single settings home. Each setting is a live pref (present + reversible). Costs are MEASURED or honestly 'unmeasured' — never invented. Firefox's own settings stay in Firefox Settings; this is gjoa's surface.",
+  "profiles": [
+    { "id": "librewolf-mode", "pref": "gjoa.profile.librewolf-mode.enabled", "type": "bool", "title": "LibreWolf mode",
+      "claim": "LibreWolf-grade privacy DEFAULTS, as one toggle.",
+      "disclaimer": "NOT 'as secure as LibreWolf'. These prefs are only part of LibreWolf's hardening (their compile-time disables and ~20 C++ patches are not here), and flipping this changes none of gjoa's own added surface (the adblock classifier, content actors, custom about: pages).",
+      "tradeoffs": [
+        { "title": "resistFingerprinting has a high UX cost", "detail": "Breaks canvas-reliant sites, letterboxes the window, reports UTC timezone + a generic UA. Default-off for a reason; on only inside this profile." },
+        { "title": "Safe Browsing stays ON (conflict, not flipped)", "detail": "LibreWolf neuters Safe Browsing, but gjoa deliberately KEPT download-reputation on (security finding F5). LibreWolf mode does NOT disable it here — the conflict is surfaced, not silently resolved." },
+        { "title": "Prefetch stays ON (gjoa speed decision)", "detail": "LibreWolf disables prefetch/dns-prefetch; gjoa keeps them on for page-load speed. Not changed by this profile." }
+      ] }
+  ],
+  "sections": [
+    { "id": "dark-mode", "title": "Dark mode", "intro": "Engine-level dark mode.",
+      "settings": [
+        { "pref": "gjoa.darkmode.enabled", "type": "bool", "title": "Dark mode", "default": true },
+        { "pref": "gjoa.darkmode.mode", "type": "enum", "title": "Mode", "default": "hybrid", "options": ["auto", "filter", "hybrid", "invert"], "help": "How pages are darkened (auto = color-scheme only; hybrid = native-where-available + invert-the-rest)." },
+        { "pref": "gjoa.darkmode.scrim.alpha", "type": "int", "title": "Scrim strength", "default": 140, "help": "0-255; higher = darker scrim over un-themed pages." },
+        { "pref": "gjoa.darkmode.invert.enabled", "type": "bool", "title": "Allow per-site invert", "default": false },
+        { "pref": "gjoa.darkmode.image-analysis.enabled", "type": "bool", "title": "Image-analysis refinement", "default": false, "help": "Optional polish; off by default (unverified refinement on top of the correctness floor)." }
+      ] },
+    { "id": "content-blocking", "title": "Content blocking", "intro": "Native (adblock-rust) ad + tracker blocking.",
+      "settings": [
+        { "pref": "gjoa.contentblock.enabled", "type": "bool", "title": "Ad / tracker blocking", "default": true },
+        { "pref": "gjoa.contentblock.scriptlets.listDriven.enabled", "type": "bool", "title": "List-driven scriptlets", "default": false,
+          "help": "SECURITY: off = only curated baseline scriptlets run; on allows arbitrary +js() injection from your filter lists. Leave off unless you trust your lists.",
+          "measurement": { "method": "cve-surface", "confidence": "moderate", "basis": "A security gate (finding F2), not a perf knob." } }
+      ] },
+    { "id": "reversible", "title": "Reversible features (debloat)",
+      "intro": "Firefox subsystems gjoa disables by default - present and reversible. gjoa never deletes a capability; it parks it behind a knob. Costs are measured against a real gjoa binary, or honestly marked unmeasured.",
+      "settings": [
+        { "pref": "toolkit.telemetry.enabled", "type": "bool", "title": "Telemetry", "default": false, "firefoxDefault": true,
+          "measurement": { "method": "unmeasured", "confidence": "unmeasured", "basis": "Memory/CPU saving unmeasured on a gjoa binary. Measure: enable in a control build, about:memory at idle+30s, disable, recapture, report delta + date." } },
+        { "pref": "datareporting.healthreport.uploadEnabled", "type": "bool", "title": "Health Report upload", "default": false, "firefoxDefault": true,
+          "measurement": { "method": "unmeasured", "confidence": "unmeasured", "basis": "Egress feature; cost is the data sent, not memory. Unmeasured." } },
+        { "pref": "extensions.pocket.enabled", "type": "bool", "title": "Pocket", "default": false, "firefoxDefault": true,
+          "measurement": { "method": "unmeasured", "confidence": "unmeasured", "basis": "Measure on a baseline where Pocket is ENABLED - no saving exists for a feature that was never running." } },
+        { "pref": "identity.fxaccounts.enabled", "type": "bool", "title": "Firefox Accounts (Sync)", "default": false, "firefoxDefault": true,
+          "measurement": { "method": "unmeasured", "confidence": "unmeasured", "basis": "Disables Sync. Feature loss, not a measured perf win." } },
+        { "pref": "browser.discovery.enabled", "type": "bool", "title": "Add-on discovery (TAAR)", "default": false, "firefoxDefault": true,
+          "measurement": { "method": "unmeasured", "confidence": "unmeasured", "basis": "Egress (recommendation service). Memory cost unmeasured." } },
+        { "pref": "app.normandy.enabled", "type": "bool", "title": "Normandy remote experiments", "default": false, "firefoxDefault": true,
+          "measurement": { "method": "unmeasured", "confidence": "unmeasured", "basis": "Remote experiment delivery; egress vector. Memory cost unmeasured." } },
+        { "pref": "browser.contile.enabled", "type": "bool", "title": "Sponsored top sites (Contile)", "default": false, "firefoxDefault": true,
+          "measurement": { "method": "unmeasured", "confidence": "unmeasured", "basis": "Egress to contile.services.mozilla.com. No functional cost (custom new-tab). Memory unmeasured." } }
+      ] }
+  ],
+  "links": [
+    { "title": "Sovereignty - egress proof", "url": "about:sovereignty",
+      "desc": "The source-derived list of every point this build reaches the network, checked against the build you're running. A proof, not a setting." },
+    { "title": "Raw preferences", "url": "about:config",
+      "desc": "Every gjoa.* and Firefox pref, raw. The expert escape hatch - each setting above shows its pref name to search here." }
+  ]
+}

@@ -363,8 +363,12 @@
 (defn register-about-pages! [] :- Any
   (register-about! "sovereignty" "chrome://gjoa/content/sovereignty/sovereignty.html"
                    "{6a7c1e90-5b3d-4c2a-9f81-7e0d3a6b2c54}")
-  (register-about! "knobs" "chrome://gjoa/content/knobs/knobs.html"
-                   "{b3d8f1a2-4c5e-4a9b-8f02-1e7d6c3b9a40}"))
+  ;; about:gjoa is gjoa's settings home; about:knobs stays as a back-compat alias to
+  ;; the same page (so an existing link still works). Distinct class-ids per about: URL.
+  (register-about! "gjoa" "chrome://gjoa/content/settings/settings.html"
+                   "{b3d8f1a2-4c5e-4a9b-8f02-1e7d6c3b9a40}")
+  (register-about! "knobs" "chrome://gjoa/content/settings/settings.html"
+                   "{c4e9a2b3-5d6f-4b1c-9013-2f8e7d4ca051}"))
 
 (js/export (def GjoaLoader :- Any
   {:start (fn [] :- Any

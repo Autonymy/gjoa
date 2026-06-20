@@ -1,0 +1,22 @@
+#lang beagle/js
+;; tools/prep/sh.bjs — one shell-exec helper, replacing ~6 per-tool copies that
+;; drifted on buffer size and error handling. opts (all optional):
+;;   :cwd        run in this directory
+;;   :max-buffer stdout cap (default 256MB — large enough that no caller's buffer
+;;               shrinks; a too-small default silently EMPTIES on big output, the
+;;               bug that bit conflict-forecast on a 76k-file delta)
+;;   :quiet      swallow a nonzero exit / error to "" and silence stderr
+;;               (else throw on nonzero exit — execSync's default)
+(ns gjoa.tools.prep.sh
+  (:require [child_process :refer [execSync]]))
+(define-mode strict)
+(declare-extern [Error Object] Any)
+
+(js/export (defn sh [cmd :- String opts :- Any] :- String
+  (let [o (or opts {})
+        cfg {:encoding "utf8" :maxBuffer (or (.-maxBuffer o) (* 256 1024 1024))}
+        cfg2 (if (.-cwd o) (.assign Object {} cfg {:cwd (.-cwd o)}) cfg)]
+    (if (.-quiet o)
+      (try (.toString (execSync cmd (.assign Object {} cfg2 {:stdio ["ignore" "pipe" "ignore"]})))
+        (catch Error _e ""))
+      (.toString (execSync cmd cfg2))))))

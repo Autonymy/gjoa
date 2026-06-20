@@ -10,7 +10,7 @@
 (ns gjoa.tools.prep.symbol-resolve
   (:require [fs :refer [existsSync readFileSync]]
             [path :refer [join dirname]]
-            [child_process :refer [execSync]]))
+            [gjoa.tools.prep.sh :refer [sh]]))
 (define-mode strict)
 (declare-extern [process] Any)
 
@@ -20,10 +20,6 @@
 
 (defn slurp [f :- String] :- String
   (if (existsSync f) (readFileSync f "utf8") ""))
-
-(defn sh [cmd :- String] :- String
-  (try (.toString (execSync cmd {:encoding "utf8" :stdio ["ignore" "pipe" "ignore"]}))
-    (catch Error _e "")))
 
 (defn rel [f :- String] :- String (.replace f (str ENGINE "/") ""))
 
@@ -79,7 +75,7 @@
 ;; obj-*/.../style-*/out/properties.rs. Modern API is clone_<longhand>(); assert
 ;; the accessor (or a bare field) exists there.
 (defn objdir-properties [] :- String
-  (.trim (sh (str "ls -t " ENGINE "/obj-*/x86_64-unknown-linux-gnu/release/build/style-*/out/properties.rs 2>/dev/null | head -1"))))
+  (.trim (sh (str "ls -t " ENGINE "/obj-*/x86_64-unknown-linux-gnu/release/build/style-*/out/properties.rs 2>/dev/null | head -1") {:quiet true})))
 
 (js/export (defn resolve-rust-field [field :- String accessor :- String] :- Any
   (let [gen (objdir-properties)]
@@ -125,7 +121,7 @@
             (if (not present)
               {:verdict "not-found" :detail (str prop " not a member of " mod " (deleted/renamed)")}
               (if (and must-read (not= must-read ""))
-                (let [readers (.trim (sh (str "rg -l --no-messages '\\." prop "\\b' " (join ENGINE must-read) " 2>/dev/null | head -1")))]
+                (let [readers (.trim (sh (str "rg -l --no-messages '\\." prop "\\b' " (join ENGINE must-read) " 2>/dev/null | head -1") {:quiet true}))]
                   (if (= readers "")
                     {:verdict "not-found" :detail (str prop " exists but is ORPHANED — no reader under " must-read " (override silently ignored, like FF152 newTabURL)")}
                     {:verdict "resolved" :detail (str prop " present + read under " must-read)}))

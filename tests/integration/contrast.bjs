@@ -20,7 +20,7 @@
 ;; Precondition: tools/test-driver/contrast-fixture-server.mjs serving :8976
 ;; (the runner --with-fixtures flag spawns it).
 (ns gjoa.tests.integration.contrast
-  (:require [gjoa.tests.dsl :refer [deftest expect sleep]]
+  (:require [gjoa.tests.dsl :refer [deftest expect sleep NAV-JS]]
             [gjoa.tools.test-driver.contrast-score :refer [parse-rgb evaluate-box score-page]]
             [gjoa.tools.test-driver.contrast-sample :refer [decode-png sample-backdrop]]))
 (define-mode strict)
@@ -48,20 +48,6 @@
   (str "Services.prefs.setBoolPref('gjoa.darkmode.enabled', true);"
        " Services.prefs.setCharPref('gjoa.darkmode.mode', 'hybrid');"
        " return 'on';"))
-
-;; Chrome-side navigation: load url, resolve when the top window hits STATE_STOP.
-(def NAV-JS :- String
-  (str "\n"
-       "  const [url, resolve] = arguments;\n"
-       "  let done = false; const finish = v => { if (!done) { done = true; resolve(v); } };\n"
-       "  const win = Services.wm.getMostRecentWindow('navigator:browser');\n"
-       "  const b = win.gBrowser.selectedBrowser;\n"
-       "  const l = { QueryInterface: ChromeUtils.generateQI(['nsIWebProgressListener','nsISupportsWeakReference']),\n"
-       "    onStateChange(wp, req, flags) { const S = Ci.nsIWebProgressListener;\n"
-       "      if ((flags & S.STATE_STOP) && (flags & S.STATE_IS_WINDOW)) { try { b.removeProgressListener(l); } catch {} finish(true); } } };\n"
-       "  b.addProgressListener(l, Ci.nsIWebProgress.NOTIFY_STATE_ALL);\n"
-       "  b.loadURI(Services.io.newURI(url), { triggeringPrincipal: Services.scriptSecurityManager.getSystemPrincipal() });\n"
-       "  setTimeout(() => finish(false), 15000);\n"))
 
 ;; Content-side enumeration: every visible text run -> page-relative box + its
 ;; post-inversion computed color + size/weight. Range.getClientRects (not the

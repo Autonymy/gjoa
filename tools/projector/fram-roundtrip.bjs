@@ -5,7 +5,7 @@
 ;; Steps: gjoa emits claims -> fram store loads + re-extracts (real engine) -> gjoa
 ;; renders byte-identically -> Datalog query over gjoa's AST. Needs ~/code/fram.
 (ns gjoa.tools.projector.fram-roundtrip
-  (:require [child_process :refer [execSync]]
+  (:require [gjoa.tools.prep.sh :refer [sh]]
             [fs :refer [readFileSync]]
             [path :refer [join]]))
 (define-mode strict)
@@ -16,9 +16,6 @@
 (def SELF :- String (join REPO ".beagle-tools" "gjoa" "tools" "projector" "fram-log.js"))
 (def DEFAULT :- String "engine/browser/components/newtab/AboutNewTabRedirector.sys.mjs")
 
-(defn sh [cmd :- String cwd :- String] :- String
-  (.toString (execSync cmd {:encoding "utf8" :cwd cwd :maxBuffer (* 128 1024 1024)})))
-
 ;; the structural Datalog query: every MethodDefinition node in gjoa's JS.
 (def QUERY :- String
   "{:find \"method\" :rules [{:head {:rel \"method\" :args [{:var \"l\"}]} :body [{:rel \"triple\" :args [{:var \"l\"} \"kind\" \"MethodDefinition\"]}]}]}")
@@ -27,20 +24,20 @@
   (let [F (or (aget (.-argv process) 2) DEFAULT)
         src (readFileSync (join REPO F) "utf8")]
     ;; 1. gjoa: JS -> claims (EDN triples for the store round-trip; a Fram log for query)
-    (sh (str "bun " SELF " edn " F " > /tmp/gjoa-A.edn") REPO)
-    (sh (str "bun " SELF " log " F " js > /tmp/gjoa-js.log") REPO)
-    (console/error (str "1. gjoa emitted " (.trim (sh "wc -l < /tmp/gjoa-A.edn" REPO)) " claims for " F))
+    (sh (str "bun " SELF " edn " F " > /tmp/gjoa-A.edn") {:cwd REPO})
+    (sh (str "bun " SELF " log " F " js > /tmp/gjoa-js.log") {:cwd REPO})
+    (console/error (str "1. gjoa emitted " (.trim (sh "wc -l < /tmp/gjoa-A.edn" {:cwd REPO})) " claims for " F))
     ;; 2. fram: load the claims into a REAL Fram store + re-extract (the engine)
-    (sh "bb -cp out chartroom/src/roundtrip_fram.clj /tmp/gjoa-A.edn > /tmp/gjoa-B.edn 2>/dev/null" FRAM)
+    (sh "bb -cp out chartroom/src/roundtrip_fram.clj /tmp/gjoa-A.edn > /tmp/gjoa-B.edn 2>/dev/null" {:cwd FRAM})
     (console/error "2. fram loaded the claims into a real store + re-extracted them")
     ;; 3. gjoa: render the re-extracted claims -> byte-identical?
-    (sh (str "bun " SELF " render /tmp/gjoa-B.edn > /tmp/gjoa-rendered.js") REPO)
+    (sh (str "bun " SELF " render /tmp/gjoa-B.edn > /tmp/gjoa-rendered.js") {:cwd REPO})
     (let [rendered (readFileSync "/tmp/gjoa-rendered.js" "utf8")
           identical (= rendered src)]
       (console/error (str "3. byte-identical through the live Fram store: " identical
                           " (" (.-length rendered) " bytes)"))
       ;; 4. Datalog: query gjoa's JS AST in the store
-      (let [out (.trim (sh (str "FRAM_LOG=/tmp/gjoa-js.log " (join FRAM "bin" "fram") " query '" QUERY "'") FRAM))
+      (let [out (.trim (sh (str "FRAM_LOG=/tmp/gjoa-js.log " (join FRAM "bin" "fram") " query '" QUERY "'") {:cwd FRAM}))
             n (.-length (.filter (.split out "\n") (fn [s :- String] :- Bool (> (.-length (.trim s)) 0))))]
         (console/error (str "4. Datalog query (MethodDefinition nodes) returned " n " methods from gjoa's JS"))
         (if (and identical (> n 0))

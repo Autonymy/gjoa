@@ -7,9 +7,9 @@
 ;;            engine file exactly — i.e. the claim-doc stays equivalent to patch 0011.
 ;;   bun run projector:test
 (ns gjoa.tools.projector.test-projector
-  (:require [child_process :refer [execSync]]
-            [fs :refer [readFileSync]]
+  (:require [fs :refer [readFileSync]]
             [path :refer [join dirname]]
+            [gjoa.tools.prep.sh :refer [sh]]
             [gjoa.tools.projector.reflector :refer [round-trips?]]
             [gjoa.tools.projector.claims :refer [json->doc replay]]))
 (define-mode strict)
@@ -18,16 +18,13 @@
 (def REPO :- String (.cwd process))
 (def ENGINE :- String (join REPO "engine"))
 
-(defn sh [cmd :- String] :- String
-  (.toString (execSync cmd {:encoding "utf8" :maxBuffer (* 64 1024 1024)})))
-
 (defn fail! [msg :- String] :- Any
   (console/error (str "FAIL: " msg))
   (.exit process 1))
 
 (defn main! [] :- Any
   ;; GATE A — reflector round-trip over a corpus
-  (let [files (.filter (.split (sh (str "find " ENGINE "/browser/components " ENGINE "/toolkit/modules -name '*.sys.mjs' 2>/dev/null | head -40")) "\n")
+  (let [files (.filter (.split (sh (str "find " ENGINE "/browser/components " ENGINE "/toolkit/modules -name '*.sys.mjs' 2>/dev/null | head -40") nil) "\n")
                        (fn [s :- String] :- Bool (> (.-length s) 0)))]
     (loop [i 0 bad 0]
       (if (< i (.-length files))
@@ -43,9 +40,9 @@
         rel (.-file doc)
         engine-target (join ENGINE rel)
         tmp "/tmp/gjoa-projtest"]
-    (sh (str "rm -rf " tmp " && mkdir -p " (join tmp (dirname rel))))
-    (sh (str "cp " engine-target " " (join tmp rel)))
-    (sh (str "cd " tmp " && patch -R -p1 < " patch))   ; engine - 0011 = pristine
+    (sh (str "rm -rf " tmp " && mkdir -p " (join tmp (dirname rel))) nil)
+    (sh (str "cp " engine-target " " (join tmp rel)) nil)
+    (sh (str "cd " tmp " && patch -R -p1 < " patch) nil)   ; engine - 0011 = pristine
     (let [pristine (readFileSync (join tmp rel) "utf8")
           patched (readFileSync engine-target "utf8")
           r (replay (.-edits doc) pristine)]

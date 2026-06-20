@@ -18,7 +18,7 @@
 ;; hardening.md. This monitors the surface instead of pretending to type it.
 ;;   bun run firefox-api-drift
 (ns gjoa.tools.prep.firefox-api-surface
-  (:require [child_process :refer [execSync]]
+  (:require [gjoa.tools.prep.sh :refer [sh]]
             [path :refer [join]]))
 (define-mode strict)
 (declare-extern [process] Any)
@@ -31,16 +31,12 @@
 ;; here — the sub-service NAMES themselves are stable XPCOM getters.
 (def GLOBALS :- Any ["gBrowser" "ChromeUtils" "PathUtils" "IOUtils"])
 
-(defn sh [cmd :- String] :- String
-  (try (.toString (execSync cmd {:encoding "utf8" :maxBuffer (* 64 1024 1024) :stdio ["ignore" "pipe" "ignore"]}))
-    (catch Error _e "")))
-
 ;; derive [{:global g :members [member ...]} ...] from `(.<member> <Global> ...)`
 ;; calls in chrome.
 (defn scan-surface [] :- Any
   (let [result []]
     (doseq [g GLOBALS]
-      (let [out (sh (str "grep -rhoE '\\(\\.[a-zA-Z]+ " g "\\b' " CHROME " 2>/dev/null"))
+      (let [out (sh (str "grep -rhoE '\\(\\.[a-zA-Z]+ " g "\\b' " CHROME " 2>/dev/null") {:quiet true})
             members []]
         (doseq [line (.split out "\n")]
           (let [m (.match line (RegExp. "\\(\\.([a-zA-Z]+)"))]
@@ -53,7 +49,7 @@
 ;; does `member` still appear in non-test engine/ source? (definition or use)
 (defn resolves? [member :- String] :- Bool
   (let [hits (sh (str "grep -rl --include=*.js --include=*.jsm --include=*.mjs --include=*.webidl --include=*.idl "
-                      "-e '" member "' " ENGINE " 2>/dev/null | grep -vE '/test/|/tests/|_test' | head -1"))]
+                      "-e '" member "' " ENGINE " 2>/dev/null | grep -vE '/test/|/tests/|_test' | head -1") {:quiet true})]
     (> (.-length (.trim hits)) 0)))
 
 (defn main! [] :- Any

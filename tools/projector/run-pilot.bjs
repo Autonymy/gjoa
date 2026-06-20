@@ -6,7 +6,8 @@
 (ns gjoa.tools.projector.run-pilot
   (:require [child_process :refer [execSync]]
             [fs :refer [readFileSync]]
-            [path :refer [join dirname]]))
+            [path :refer [join dirname]]
+            [gjoa.tools.prep.sh :refer [sh]]))
 (define-mode strict)
 (declare-extern [process console JSON Error] Any)
 
@@ -14,9 +15,6 @@
 (def REL :- String "browser/components/newtab/AboutNewTabRedirector.sys.mjs")
 (def FF-SRC :- String (join (.-HOME (.-env process)) "code" "reference" "firefox"))
 (def TMP :- String "/tmp/gjoa-pilot")
-
-(defn sh [cmd :- String] :- String
-  (.toString (execSync cmd {:encoding "utf8" :maxBuffer (* 64 1024 1024)})))
 
 (defn ff-version [] :- String
   (.-version (.-firefox (.parse JSON (readFileSync (join REPO "gjoa.json") "utf8")))))
@@ -26,11 +24,11 @@
         tag (str "FIREFOX_" (.replaceAll v "." "_") "_RELEASE")
         dir (join TMP (dirname REL))]
     ;; pristine = the pinned upstream file at its release tag; patched = pristine + 0011.
-    (sh (str "rm -rf " TMP " && mkdir -p " dir))
-    (sh (str "git -C " FF-SRC " show " tag ":" REL " > " (join TMP "pristine.mjs")))
-    (sh (str "cp " (join TMP "pristine.mjs") " " (join TMP REL)))
-    (sh (str "cd " TMP " && patch -p1 < " (join REPO "patches" "0011-newtab-redirector-gjoa.patch")))
-    (sh (str "cp " (join TMP REL) " " (join TMP "patched.mjs")))
+    (sh (str "rm -rf " TMP " && mkdir -p " dir) nil)
+    (sh (str "git -C " FF-SRC " show " tag ":" REL " > " (join TMP "pristine.mjs")) nil)
+    (sh (str "cp " (join TMP "pristine.mjs") " " (join TMP REL)) nil)
+    (sh (str "cd " TMP " && patch -p1 < " (join REPO "patches" "0011-newtab-redirector-gjoa.patch")) nil)
+    (sh (str "cp " (join TMP REL) " " (join TMP "patched.mjs")) nil)
     (console/error (str "pilot inputs ready (pristine @ " tag ", patched via patches/0011)"))
     ;; delegate to the pilot (it owns the gates + exit code).
     (execSync (str "bun " (join REPO ".beagle-tools" "gjoa" "tools" "projector" "pilot-0011.js")

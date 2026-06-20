@@ -6,9 +6,9 @@
 ;; once and commit; the build replays it as a fallback when the textual patch .rej's.
 ;;   bun run projector:gen-claims
 (ns gjoa.tools.projector.gen-claims
-  (:require [child_process :refer [execSync]]
-            [fs :refer [readFileSync writeFileSync]]
+  (:require [fs :refer [readFileSync writeFileSync]]
             [path :refer [join dirname]]
+            [gjoa.tools.prep.sh :refer [sh]]
             [gjoa.tools.projector.claims :refer [build-doc]]))
 (define-mode strict)
 (declare-extern [process console JSON] Any)
@@ -21,17 +21,14 @@
 (def FF-SRC :- String (join (.-HOME (.-env process)) "code" "reference" "firefox"))
 (def TMP :- String "/tmp/gjoa-gen")
 
-(defn sh [cmd :- String] :- String
-  (.toString (execSync cmd {:encoding "utf8" :maxBuffer (* 64 1024 1024)})))
-
 (defn main! [] :- Any
   (let [v (.-version (.-firefox (.parse JSON (readFileSync (join REPO "gjoa.json") "utf8"))))
         tag (str "FIREFOX_" (.replaceAll v "." "_") "_RELEASE")
         dir (join TMP (dirname REL))]
-    (sh (str "rm -rf " TMP " && mkdir -p " dir))
-    (sh (str "git -C " FF-SRC " show " tag ":" REL " > " (join TMP "pristine.mjs")))
-    (sh (str "cp " (join TMP "pristine.mjs") " " (join TMP REL)))
-    (sh (str "cd " TMP " && patch -p1 < " (join REPO "patches" "0011-newtab-redirector-gjoa.patch")))
+    (sh (str "rm -rf " TMP " && mkdir -p " dir) nil)
+    (sh (str "git -C " FF-SRC " show " tag ":" REL " > " (join TMP "pristine.mjs")) nil)
+    (sh (str "cp " (join TMP "pristine.mjs") " " (join TMP REL)) nil)
+    (sh (str "cd " TMP " && patch -p1 < " (join REPO "patches" "0011-newtab-redirector-gjoa.patch")) nil)
     (let [patched (readFileSync (join TMP REL) "utf8")
           pristine (readFileSync (join TMP "pristine.mjs") "utf8")
           edits (build-doc patched pristine ANCHORS)

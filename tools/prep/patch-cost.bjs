@@ -7,7 +7,7 @@
 (ns gjoa.tools.prep.patch-cost
   (:require [fs :refer [readdirSync readFileSync]]
             [path :refer [join]]
-            [child_process :refer [execSync]]))
+            [gjoa.tools.prep.sh :refer [sh]]))
 (define-mode strict)
 (declare-extern [process] Any)
 
@@ -16,13 +16,9 @@
 ;; mozilla-central full clone (the churn oracle). /reference per code/CLAUDE.md.
 (def FF :- String (join (.-HOME (.-env process)) "code" "reference" "firefox"))
 
-(defn sh [cmd :- String] :- String
-  (try (.toString (execSync cmd {:encoding "utf8" :stdio ["ignore" "pipe" "ignore"]}))
-    (catch Error _e "")))
-
 ;; churn = commits touching <file> in mozilla-central over the last year.
 (defn churn [file :- String] :- Number
-  (parseInt (.trim (sh (str "git -C " FF " log --oneline --since='1 year ago' -- '" file "' 2>/dev/null | wc -l"))) 10))
+  (parseInt (.trim (sh (str "git -C " FF " log --oneline --since='1 year ago' -- '" file "' 2>/dev/null | wc -l") {:quiet true})) 10))
 
 (defn touches [text :- String] :- Any
   (let [out []]

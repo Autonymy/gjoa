@@ -11,19 +11,13 @@
 (ns gjoa.tools.prep.conflict-forecast
   (:require [fs :refer [readdirSync readFileSync]]
             [path :refer [join]]
-            [child_process :refer [execSync]]))
+            [gjoa.tools.prep.sh :refer [sh]]))
 (define-mode strict)
 (declare-extern [process] Any)
 
 (def REPO :- String (.cwd process))
 (def PATCHES-DIR :- String (join REPO "patches"))
 (def FF :- String (join (.-HOME (.-env process)) "code" "reference" "firefox"))
-
-(defn sh [cmd :- String] :- String
-  ;; 256MB buffer: a major-version delta (e.g. 151->152) is ~76k file paths
-  ;; (~6MB) and overflows execSync's 1MB default, which would silently empty.
-  (try (.toString (execSync cmd {:encoding "utf8" :stdio ["ignore" "pipe" "ignore"] :maxBuffer (* 256 1024 1024)}))
-    (catch Error _e "")))
 
 ;; version "152.0.1" -> mozilla release tag "FIREFOX_152_0_1_RELEASE"
 (defn version->tag [v :- String] :- String
@@ -33,7 +27,7 @@
   (.-version (.-firefox (JSON/parse (readFileSync (join REPO "gjoa.json") "utf8")))))
 
 (defn latest-stable [] :- String
-  (let [out (sh "curl -s 'https://product-details.mozilla.org/1.0/firefox_versions.json' 2>/dev/null")]
+  (let [out (sh "curl -s 'https://product-details.mozilla.org/1.0/firefox_versions.json' 2>/dev/null" {:quiet true})]
     (if (= out "") "" (.-LATEST_FIREFOX_VERSION (JSON/parse out)))))
 
 ;; mozilla files a patch touches (exclude the depends-on contract lines)
@@ -59,7 +53,7 @@
       (or (= from "") (= to "")) (console/log "forecast: could not determine from/to versions")
       (= from to) (console/log (str "forecast: already at " to " — nothing to forecast"))
       :else
-      (let [delta (.filter (.split (sh (str "git -C " FF " diff --name-only " (version->tag from) " " (version->tag to) " 2>/dev/null")) "\n")
+      (let [delta (.filter (.split (sh (str "git -C " FF " diff --name-only " (version->tag from) " " (version->tag to) " 2>/dev/null") {:quiet true}) "\n")
                            (fn [s :- String] :- Bool (> (.-length s) 0)))]
         (if (= (.-length delta) 0)
           (console/log (str "forecast " from " -> " to ": empty delta — are the release tags present in " FF "?"))

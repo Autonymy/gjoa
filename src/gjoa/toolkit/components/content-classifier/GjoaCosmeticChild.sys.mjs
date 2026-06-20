@@ -112,7 +112,8 @@ export class GjoaCosmeticChild extends JSWindowActorChild {
 
   async handleEvent(event) {
     // DOMWindowCreated = document-start: inject scriptlets BEFORE page scripts
-    // run (a player pre-roll is decided the moment YouTube reads its config).
+    // run (a page consumes its first-party config the moment it reads it, so the
+    // prune has to land first).
     if (event.type === "DOMWindowCreated") {
       await this.injectScriptlets();
       return;

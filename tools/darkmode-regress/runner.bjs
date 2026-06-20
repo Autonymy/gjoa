@@ -49,9 +49,26 @@
 (defn safe-nav! [client :- Any url :- String] :- Any
   (try (js/await (.navigate client url)) nil (catch Error e (or (.-message e) (str e)))))
 
+;; Normalize pass: apply the corrective text colors (content) then re-snapshot +
+;; re-measure (chrome). Returns the RESIDUAL fail count — or pre-fails unchanged when
+;; not normalizing / nothing to apply. This is what validates the correction math:
+;; pre-fails should drop toward 0 after correctives land.
+(defn normalize-pass! [client :- Any meta :- Any threshold :- Any snap-js :- String
+                       apply-js :- String normalize? :- Any correctives :- Any
+                       pre-fails :- Any] :- Any
+  (if (or (not normalize?) (= (.-length correctives) 0))
+    pre-fails
+    (let [_c (js/await (.setContext client "content"))
+          _ap (js/await (.executeScript client apply-js [correctives]))
+          _raf (js/await (.executeAsyncScript client RAF-JS []))
+          _c2 (js/await (.setContext client "chrome"))
+          res2 (js/await (.executeAsyncScript client snap-js [meta threshold false]))]
+      (or (.-total res2) 0))))
+
 ;; Navigate + measure one site. Per-site try so one bad site can't kill the run.
 (defn process-site! [client :- Any url :- String threshold :- Any
-                     rects-js :- String snap-js :- String outdir :- String] :- Any
+                     rects-js :- String snap-js :- String apply-js :- String
+                     normalize? :- Any outdir :- String] :- Any
   (let [host (host-of url)]
     (try
       ;; content context FIRST — WebDriver:Navigate + the DOM scripts are
@@ -61,22 +78,30 @@
             _raf (js/await (.executeAsyncScript client RAF-JS []))
             meta (js/await (.executeScript client rects-js []))
             _c2 (js/await (.setContext client "chrome"))
-            res (js/await (.executeAsyncScript client snap-js [meta threshold]))
+            res (js/await (.executeAsyncScript client snap-js [meta threshold normalize?]))
+            pre-fails (or (.-total res) 0)
+            correctives (or (.-correctives res) [])
+            post-fails (js/await (normalize-pass! client meta threshold snap-js apply-js
+                                                  normalize? correctives pre-fails))
             shot (js/await (safe-shot client))]
         (when shot (.writeFileSync fs (.join path outdir (str host ".png")) shot {:encoding "base64"}))
-        {:url url :host host :checked (or (.-checked res) 0) :fails (or (.-total res) 0)
+        {:url url :host host :checked (or (.-checked res) 0) :fails pre-fails
+         :postFails post-fails :applied (.-length correctives)
          :worst (or (.-fails res) []) :err (or (.-err res) nil) :navwarn navwarn})
       (catch Error e
-        {:url url :host host :checked 0 :fails 0 :worst [] :err (or (.-message e) (str e))}))))
+        {:url url :host host :checked 0 :fails 0 :postFails 0 :applied 0 :worst [] :err (or (.-message e) (str e))}))))
 
 (defn run! [] :- Any
   (let [bin (or (aget (.-argv process) 2) (get (.-env process) "GJOA_BIN"))]
     (when (not bin) (.error console "usage: runner <gjoa-bin>") (.exit process 2))
-    (let [corpus (JSON/parse (.readFileSync fs "tools/darkmode-regress/corpus.json" "utf8"))
+    (let [corpus (JSON/parse (.readFileSync fs (or (get (.-env process) "GJOA_DM_CORPUS")
+                                                   "tools/darkmode-regress/corpus.json") "utf8"))
           threshold (or (.-threshold corpus) 45)
           sites (.-sites corpus)
           rects-js (.readFileSync fs "tools/darkmode-regress/rects.js" "utf8")
           snap-js (.readFileSync fs "tools/darkmode-regress/snap.js" "utf8")
+          apply-js (.readFileSync fs "tools/darkmode-regress/apply-correctives.js" "utf8")
+          normalize? (= (get (.-env process) "GJOA_DM_NORMALIZE") "1")
           outdir "dist/darkmode-regress"
           _mk (.mkdirSync fs outdir {:recursive true})
           profile (make-profile!)
@@ -95,17 +120,26 @@
           _to (js/await (.setTimeouts client {:pageLoad 30000 :script 30000}))
           results []]
       (doseq [site sites]
-        (let [r (js/await (process-site! client (.-url site) threshold rects-js snap-js outdir))]
+        (let [r (js/await (process-site! client (.-url site) threshold rects-js snap-js
+                                         apply-js normalize? outdir))
+              eff (if normalize? (.-postFails r) (.-fails r))]
           (.push results r)
-          (.log console (str (if (.-err r) "ERR  " (if (= (.-fails r) 0) "PASS " "FAIL "))
+          (.log console (str (if (.-err r) "ERR  " (if (= eff 0) "PASS " "FAIL "))
                              (.-host r) "  "
-                             (if (.-err r) (.-err r) (str "(" (.-checked r) " text els, " (.-fails r) " low-contrast)"))))))
+                             (if (.-err r) (.-err r)
+                               (if normalize?
+                                 (str "(" (.-checked r) " els, " (.-fails r) "->" (.-postFails r)
+                                      " after " (.-applied r) " fixes)")
+                                 (str "(" (.-checked r) " text els, " (.-fails r) " low-contrast)")))))))
       (.writeFileSync fs (.join path outdir "report.json")
-        (JSON/stringify {:threshold threshold :results results} nil 2))
-      (let [failed (.filter results (fn [r :- Any] :- Bool (> (.-fails r) 0)))
+        (JSON/stringify {:threshold threshold :normalize normalize? :results results} nil 2))
+      (let [fail-of (fn [r :- Any] :- Any (if normalize? (.-postFails r) (.-fails r)))
+            failed (.filter results (fn [r :- Any] :- Bool (> (fail-of r) 0)))
             errored (.filter results (fn [r :- Any] :- Bool (.-err r)))]
         (.log console (str "\n=== " (.-length failed) "/" (.-length results)
-                           " sites with low-contrast text  (" (.-length errored) " errored) ==="))
+                           " sites with low-contrast text"
+                           (if normalize? " (AFTER normalization)" "")
+                           "  (" (.-length errored) " errored) ==="))
         (.log console (str "report: " outdir "/report.json  + per-site PNGs in " outdir "/"))
         (js/await (.quit client ["eForceQuit"]))
         (.disconnect client)

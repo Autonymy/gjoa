@@ -335,10 +335,6 @@
 (defn item-of [r :- Any] :- Any
   {:endpoint (.-endpoint r) :what (describe r) :file (.-file r) :line (.-line r) :basis (.-basis r)})
 
-;; a named fn (defn returns cleanly) — an INLINE (fn [g] {map}) emits `(g) => {…}`,
-;; which JS parses as a block, not an object return (a beagle codegen bug).
-(defn gap-item [g :- Any] :- Any {:pref (.-name g) :what (.-vector g)})
-
 (js/export (defn write-manifest! [] :- Any
   (let [records (.-records (run))
         own {:unattendedExternal [] :userEnabledNetwork [] :local [] :unproven []}]
@@ -357,7 +353,8 @@
                     {:disabled (.-length (.-disabled inh))
                      :catalogued (.-catalogued inh)
                      :note "Firefox built-in egress vectors gjoa disables by default. SafeBrowsing kept (security)."
-                     :toggleGated (.map (.-gaps inh) gap-item)}}]
+                     :toggleGated (.map (.-gaps inh)
+                                    (fn [g :- Any] :- Any {:pref (.-name g) :what (.-vector g)}))}}]
       (writeFileSync MANIFEST-PATH (str (JSON/stringify manifest nil 2) "\n"))
       (console/log (str "sovereignty: wrote manifest @ " commit " ("
                         (.-length (.-unattendedExternal own)) " unattended, "

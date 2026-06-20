@@ -1,9 +1,19 @@
 {
-  "note": "The about:gjoa settings registry. gjoa's single settings home. Each setting is a live pref (present + reversible). Costs are MEASURED or honestly 'unmeasured' — never invented. Firefox's own settings stay in Firefox Settings; this is gjoa's surface.",
+  "note": "The about:gjoa settings registry. gjoa's single settings home. Each setting is a live pref (present + reversible). Costs are MEASURED, characterized as real EGRESS endpoints, or honestly 'unmeasured' — never invented. The `leaves` of a profile are the exact prefs it flips, kept in sync with GjoaLoader's PROFILES by preflight Gate N. Firefox's own settings stay in Firefox Settings; this is gjoa's surface.",
   "profiles": [
     { "id": "librewolf-mode", "pref": "gjoa.profile.librewolf-mode.enabled", "type": "bool", "title": "LibreWolf mode",
       "claim": "LibreWolf-grade privacy DEFAULTS, as one toggle.",
       "disclaimer": "NOT 'as secure as LibreWolf'. These prefs are only part of LibreWolf's hardening (their compile-time disables and ~20 C++ patches are not here), and flipping this changes none of gjoa's own added surface (the adblock classifier, content actors, custom about: pages).",
+      "leaves": [
+        { "pref": "privacy.resistFingerprinting", "on": true, "off": false, "type": "bool" },
+        { "pref": "privacy.resistFingerprinting.letterboxing", "on": true, "off": false, "type": "bool" },
+        { "pref": "network.http.referer.XOriginPolicy", "on": 2, "off": 0, "type": "int" },
+        { "pref": "network.http.referer.XOriginTrimmingPolicy", "on": 2, "off": 0, "type": "int" },
+        { "pref": "browser.search.suggest.enabled", "on": false, "off": true, "type": "bool" },
+        { "pref": "browser.urlbar.suggest.searches", "on": false, "off": true, "type": "bool" },
+        { "pref": "extensions.update.enabled", "on": false, "off": true, "type": "bool" },
+        { "pref": "privacy.donottrackheader.enabled", "on": true, "off": false, "type": "bool" }
+      ],
       "tradeoffs": [
         { "title": "resistFingerprinting has a high UX cost", "detail": "Breaks canvas-reliant sites, letterboxes the window, reports UTC timezone + a generic UA. Default-off for a reason; on only inside this profile." },
         { "title": "Safe Browsing stays ON (conflict, not flipped)", "detail": "LibreWolf neuters Safe Browsing, but gjoa deliberately KEPT download-reputation on (security finding F5). LibreWolf mode does NOT disable it here — the conflict is surfaced, not silently resolved." },
@@ -22,27 +32,29 @@
     { "id": "content-blocking", "title": "Content blocking", "intro": "Native (adblock-rust) ad + tracker blocking.",
       "settings": [
         { "pref": "gjoa.contentblock.enabled", "type": "bool", "title": "Ad / tracker blocking", "default": true },
+        { "pref": "gjoa.contentblock.user.allow-hosts", "type": "string", "title": "Allow-list (hosts)", "default": "",
+          "help": "Comma-separated hosts to exempt from blocking (your own allow-list). Empty = block everywhere." },
         { "pref": "gjoa.contentblock.scriptlets.listDriven.enabled", "type": "bool", "title": "List-driven scriptlets", "default": false,
           "help": "SECURITY: off = only curated baseline scriptlets run; on allows arbitrary +js() injection from your filter lists. Leave off unless you trust your lists.",
           "measurement": { "method": "cve-surface", "confidence": "moderate", "basis": "A security gate (finding F2), not a perf knob." } }
       ] },
     { "id": "reversible", "title": "Reversible features (debloat)",
-      "intro": "Firefox subsystems gjoa disables by default - present and reversible. gjoa never deletes a capability; it parks it behind a knob. Costs are measured against a real gjoa binary, or honestly marked unmeasured.",
+      "intro": "Firefox subsystems gjoa disables by default - present and reversible. gjoa never deletes a capability; it parks it behind a knob. These are EGRESS/feature toggles, not memory knobs - so the honest cost is the network endpoint each would re-contact if you toggle it on (documented Firefox behaviour), not an invented perf number. Idle-memory deltas remain unmeasured; they are not the relevant axis here.",
       "settings": [
         { "pref": "toolkit.telemetry.enabled", "type": "bool", "title": "Telemetry", "default": false, "firefoxDefault": true,
-          "measurement": { "method": "unmeasured", "confidence": "unmeasured", "basis": "Memory/CPU saving unmeasured on a gjoa binary. Measure: enable in a control build, about:memory at idle+30s, disable, recapture, report delta + date." } },
+          "measurement": { "method": "egress", "endpoint": "incoming.telemetry.mozilla.org", "confidence": "documented", "basis": "Firefox submits telemetry pings to incoming.telemetry.mozilla.org. Off in gjoa, so it never fires; toggling on re-enables that egress. Idle CPU/memory of the telemetry subsystem is unmeasured (not the relevant cost)." } },
         { "pref": "datareporting.healthreport.uploadEnabled", "type": "bool", "title": "Health Report upload", "default": false, "firefoxDefault": true,
-          "measurement": { "method": "unmeasured", "confidence": "unmeasured", "basis": "Egress feature; cost is the data sent, not memory. Unmeasured." } },
+          "measurement": { "method": "egress", "endpoint": "incoming.telemetry.mozilla.org", "confidence": "documented", "basis": "Firefox Health Report uploads to incoming.telemetry.mozilla.org. The cost is the data sent, not memory." } },
         { "pref": "extensions.pocket.enabled", "type": "bool", "title": "Pocket", "default": false, "firefoxDefault": true,
-          "measurement": { "method": "unmeasured", "confidence": "unmeasured", "basis": "Measure on a baseline where Pocket is ENABLED - no saving exists for a feature that was never running." } },
+          "measurement": { "method": "egress", "endpoint": "spocs.getpocket.com, getpocket.cdn.mozilla.net", "confidence": "documented", "basis": "Pocket fetches recommendations/sponsored content from getpocket endpoints (surfaced on the stock new-tab, which gjoa replaces anyway). Feature toggle; no saving exists for a feature that was never running." } },
         { "pref": "identity.fxaccounts.enabled", "type": "bool", "title": "Firefox Accounts (Sync)", "default": false, "firefoxDefault": true,
-          "measurement": { "method": "unmeasured", "confidence": "unmeasured", "basis": "Disables Sync. Feature loss, not a measured perf win." } },
+          "measurement": { "method": "feature", "endpoint": "accounts.firefox.com", "confidence": "documented", "basis": "Disables Sync (accounts.firefox.com). Feature loss, not a measured perf win - egress only occurs if you actively sign in." } },
         { "pref": "browser.discovery.enabled", "type": "bool", "title": "Add-on discovery (TAAR)", "default": false, "firefoxDefault": true,
-          "measurement": { "method": "unmeasured", "confidence": "unmeasured", "basis": "Egress (recommendation service). Memory cost unmeasured." } },
+          "measurement": { "method": "egress", "endpoint": "services.addons.mozilla.org", "confidence": "documented", "basis": "The add-ons recommendation service (TAAR) sends usage signals to services.addons.mozilla.org. Egress vector; memory cost unmeasured." } },
         { "pref": "app.normandy.enabled", "type": "bool", "title": "Normandy remote experiments", "default": false, "firefoxDefault": true,
-          "measurement": { "method": "unmeasured", "confidence": "unmeasured", "basis": "Remote experiment delivery; egress vector. Memory cost unmeasured." } },
+          "measurement": { "method": "egress", "endpoint": "normandy.cdn.mozilla.net", "confidence": "documented", "basis": "Normandy pulls remote experiment/recipe definitions from normandy.cdn.mozilla.net and can flip prefs remotely. Disabling it removes both that egress and remote mutation of your build." } },
         { "pref": "browser.contile.enabled", "type": "bool", "title": "Sponsored top sites (Contile)", "default": false, "firefoxDefault": true,
-          "measurement": { "method": "unmeasured", "confidence": "unmeasured", "basis": "Egress to contile.services.mozilla.com. No functional cost (custom new-tab). Memory unmeasured." } }
+          "measurement": { "method": "egress", "endpoint": "contile.services.mozilla.com", "confidence": "documented", "basis": "Sponsored-tile placement is fetched from contile.services.mozilla.com. No functional cost (custom new-tab); the cost is the egress." } }
       ] }
   ],
   "links": [

@@ -119,7 +119,11 @@
 
                         ;; icon column
                         (when (.-icon item)
-                          (if (.test (RegExp. "^https?:|^data:|^chrome:|^moz-") (.-icon item))
+                          ;; Local schemes only — page-icon:/data:/chrome:/moz- never
+                          ;; trigger a network fetch from this privileged document. A
+                          ;; page-controlled http(s) favicon URL is deliberately NOT
+                          ;; loadable here (it would beacon with the chrome principal).
+                          (if (.test (RegExp. "^page-icon:|^data:|^chrome:|^moz-") (.-icon item))
                             (let [img (htm "img" "gjoa-picker-icon")]
                               (set! (.-src img) (.-icon item))
                               (set! (.-alt img) "")

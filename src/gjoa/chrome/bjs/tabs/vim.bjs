@@ -674,8 +674,12 @@
                   (when td
                     (let [url (tab-spec tab)
                           host (try (.-hostname (URL. url)) (catch Any _e ""))
-                          icon (try (or (.getIcon gBrowser tab) js/undefined)
-                                    (catch Any _e js/undefined))]
+                          ;; Load the favicon through the local page-icon: cache
+                          ;; (Places favicon store) rather than the page-declared
+                          ;; icon URL, so the privileged picker document never makes a
+                          ;; fresh network fetch with the chrome principal (a tracking
+                          ;; beacon / IP leak). Falls back to no icon for blank URLs.
+                          icon (if (and url (not= url "")) (str "page-icon:" url) js/undefined)]
                       (.push items
                         {:display (or (.-name td) (.-label tab) "(untitled)")
                          :secondary (or host url "")

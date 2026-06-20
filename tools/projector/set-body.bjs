@@ -7,7 +7,8 @@
 ;; needs the deferred anchor-matcher; the 0011 pilot keeps newChannel's name.)
 (ns gjoa.tools.projector.set-body
   (:require [acorn :refer [parse]]
-            [gjoa.tools.projector.reflector :refer [child-nodes to-cst render]]))
+            [gjoa.tools.projector.reflector :refer [child-nodes to-cst render]]
+            [gjoa.tools.projector.anchor :refer [fuzzy-find confident?]]))
 (define-mode strict)
 
 (defn parse-js [src :- String] :- Any
@@ -56,17 +57,33 @@
      :segs (.-segs cst)
      :kids (.map (.-kids cst) (fn [k :- Any] :- Any (replace-span k span text)))})))
 
-;; the set-body verb: src + class + method + new body text (including the braces)
-;; -> {:ok :src :span} or {:ok false :reason}.
-(js/export (defn set-method-body [src :- String class-name :- String method-name :- String new-body :- String] :- Any
+;; replace the body block at `span` in `src` with `new-body`, byte-exactly.
+(defn apply-body [src :- String span :- Any new-body :- String] :- String
+  (let [root {:type "File" :start 0 :end (.-length src) :body [(parse-js src)]}]
+    (render (replace-span (to-cst root src) span new-body))))
+
+;; the set-body verb: src + class + method + new body text (including the braces),
+;; and an optional `anchor` fingerprint for RENAME-RECOVERY. Exact (class, method)
+;; match first; on a miss, if an anchor is given, try a confidence-scored fuzzy
+;; match (recovers an upstream rename) — but only AUTO-APPLY when confident +
+;; unambiguous, else fail loudly (never mis-apply). -> {:ok :src :span [:recovered]}
+;; or {:ok false :reason}.
+(js/export (defn set-method-body [src :- String class-name :- String method-name :- String new-body :- String anchor :- Any] :- Any
   (let [ast (parse-js src)
-        span (find-body-span ast class-name method-name)]
-    (if (nil? span)
-      {:ok false :reason (str "not found: " class-name "." method-name)}
-      (let [root {:type "File" :start 0 :end (.-length src) :body [ast]}
-            cst (to-cst root src)
-            edited (replace-span cst span new-body)]
-        {:ok true :src (render edited) :span span})))))
+        exact (find-body-span ast class-name method-name)]
+    (cond
+      (some? exact)
+      {:ok true :src (apply-body src exact new-body) :span exact}
+
+      (some? anchor)
+      (let [m (fuzzy-find src class-name anchor)]
+        (if (confident? m)
+          {:ok true :src (apply-body src (.-body m) new-body) :span (.-body m)
+           :recovered (str method-name " -> " (.-name m) " (" (.-why m) ")")}
+          {:ok false :reason (str "not found: " class-name "." method-name
+                                  (if (some? m) (str "; fuzzy candidate `" (.-name m) "` rejected: " (.-why m)) ""))}))
+
+      :else {:ok false :reason (str "not found: " class-name "." method-name)}))))
 
 ;; extract the literal body text of class.method from src (for building a claim
 ;; from a known-good edited source).

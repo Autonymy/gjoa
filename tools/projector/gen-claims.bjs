@@ -33,7 +33,8 @@
     (sh (str "cp " (join TMP "pristine.mjs") " " (join TMP REL)))
     (sh (str "cd " TMP " && patch -p1 < " (join REPO "patches" "0011-newtab-redirector-gjoa.patch")))
     (let [patched (readFileSync (join TMP REL) "utf8")
-          edits (build-doc patched ANCHORS)
+          pristine (readFileSync (join TMP "pristine.mjs") "utf8")
+          edits (build-doc patched pristine ANCHORS)
           artifact {:file REL :edits edits}]
       (writeFileSync OUT (str (JSON/stringify artifact nil 2) "\n"))
       (console/error (str "wrote " OUT "  (" (.-length edits) " set-body verbs, anchored @ " tag ")")))))

@@ -36,7 +36,7 @@
         claim-path (or (aget (.-argv process) 4) "/tmp/0011.claims.json")
         ;; build the claim-doc from the known-good patched output, persist to JSON,
         ;; then reload it — proving the edit round-trips through a portable artifact.
-        doc0 (build-doc patched ANCHORS)
+        doc0 (build-doc patched pristine ANCHORS)
         json (doc->json doc0)
         _ (writeFileSync claim-path json)
         doc (json->doc (readFileSync claim-path "utf8"))
@@ -52,15 +52,26 @@
                   "let chromeURI = this.getChromeURI(uri);"
                   "let chromeURI = this.getChromeURI(uri); // FF153 upstream reflow")
         r2 (replay doc churned)
-        churn-ok (and (.-ok r2) (parses? (.-src r2)) (= (count-occurrences (.-src r2) "gjoa-newtab") 2))]
+        churn-ok (and (.-ok r2) (parses? (.-src r2)) (= (count-occurrences (.-src r2) "gjoa-newtab") 2))
+        ;; GATE 3 — RENAME RECOVERY: upstream renames the target method (newChannel
+        ;; -> createChannel). The textual patch .rej's; the claim recovers via the
+        ;; structural anchor (params + body fingerprint) when confident + unambiguous.
+        renamed (.replaceAll pristine "newChannel(uri, loadInfo)" "createChannel(uri, loadInfo)")
+        r3 (replay doc renamed)
+        rename-ok (and (.-ok r3) (parses? (.-src r3))
+                       (= (count-occurrences (.-src r3) "gjoa-newtab") 2)
+                       (> (.-length (.-recoveries r3)) 0))]
     (console/error (str "claim-doc: " (.-length doc) " set-body verbs, " (.-length json) " bytes JSON -> " claim-path))
     (console/error (str "GATE 1  equivalence (claim-replay == patch 0011, byte-for-byte): " equiv))
     (console/error (str "GATE 2  churn-resilience (name-anchored claim survives reflow that .rej's the patch): " churn-ok))
-    (when (not (and equiv churn-ok))
+    (console/error (str "GATE 3  rename-recovery (claim survives a method rename that .rej's the patch): " rename-ok))
+    (when rename-ok
+      (doseq [rec (.-recoveries r3)] (console/error (str "          recovered: " rec))))
+    (when (not (and equiv churn-ok rename-ok))
       (console/error "PILOT FAILED")
       (when (not (.-ok r1)) (console/error (str "  gate1: " (.-reason r1))))
       (.exit process 1))
-    (console/error "PILOT PASSED — 0011 is a portable identity-anchored claim-doc: equivalent + churn-resilient.")))
+    (console/error "PILOT PASSED — 0011 as a claim-doc: equivalent, reflow-resilient, AND rename-recoverable.")))
 
 (when (.-main (js/import-meta))
   (main!))

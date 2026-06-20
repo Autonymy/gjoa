@@ -1,0 +1,118 @@
+#lang beagle/js
+;; tools/projector/anchor.bjs — Phase 5 rename-recovery: a structural anchor +
+;; confidence-scored fuzzy matcher for set-body, so a claim still applies when
+;; upstream RENAMED the target method (the case the exact (class, method) anchor
+;; misses). Design principle: PREFER FAILING LOUDLY over a wrong match — auto-
+;; recover only on a confident, unambiguous structural match; otherwise reject.
+;;
+;; The anchor fingerprint (captured from the PRISTINE method at gen time):
+;;   {params: [name…], ordinal: int, idents: [name…]}  (params + position + the
+;;   set of identifiers in the original body). A rename leaves params + body idents
+;;   ~unchanged, so the renamed method scores high; an unrelated method scores low.
+(ns gjoa.tools.projector.anchor
+  (:require [acorn :refer [parse]]
+            [gjoa.tools.projector.reflector :refer [child-nodes]]))
+(define-mode strict)
+
+(defn parse-js [src :- String] :- Any
+  (parse src {:ecmaVersion "latest" :sourceType "module" :allowHashBang true}))
+
+;; all Identifier names in a subtree (the body fingerprint).
+(defn collect-idents [node :- Any acc :- Any] :- Any
+  (when (some? node)
+    (when (= (.-type node) "Identifier") (.add acc (.-name node)))
+    (doseq [k (child-nodes node)] (collect-idents k acc)))
+  acc)
+
+(defn idents-of [body :- Any] :- Any
+  (Array/from (collect-idents body (Set.))))
+
+;; simple param names of a method's function value (Identifier params; others -> "?").
+(defn param-names [methodNode :- Any] :- Any
+  (.map (.-params (.-value methodNode))
+        (fn [p :- Any] :- String (if (= (.-type p) "Identifier") (.-name p) "?"))))
+
+;; the direct MethodDefinitions of a named class, in order:
+;; [{name node body params ordinal} …].
+(defn find-class [n :- Any cname :- String] :- Any
+  (if (and (some? n) (or (= (.-type n) "ClassDeclaration") (= (.-type n) "ClassExpression"))
+           (some? (.-id n)) (= (.-name (.-id n)) cname))
+    n
+    (let [kids (child-nodes n)]
+      (loop [i 0]
+        (if (< i (.-length kids))
+          (let [r (find-class (aget kids i) cname)] (if (some? r) r (recur (+ i 1))))
+          nil)))))
+
+(defn class-methods [classNode :- Any] :- Any
+  (let [out []]
+    (when (some? classNode)
+      (doseq [cb (child-nodes classNode)]
+        (when (= (.-type cb) "ClassBody")
+          (let [n [0]]
+            (doseq [m (child-nodes cb)]
+              (when (and (= (.-type m) "MethodDefinition") (some? (.-key m))
+                         (some? (.-value m)) (some? (.-body (.-value m))))
+                (.push out {:name (.-name (.-key m)) :node m :body (.-body (.-value m))
+                            :params (param-names m) :ordinal (aget n 0)})
+                (aset n 0 (+ (aget n 0) 1))))))))
+    out))
+
+;; capture an anchor fingerprint for class.method from a pristine source.
+(js/export (defn capture-anchor [src :- String cname :- String mname :- String] :- Any
+  (let [ast (parse-js src)
+        c (find-class ast cname)]
+    (if (nil? c) nil
+      (let [ms (class-methods c)
+            hit (.find ms (fn [m :- Any] :- Bool (= (.-name m) mname)))]
+        (if (nil? hit) nil
+          {:params (.-params hit) :ordinal (.-ordinal hit) :idents (idents-of (.-body hit))}))))))
+
+(defn arr= [a :- Any b :- Any] :- Bool
+  (and (= (.-length a) (.-length b))
+       (.every a (fn [x :- Any i :- Int] :- Bool (= x (aget b i))))))
+
+;; Jaccard overlap of two identifier arrays.
+(defn jaccard [a :- Any b :- Any] :- Float
+  (let [sa (Set. a) sb (Set. b)
+        inter (.filter (Array/from sa) (fn [x :- Any] :- Bool (.has sb x)))
+        uni (Set. (.concat (Array/from sa) (Array/from sb)))]
+    (if (= (.-size uni) 0) 0 (/ (.-length inter) (.-size uni)))))
+
+;; fuzzy-find the renamed target in `src`'s class `cname` given the anchor.
+;; Returns {:name :body :confidence :why} for the best candidate, or nil. Confidence
+;; couples body-identifier overlap (the dominant signal) with param-match and a
+;; position bonus; ONLY trust it (caller's job) when it's high AND unambiguous.
+(js/export (defn fuzzy-find [src :- String cname :- String anchor :- Any] :- Any
+  (let [ast (parse-js src)
+        c (find-class ast cname)]
+    (if (nil? c) nil
+      (let [ms (class-methods c)
+            scored (.map ms (fn [m :- Any] :- Any
+                     (let [j (jaccard (idents-of (.-body m)) (.-idents anchor))
+                           pm (if (arr= (.-params m) (.-params anchor)) 1.0 0.0)
+                           pos (if (= (.-ordinal m) (.-ordinal anchor)) 1.0 0.0)
+                           ;; body overlap dominates; params is a strong gate; position a nudge.
+                           score (+ (* 0.7 j) (* 0.25 pm) (* 0.05 pos))]
+                       {:name (.-name m) :node m :score score :j j :pm pm})))]
+        (if (= (.-length scored) 0) nil
+          (let [sorted (.sort (.slice scored) (fn [a :- Any b :- Any] :- Float (- (.-score b) (.-score a))))
+                best (aget sorted 0)
+                second (if (> (.-length sorted) 1) (.-score (aget sorted 1)) 0)
+                margin (- (.-score best) second)]
+            {:name (.-name best)
+             :body [(.-start (.-body (.-node best))) (.-end (.-body (.-node best)))]
+             :confidence (.-score best)
+             :margin margin
+             :j (.-j best) :pm (.-pm best)
+             :why (str "params=" (.-pm best) " bodyJaccard=" (.toFixed (.-j best) 2) " margin=" (.toFixed margin 2))})))))))
+
+;; the policy gate: should we AUTO-RECOVER with this match, or fail loudly?
+;; Conservative: require strong body overlap, param match, AND a clear margin over
+;; the runner-up (so ambiguous twins are rejected, not mis-applied).
+(js/export (defn confident? [match :- Any] :- Bool
+  (and (some? match)
+       (>= (.-j match) 0.6)        ; body is mostly the same identifiers
+       (= (.-pm match) 1.0)        ; same parameter list
+       (>= (.-margin match) 0.15)  ; a clear winner, not an ambiguous tie
+       (>= (.-confidence match) 0.7))))

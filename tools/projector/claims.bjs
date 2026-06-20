@@ -8,27 +8,35 @@
 ;; later integration step. Replaying a doc reproduces the edit; because it anchors
 ;; by name, it survives upstream reflow that `.rej`s the textual patch.
 (ns gjoa.tools.projector.claims
-  (:require [gjoa.tools.projector.set-body :refer [set-method-body get-body]]))
+  (:require [gjoa.tools.projector.set-body :refer [set-method-body get-body]]
+            [gjoa.tools.projector.anchor :refer [capture-anchor]]))
 (define-mode strict)
 
-;; build a claim-doc from a known-good edited source + (class,method) anchors:
-;; extract each method's body from the edited source as the set-body payload.
-(js/export (defn build-doc [edited :- String anchors :- Any] :- Any
+;; build a claim-doc from the edited source + the PRISTINE source + (class,method)
+;; anchors: the set-body payload is the method body from `edited`; the `:anchor`
+;; fingerprint (params/ordinal/idents) is captured from `pristine` for rename-recovery.
+(js/export (defn build-doc [edited :- String pristine :- String anchors :- Any] :- Any
   (let [out []]
     (doseq [a anchors]
-      (let [body (get-body edited (.-class a) (.-method a))]
+      (let [body (get-body edited (.-class a) (.-method a))
+            fp (capture-anchor pristine (.-class a) (.-method a))]
         (when (some? body)
-          (.push out {:verb "set-body" :class (.-class a) :method (.-method a) :body body}))))
+          (.push out {:verb "set-body" :class (.-class a) :method (.-method a) :body body :anchor fp}))))
     out)))
 
-;; replay a claim-doc onto a source -> {:ok :src} or {:ok false :reason}.
+;; replay a claim-doc onto a source -> {:ok :src :recoveries} or {:ok false :reason}.
+;; Each verb passes its :anchor so set-method-body can recover an upstream rename.
 (js/export (defn replay [doc :- Any src :- String] :- Any
-  (loop [i 0 cur src]
-    (if (< i (.-length doc))
-      (let [c (aget doc i)
-            r (set-method-body cur (.-class c) (.-method c) (.-body c))]
-        (if (.-ok r) (recur (+ i 1) (.-src r)) r))
-      {:ok true :src cur}))))
+  (let [recoveries []]
+    (loop [i 0 cur src]
+      (if (< i (.-length doc))
+        (let [c (aget doc i)
+              r (set-method-body cur (.-class c) (.-method c) (.-body c) (.-anchor c))]
+          (if (.-ok r)
+            (do (when (some? (.-recovered r)) (.push recoveries (.-recovered r)))
+                (recur (+ i 1) (.-src r)))
+            r))
+        {:ok true :src cur :recoveries recoveries})))))
 
 (js/export (defn doc->json [doc :- Any] :- String (JSON/stringify doc nil 2)))
 (js/export (defn json->doc [s :- String] :- Any (JSON/parse s)))

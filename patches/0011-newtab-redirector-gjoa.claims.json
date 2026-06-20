@@ -5,13 +5,70 @@
       "verb": "set-body",
       "class": "AboutNewTabRedirectorParent",
       "method": "newChannel",
-      "body": "{\n    // gjoa: serve the custom forced-dark newtab page for home + newtab, never the\n    // built-in activity-stream addon. FF152 removed the AboutNewTab.newTabURL\n    // hook, so this redirector is the only override point. Returned directly (not\n    // suspended on addon init) since the gjoa page has no built-in-addon dependency.\n    if (\n      uri.spec.startsWith(\"about:home\") ||\n      uri.spec.startsWith(\"about:newtab\")\n    ) {\n      let gjoaChannel = Services.io.newChannelFromURIWithLoadInfo(\n        Services.io.newURI(\"chrome://gjoa-newtab/content/newtab.html\"),\n        loadInfo\n      );\n      gjoaChannel.originalURI = uri;\n      return gjoaChannel;\n    }\n\n    let chromeURI = this.getChromeURI(uri);\n    let resultChannel = Services.io.newChannelFromURIWithLoadInfo(\n      chromeURI,\n      loadInfo\n    );\n    resultChannel.originalURI = uri;\n\n    if (!this.#addonInitialized) {\n      return this.#getSuspendedChannel(resultChannel);\n    }\n\n    return resultChannel;\n  }"
+      "body": "{\n    // gjoa: serve the custom forced-dark newtab page for home + newtab, never the\n    // built-in activity-stream addon. FF152 removed the AboutNewTab.newTabURL\n    // hook, so this redirector is the only override point. Returned directly (not\n    // suspended on addon init) since the gjoa page has no built-in-addon dependency.\n    if (\n      uri.spec.startsWith(\"about:home\") ||\n      uri.spec.startsWith(\"about:newtab\")\n    ) {\n      let gjoaChannel = Services.io.newChannelFromURIWithLoadInfo(\n        Services.io.newURI(\"chrome://gjoa-newtab/content/newtab.html\"),\n        loadInfo\n      );\n      gjoaChannel.originalURI = uri;\n      return gjoaChannel;\n    }\n\n    let chromeURI = this.getChromeURI(uri);\n    let resultChannel = Services.io.newChannelFromURIWithLoadInfo(\n      chromeURI,\n      loadInfo\n    );\n    resultChannel.originalURI = uri;\n\n    if (!this.#addonInitialized) {\n      return this.#getSuspendedChannel(resultChannel);\n    }\n\n    return resultChannel;\n  }",
+      "anchor": {
+        "params": [
+          "uri",
+          "loadInfo"
+        ],
+        "ordinal": 3,
+        "idents": [
+          "chromeURI",
+          "getChromeURI",
+          "uri",
+          "spec",
+          "startsWith",
+          "lazy",
+          "BUILTIN_NEWTAB_ENABLED",
+          "Services",
+          "io",
+          "newURI",
+          "defaultURL",
+          "resultChannel",
+          "newChannelFromURIWithLoadInfo",
+          "loadInfo",
+          "originalURI"
+        ]
+      }
     },
     {
       "verb": "set-body",
       "class": "AboutNewTabRedirectorChild",
       "method": "newChannel",
-      "body": "{\n    if (!IS_PRIVILEGED_PROCESS) {\n      throw Components.Exception(\n        \"newChannel can only be called from the privilegedabout content process.\",\n        Cr.NS_ERROR_UNEXPECTED\n      );\n    }\n\n    // gjoa: serve the custom forced-dark newtab page for home + newtab, never the\n    // built-in activity-stream addon or the (activity-stream) about:home startup\n    // cache. disqualifyCache() drops any stale cached activity-stream document.\n    if (\n      uri.spec.startsWith(\"about:home\") ||\n      uri.spec.startsWith(\"about:newtab\")\n    ) {\n      AboutHomeStartupCacheChild.disqualifyCache();\n      let gjoaChannel = Services.io.newChannelFromURIWithLoadInfo(\n        Services.io.newURI(\"chrome://gjoa-newtab/content/newtab.html\"),\n        loadInfo\n      );\n      gjoaChannel.originalURI = uri;\n      return gjoaChannel;\n    }\n\n    let pageURI = this.getChromeURI(uri);\n    let resultChannel = Services.io.newChannelFromURIWithLoadInfo(\n      pageURI,\n      loadInfo\n    );\n    resultChannel.originalURI = uri;\n    return resultChannel;\n  }"
+      "body": "{\n    if (!IS_PRIVILEGED_PROCESS) {\n      throw Components.Exception(\n        \"newChannel can only be called from the privilegedabout content process.\",\n        Cr.NS_ERROR_UNEXPECTED\n      );\n    }\n\n    // gjoa: serve the custom forced-dark newtab page for home + newtab, never the\n    // built-in activity-stream addon or the (activity-stream) about:home startup\n    // cache. disqualifyCache() drops any stale cached activity-stream document.\n    if (\n      uri.spec.startsWith(\"about:home\") ||\n      uri.spec.startsWith(\"about:newtab\")\n    ) {\n      AboutHomeStartupCacheChild.disqualifyCache();\n      let gjoaChannel = Services.io.newChannelFromURIWithLoadInfo(\n        Services.io.newURI(\"chrome://gjoa-newtab/content/newtab.html\"),\n        loadInfo\n      );\n      gjoaChannel.originalURI = uri;\n      return gjoaChannel;\n    }\n\n    let pageURI = this.getChromeURI(uri);\n    let resultChannel = Services.io.newChannelFromURIWithLoadInfo(\n      pageURI,\n      loadInfo\n    );\n    resultChannel.originalURI = uri;\n    return resultChannel;\n  }",
+      "anchor": {
+        "params": [
+          "uri",
+          "loadInfo"
+        ],
+        "ordinal": 0,
+        "idents": [
+          "IS_PRIVILEGED_PROCESS",
+          "Components",
+          "Exception",
+          "Cr",
+          "NS_ERROR_UNEXPECTED",
+          "pageURI",
+          "uri",
+          "spec",
+          "startsWith",
+          "cacheChannel",
+          "AboutHomeStartupCacheChild",
+          "maybeGetCachedPageChannel",
+          "loadInfo",
+          "Services",
+          "io",
+          "newURI",
+          "defaultURL",
+          "disqualifyCache",
+          "lazy",
+          "BUILTIN_NEWTAB_ENABLED",
+          "getChromeURI",
+          "resultChannel",
+          "newChannelFromURIWithLoadInfo",
+          "originalURI"
+        ]
+      }
     }
   ]
 }

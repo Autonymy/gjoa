@@ -39,7 +39,12 @@
 (pref "identity.fxaccounts.enabled" false)
 (pref "browser.discovery.enabled" false)
 (pref "app.normandy.enabled" false)
+(pref "app.normandy.api_url" "")
 (pref "app.shield.optoutstudies.enabled" false)
+(pref "browser.ping-centre.telemetry" false)
+(pref "browser.contile.enabled" false)
+(pref "browser.newtabpage.activity-stream.showSponsored" false)
+(pref "browser.newtabpage.activity-stream.showSponsoredTopSites" false)
 
 ;; --- Networking: SPEED-positive ---
 ;; Firefox ships prefetch / DNS-prefetch / speculative-connect ON. They were

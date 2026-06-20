@@ -262,6 +262,43 @@
   display: inline-block;
 }
 
+/* Close affordance — a subtle, right-anchored × revealed on hover (any row)
+ * and on the active/selected row (the safe default, à la Firefox). Hidden
+ * otherwise so the strip stays calm. When a row also has a collapse chevron
+ * (a collapsed parent), the × takes the right-anchor and the chevron tucks in
+ * just after it: [favicon … label … × ▸]. */
+.gjoa-tab-close {
+  width: 14px; height: 14px;
+  margin-inline-start: auto;
+  margin-inline-end: 4px;
+  flex-shrink: 0;
+  display: none;
+  list-style-image: url("chrome://global/skin/icons/close.svg");
+  -moz-context-properties: fill;
+  fill: currentColor;
+  opacity: 0.5;
+  border-radius: 4px;
+}
+.gjoa-tab-close:hover {
+  opacity: 0.95;
+  background: color-mix(in srgb, currentColor 12%, transparent);
+}
+.gjoa-tab-row:hover .gjoa-tab-close,
+.gjoa-tab-row[selected] .gjoa-tab-close {
+  display: inline-block;
+}
+/* When the × is shown it owns the right-anchor; the chevron (if present) sits
+ * immediately after it rather than fighting for the auto-margin. */
+.gjoa-tab-row:hover .gjoa-tab-chevron,
+.gjoa-tab-row[selected] .gjoa-tab-chevron {
+  margin-inline-start: 4px;
+}
+/* Icons-only (narrow) mode: no room for a hover ×; keep the strip clean
+ * (middle-click / context-menu still close). */
+:is(#gjoa-tab-panel, #gjoa-pinned-container)[gjoa-icons-only] .gjoa-tab-close {
+  display: none !important;
+}
+
 /* #endregion rows */
 
 

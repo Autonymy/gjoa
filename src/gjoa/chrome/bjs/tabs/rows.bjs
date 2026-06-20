@@ -34,15 +34,24 @@
           (let [row     (xul "hbox" "gjoa-tab-row")
                 icon    (xul "image" "gjoa-tab-icon")
                 label   (htm "span" "gjoa-tab-label")
+                close   (xul "image" "gjoa-tab-close")
                 chevron (xul "image" "gjoa-tab-chevron")]
             (attr! row "align" "center")
+            (attr! close "tooltiptext" "Close tab")
+
+            ;; Subtle close affordance — CSS shows it on hover + on the active
+            ;; row. Sits just before the collapse chevron when both are present.
+            (on! close "click"
+              #(when (= (.-button %) 0)
+                 (.stopPropagation %)
+                 (.removeTab gBrowser tab)))
 
             (on! chevron "click"
               #(when (= (.-button %) 0)
                  (.stopPropagation %)
                  (toggle-collapse row)))
 
-            (.append row icon label chevron)
+            (.append row icon label close chevron)
             (set! (.-_tab row) tab)
             (.set row-of tab row)
 

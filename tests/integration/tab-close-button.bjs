@@ -1,0 +1,41 @@
+#lang beagle/js
+;; Tab rows carry a subtle close affordance (#97): a × revealed on hover and on
+;; the active row that closes the tab. Asserts the element is present on a row
+;; and that clicking it removes the tab.
+(ns gjoa.tests.integration.tab-close-button
+  (:require [gjoa.tests.dsl :refer [deftest chrome-eval await-true wait-for expect sleep]]))
+(define-mode strict)
+
+(js/export (def tests :- Any
+  [(deftest "tab row has a close button that closes the tab (#97)" [mn]
+     (await-true "return !!window.gjoaTest && !!document.getElementById(\"gjoa-tab-panel\");" 5000)
+     (chrome-eval "
+        for (const t of [...gBrowser.tabs].filter(t => t.getAttribute && t.getAttribute('gjoa-test-marker'))) { try { gBrowser.removeTab(t); } catch {} }
+        return true;")
+     (let [stamp (str "tcb-" (Date/now))]
+       (chrome-eval (str "
+          const p = Services.scriptSecurityManager.getSystemPrincipal();
+          const t = gBrowser.addTab('about:blank', { triggeringPrincipal: p });
+          t.setAttribute('gjoa-test-marker', '" stamp "');
+          window.gjoaTest.rows.scheduleTreeResync();
+          window.gjoaTest.rows.updateVisibility();
+          return true;"))
+       (await-true (str "return [...gBrowser.tabs].some(t => t.getAttribute('gjoa-test-marker') === '" stamp "');") 3000)
+       ;; the row exists and carries a .gjoa-tab-close
+       (let [has-close (chrome-eval (str "
+              const t = [...gBrowser.tabs].find(x => x.getAttribute('gjoa-test-marker') === '" stamp "');
+              const row = [...document.querySelectorAll('#gjoa-tab-panel .gjoa-tab-row')].find(r => r._tab === t);
+              return !!(row && row.querySelector('.gjoa-tab-close'));"))]
+         (expect has-close "tab row must carry a .gjoa-tab-close element"))
+       ;; clicking it closes the tab
+       (chrome-eval (str "
+          const t = [...gBrowser.tabs].find(x => x.getAttribute('gjoa-test-marker') === '" stamp "');
+          const row = [...document.querySelectorAll('#gjoa-tab-panel .gjoa-tab-row')].find(r => r._tab === t);
+          const x = row.querySelector('.gjoa-tab-close');
+          x.dispatchEvent(new MouseEvent('click', { bubbles:true, cancelable:true, button:0 }));
+          return true;"))
+       (js/await (sleep 300))
+       (let [gone (chrome-eval (str "return ![...gBrowser.tabs].some(t => t.getAttribute('gjoa-test-marker') === '" stamp "');"))]
+         (expect gone "clicking the × must close the tab"))))]))
+
+(js/export-default tests)

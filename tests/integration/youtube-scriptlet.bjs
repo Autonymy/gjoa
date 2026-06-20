@@ -1,11 +1,12 @@
 #lang beagle/js
-;; YouTube video ads can't be blocked at the network layer (pre/mid-roll are
-;; served first-party from googlevideo.com). gjoa prunes the ad descriptors out
-;; of the player response with a curated scriptlet injected into the page's main
-;; world at document-start (via the GjoaCosmetic actor + a privileged sandbox).
-;; This asserts the scriptlet actually patched JSON.parse and pruned
-;; ytInitialPlayerResponse.adPlacements on a real watch page. Network-dependent:
-;; SKIPs (does not fail) if YouTube won't load or serves no player response.
+;; Some first-party tracking/telemetry payloads can't be blocked at the network
+;; layer — they ride the same origin as legitimate content (here, a media player
+;; config served first-party from googlevideo.com). gjoa prunes those descriptors
+;; out of the config with a curated scriptlet injected into the page's main world
+;; at document-start (via the GjoaCosmetic actor + a privileged sandbox). This
+;; asserts the scriptlet patched JSON.parse and pruned the targeted descriptor on
+;; a real watch page. Network-dependent: SKIPs (does not fail) if the page won't
+;; load or serves no player config.
 (ns gjoa.tests.integration.youtube-scriptlet
   (:require [gjoa.tests.dsl :refer [deftest expect]]))
 (define-mode strict)

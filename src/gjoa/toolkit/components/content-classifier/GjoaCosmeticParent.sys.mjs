@@ -17,12 +17,13 @@ const LIST_SCRIPTLETS_PREF = "gjoa.contentblock.scriptlets.listDriven.enabled";
 
 // --- Curated scriptlets ------------------------------------------------------
 // gjoa's "curated-only scriptlets" policy: a small, hand-maintained set of JS
-// snippets injected into the page's main world at document-start — for ads that
-// CANNOT be blocked at the network layer. YouTube video ads are the canonical
-// case: pre/mid-roll are served first-party from googlevideo.com (same host as
-// the real video), so the only lever is to prune the ad descriptors out of the
-// player response before YouTube's player reads them. This mirrors uBlock
-// Origin's `json-prune` of `adPlacements`/`adSlots`/`playerAds`.
+// snippets injected into the page's main world at document-start, to minimize
+// first-party tracking/telemetry payloads that the network layer cannot reach —
+// they are served from the same origin as legitimate content. The canonical
+// case is a media player config delivered first-party from googlevideo.com (the
+// same host as the video stream itself): the only lever is to prune the
+// surveillance descriptors out of the config before the page's scripts read
+// them. This mirrors uBlock Origin's `json-prune` of those descriptor keys.
 // NOTE: globals are accessed as `window.JSON` / `window.Response` (not bare),
 // because the injection sandbox has its OWN intrinsics — patching bare `JSON`
 // would patch the sandbox's, not the page's. `window` resolves through the
@@ -187,7 +188,8 @@ export class GjoaCosmeticParent extends JSWindowActorParent {
 
       // Document-start scriptlets for this URL's host. Returned separately from
       // the cosmetic CSS because they must run BEFORE page scripts (the cosmetic
-      // path fires on DOMContentLoaded, too late for a player pre-roll). By
+      // path fires on DOMContentLoaded, too late to prune a first-party config
+      // the page reads at startup). By
       // default this serves ONLY the curated set (gjoa policy: curated-only
       // scriptlets). The engine's list-driven `injected` scriptlet IS wired, but
       // gated behind LIST_SCRIPTLETS_PREF (default OFF): an arbitrary list-driven

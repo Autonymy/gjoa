@@ -36,7 +36,8 @@ const LISTS = [
   { name: "easylist", url: "https://easylist.to/easylist/easylist.txt" },
   { name: "easyprivacy", url: "https://easylist.to/easylist/easyprivacy.txt" },
   // uBlock Origin's own filter set — carries the `+js(...)` scriptlet rules
-  // (YouTube player-prune, anti-adblock defusers, etc.) that EasyList does not.
+  // (first-party telemetry/surveillance prunes, request-integrity fixes, etc.)
+  // that EasyList does not.
   // These need the scriptlet resource library (scriptlet-resources.json) loaded
   // via setScriptletResources to actually expand + inject.
   {

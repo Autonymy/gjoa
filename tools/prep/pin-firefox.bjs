@@ -30,6 +30,10 @@
   (str "firefox-" version ".source.tar.xz"))
 
 (js/export (defn pin-firefox! [version :- String] :- Any
+  ;; version reaches a fetch URL and a written file path — constrain it to a plain
+  ;; Firefox version first (same guard as config.bjs / conflict-forecast).
+  (when (not (.match version (RegExp. "^[0-9]+(\\.[0-9]+){1,3}(esr)?$")))
+    (throw (Error. (str "refusing unsafe version string: " version))))
   (let [p (join CONFIGS-DIR (str "firefox-" version ".sha256"))]
     (when (existsSync p)
       (.warn log (str "pin already exists (" p "); re-deriving after GPG-verify")))

@@ -6,7 +6,7 @@
 ;;   bun apply-claims.js <artifact.claims.json> <engine-dir>
 (ns gjoa.tools.projector.apply-claims
   (:require [fs :refer [readFileSync writeFileSync]]
-            [path :refer [join]]
+            [path :refer [join resolve sep]]
             [gjoa.tools.projector.claims :refer [json->doc replay]]
             [gjoa.tools.projector.set-body :refer [parses?]]))
 (define-mode strict)
@@ -18,18 +18,24 @@
         doc (json->doc (readFileSync artifact-path "utf8"))
         file (.-file doc)
         edits (.-edits doc)
-        target (join engine-dir file)
-        src (readFileSync target "utf8")
-        r (replay edits src)]
-    (if (and (.-ok r) (parses? (.-src r)))
-      (do
-        (writeFileSync target (.-src r))
-        (console/error (str "  claim-doc replay OK -> " file " (" (.-length edits) " set-body edit(s))"))
-        (.exit process 0))
-      (do
-        (console/error (str "  claim-doc replay FAILED: "
-                            (if (.-ok r) "rendered result does not parse" (.-reason r))))
-        (.exit process 1)))))
+        target (join engine-dir file)]
+    ;; the artifact's :file is replayed onto disk; reject any path that escapes
+    ;; engine-dir (absolute or `..`) before reading/writing it (path traversal).
+    (when (or (.includes file "..")
+              (not (.startsWith (resolve target) (str (resolve engine-dir) sep))))
+      (console/error (str "  claim-doc :file escapes engine-dir, refusing: " file))
+      (.exit process 1))
+    (let [src (readFileSync target "utf8")
+          r (replay edits src)]
+      (if (and (.-ok r) (parses? (.-src r)))
+        (do
+          (writeFileSync target (.-src r))
+          (console/error (str "  claim-doc replay OK -> " file " (" (.-length edits) " set-body edit(s))"))
+          (.exit process 0))
+        (do
+          (console/error (str "  claim-doc replay FAILED: "
+                              (if (.-ok r) "rendered result does not parse" (.-reason r))))
+          (.exit process 1))))))
 
 (when (.-main (js/import-meta))
   (main!))

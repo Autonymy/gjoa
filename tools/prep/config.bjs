@@ -42,5 +42,10 @@
         (throw (Error. (str "gjoa.json missing required field: " k)))))
     (if (not (.-version (.-firefox c)))
       (throw (Error. "gjoa.json: firefox.version is required")))
+    ;; firefox.version is interpolated into URLs and (via conflict-forecast) a git
+    ;; shell-out — constrain it to a plain version so every consumer inherits the
+    ;; guarantee (the trust-anchor systemic fix for the network-fetched bump value).
+    (if (not (.match (.-version (.-firefox c)) (RegExp. "^[0-9]+(\\.[0-9]+){1,3}(esr)?$")))
+      (throw (Error. (str "gjoa.json: firefox.version \"" (.-version (.-firefox c)) "\" is not a valid Firefox version"))))
     (if (not (.match (.-binaryName c) (RegExp. "^[a-z0-9-]+$")))
       (throw (Error. (str "gjoa.json: binaryName \"" (.-binaryName c) "\" must be lowercase alphanumeric+hyphen"))))))

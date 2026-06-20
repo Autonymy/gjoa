@@ -5,7 +5,7 @@
     "contrast":  ["contrast"],
     "adblock":   ["adblock-cosmetic", "adblock-cosmetic-actor", "adblock-production", "adblock-ui", "adblock-validate"],
     "scriptlet": ["scriptlet-engine", "youtube-scriptlet"],
-    "tabs":      ["tab-mode-toggle", "nav-bar-layout", "sidebar-symmetric-icons", "groups", "group-drag-above", "vim-hotkeys", "help-menu"],
+    "tabs":      ["tab-mode-toggle", "nav-bar-layout", "sidebar-symmetric-icons", "groups", "group-drag-above", "vim-hotkeys", "help-menu", "compact-context-menu"],
     "spaces":    ["spaces", "spaces-header", "spaces-scope-groups", "spaces-vim", "spaces-session-restore", "session-restore"],
     "newtab":    ["newtab-home", "new-tab-honors-active-space", "new-tab-no-indent-chain", "new-tab-visibility"],
     "misc":      ["sqlite"]
@@ -19,6 +19,7 @@
     "src/gjoa/chrome/bjs/blocking/":  ["adblock", "scriptlet"],
     "src/gjoa/chrome/bjs/spaces/":    "spaces",
     "src/gjoa/chrome/bjs/tabs/":      ["tabs", "newtab"],
+    "src/gjoa/chrome/bjs/drawer/":    "tabs",
     "src/gjoa/chrome/bjs/firefox/":   ["tabs", "newtab"]
   }
 }

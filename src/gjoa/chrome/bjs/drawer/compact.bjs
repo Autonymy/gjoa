@@ -176,6 +176,12 @@
 
         is-guarded (fn []
           (bool (or (> (.-open-popups shared) 0)
+                    ;; A context menu opened via openPopupAtScreen (tab/group menus)
+                    ;; sets state='showing' SYNCHRONOUSLY, before the async popupshown
+                    ;; that bumps open-popups — and the 0ms mouseleave-collapse check
+                    ;; can run in that gap. Querying the live menu directly closes the
+                    ;; race so the sidebar never collapses out from under an open menu.
+                    (q document "menupopup[state='open'], menupopup[state='showing']")
                     (and urlbar (has? urlbar "breakout-extend"))
                     (q document "toolbarbutton[open='true']")
                     (q document ".tabbrowser-tab[multiselected]")

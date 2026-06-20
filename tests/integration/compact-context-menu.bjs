@@ -1,0 +1,64 @@
+#lang beagle/js
+;; Regression for #88: the compact sidebar must NOT auto-collapse while a context
+;; menu is open (it was ripping the tab context menu away mid-selection).
+;;
+;; A tab/group context menu opens via openPopupAtScreen, which sets the menupopup's
+;; state='showing' SYNCHRONOUSLY — before the async `popupshown` that bumps the
+;; `open-popups` counter — and the 0ms mouseleave→collapse check (on-sidebar-leave)
+;; can run in that gap, so the counter-based guard loses the race. The fix: is-guarded
+;; (compact.bjs) now also queries for a live `menupopup[state='showing'|'open']`,
+;; which is true from the synchronous showing state onward.
+;;
+;; We simulate the open menu with a synthetic menupopup in state='showing' (exactly
+;; what openPopupAtScreen sets) so the test is deterministic + headless-safe — no
+;; native popup timing.
+(ns gjoa.tests.integration.compact-context-menu
+  (:require [gjoa.tests.dsl :refer [deftest chrome-eval await-true expect wait-for sleep]]))
+(define-mode strict)
+
+(def ENABLE-COMPACT :- String "
+  Services.prefs.setBoolPref('sidebar.verticalTabs', true);
+  Services.prefs.setBoolPref('gjoa.sidebar.compact', true);
+  return true;
+")
+
+;; Reveal the sidebar (hover state), plant a live menupopup[state='showing'] (what a
+;; context menu becomes), and fire the mouseleave that — pre-fix — scheduled collapse.
+(def OPEN-MENU-AND-LEAVE :- String "
+  const XUL='http://www.mozilla.org/keymaster/gatekeeper/there.is.only.xul';
+  const sb=document.getElementById('sidebar-main');
+  if(!sb) return {error:'no sidebar-main'};
+  sb.setAttribute('gjoa-has-hover','true');
+  let m=document.getElementById('gjoa-test-ctxmenu');
+  if(!m){ m=document.createElementNS(XUL,'menupopup'); m.id='gjoa-test-ctxmenu'; document.documentElement.appendChild(m); }
+  m.setAttribute('state','showing');
+  sb.dispatchEvent(new MouseEvent('mouseleave',{relatedTarget:document.body}));
+  return { menuLive: !!document.querySelector(\"menupopup[state='showing'],menupopup[state='open']\") };
+")
+
+(def CLOSE-MENU-AND-LEAVE :- String "
+  const sb=document.getElementById('sidebar-main');
+  const m=document.getElementById('gjoa-test-ctxmenu');
+  if(m) m.setAttribute('state','closed');
+  sb.dispatchEvent(new MouseEvent('mouseleave',{relatedTarget:document.body}));
+  return true;
+")
+
+(def HAS-HOVER :- String "return document.getElementById('sidebar-main').hasAttribute('gjoa-has-hover');")
+
+(js/export (def tests :- Any
+  [(deftest "compact — sidebar stays expanded while a context menu is open (#88)" [mn]
+     (js/await (chrome-eval ENABLE-COMPACT))
+     (js/await (await-true "return !!document.querySelector('#sidebar-main[data-gjoa-compact]');" 4000))
+     (let [r (js/await (chrome-eval OPEN-MENU-AND-LEAVE))]
+       (expect (.-menuLive r) "precondition: a live menupopup[state=showing] should exist"))
+     ;; let the 0ms mouseleave-collapse check (+ any flash/watchdog) run
+     (js/await (sleep 400))
+     (let [held (js/await (chrome-eval HAS-HOVER))]
+       (expect held "REGRESSION #88: sidebar collapsed while a context menu was open"))
+     ;; release: once the menu closes, a later mouseleave may collapse it again — guard
+     ;; against an over-correction that pins the sidebar open forever.
+     (js/await (chrome-eval CLOSE-MENU-AND-LEAVE))
+     (js/await (await-true "return !document.getElementById('sidebar-main').hasAttribute('gjoa-has-hover');" 3000)))]))
+
+(js/export-default tests)

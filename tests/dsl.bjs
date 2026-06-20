@@ -75,3 +75,19 @@
 ;; Resolve after `ms` milliseconds.
 (js/export (defn sleep [ms :- Any] :- Any
   (js/await (Promise. (fn [res] (setTimeout (fn [] (res)) ms))))))
+
+;; Navigate the selected tab to `url` and resolve when it finishes loading
+;; (nsIWebProgressListener STATE_STOP|STATE_IS_WINDOW; 15s safety). Shared by the
+;; darkmode/contrast/adblock tests that all open a page then assert on it.
+(js/export (def NAV-JS :- String
+  (str "\n"
+       "  const [url, resolve] = arguments;\n"
+       "  let done = false; const finish = v => { if (!done) { done = true; resolve(v); } };\n"
+       "  const win = Services.wm.getMostRecentWindow('navigator:browser');\n"
+       "  const b = win.gBrowser.selectedBrowser;\n"
+       "  const l = { QueryInterface: ChromeUtils.generateQI(['nsIWebProgressListener','nsISupportsWeakReference']),\n"
+       "    onStateChange(wp, req, flags) { const S = Ci.nsIWebProgressListener;\n"
+       "      if ((flags & S.STATE_STOP) && (flags & S.STATE_IS_WINDOW)) { try { b.removeProgressListener(l); } catch {} finish(true); } } };\n"
+       "  b.addProgressListener(l, Ci.nsIWebProgress.NOTIFY_STATE_ALL);\n"
+       "  b.loadURI(Services.io.newURI(url), { triggeringPrincipal: Services.scriptSecurityManager.getSystemPrincipal() });\n"
+       "  setTimeout(() => finish(false), 15000);\n")))

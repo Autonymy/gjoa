@@ -15,7 +15,7 @@
 ;;   GJOA_BIN=$PWD/engine/obj-x86_64-pc-linux-gnu/dist/bin/gjoa \
 ;;     bun .beagle-tools/gjoa/tools/test-driver/runner.js --grep "adblock M2 actor"
 (ns gjoa.tests.integration.adblock-cosmetic-actor
-  (:require [gjoa.tests.dsl :refer [deftest chrome-eval await-true wait-for expect]]))
+  (:require [gjoa.tests.dsl :refer [deftest chrome-eval await-true wait-for expect NAV-JS]]))
 (define-mode strict)
 
 (def TOP :- String "http://127.0.0.1:8975/")
@@ -34,21 +34,6 @@
        "  Services.prefs.setBoolPref('privacy.trackingprotection.content.protection.enabled', true);\n"
        "  Services.prefs.setCharPref('gjoa.contentblock.user.allow-hosts', '');\n"
        "  return 'setup-ok';\n"))
-
-;; Async chrome nav: listener attached before loadURI so a fast local load can't
-;; race past it; resolve on load-stop.
-(def NAV-JS :- String
-  (str "\n"
-       "  const [url, resolve] = arguments;\n"
-       "  let done = false; const finish = v => { if (!done) { done = true; resolve(v); } };\n"
-       "  const win = Services.wm.getMostRecentWindow('navigator:browser');\n"
-       "  const b = win.gBrowser.selectedBrowser;\n"
-       "  const l = { QueryInterface: ChromeUtils.generateQI(['nsIWebProgressListener','nsISupportsWeakReference']),\n"
-       "    onStateChange(wp, req, flags) { const S = Ci.nsIWebProgressListener;\n"
-       "      if ((flags & S.STATE_STOP) && (flags & S.STATE_IS_WINDOW)) { try { b.removeProgressListener(l); } catch {} finish(true); } } };\n"
-       "  b.addProgressListener(l, Ci.nsIWebProgress.NOTIFY_STATE_ALL);\n"
-       "  b.loadURI(Services.io.newURI(url), { triggeringPrincipal: Services.scriptSecurityManager.getSystemPrincipal() });\n"
-       "  setTimeout(() => finish(false), 15000);\n"))
 
 (def STATIC-HIDDEN :- String
   "const s=document.getElementById('static'); return !!(s && getComputedStyle(s).display === 'none');")

@@ -1,0 +1,303 @@
+#lang beagle/js
+;; Tab-tree state-machine soundness — deterministic invariant suite (#93).
+;;
+;; The tab tree is the load-bearing object model: roots + nested children
+;; (fold/compose), laid out as ROWS in vertical mode and as COLUMNS in
+;; horizontal mode. Every structural mutation (build, fold/compose, move,
+;; select, drag) must leave the tree SOUND. This suite builds known trees,
+;; performs each mutation in BOTH modes, and asserts the invariants below.
+;;
+;; Invariants (checked over the WHOLE panel, not just marker tabs):
+;;   I2  parentId integrity — every non-null parentId resolves to a live node
+;;       (a tab id, or a group id for adopted children).
+;;   I3  acyclic — following parentId from any node terminates at a root.
+;;   I4  DOM pre-order — a child row never appears before its parent row.
+;;   I5  level == depth — a row's visual indent equals its ancestor count.
+;;
+;; Plus two regression gates:
+;;   - horizontal move must not skip a moved tab to the leftmost column
+;;     (the column-major drop-index bug, drag.bjs).
+;;   - create-group adopts the WHOLE multiselection, not just the context tab
+;;     (menu.bjs, #95).
+(ns gjoa.tests.integration.tab-tree-machine
+  (:require [gjoa.tests.dsl :refer [deftest chrome-eval await-true wait-for expect expect-eq sleep]]))
+(define-mode strict)
+
+;; --- mode + reset helpers (mirrors tab-mode-toggle.bjs) ----------------------
+
+(defn reset! [mn :- Any] :- Any
+  (js/await (.executeScript mn
+    (str
+      "    try { Services.prefs.setBoolPref(\"sidebar.verticalTabs\", true); } catch {}\n"
+      "    if (window.Spaces) {\n"
+      "      const main = window.Spaces.list().find(s => s.name === \"Main\") || window.Spaces.list()[0];\n"
+      "      window.Spaces.setActive(main.id);\n"
+      "      for (const s of [...window.Spaces.list()]) {\n"
+      "        if (s.id !== main.id) window.Spaces.delete(s.id);\n"
+      "      }\n"
+      "    }\n"
+      "    const marked = [...gBrowser.tabs].filter(t => t.getAttribute && t.getAttribute(\"gjoa-test-marker\"));\n"
+      "    if (marked.length < gBrowser.tabs.length) {\n"
+      "      for (const t of marked) { try { gBrowser.removeTab(t); } catch {} }\n"
+      "    }\n"
+      "  ")))
+  (await-true "return !document.getElementById(\"gjoa-tab-panel\").hasAttribute(\"gjoa-horizontal\");" 3000))
+
+(defn to-horizontal! [mn :- Any] :- Any
+  (chrome-eval "Services.prefs.setBoolPref(\"sidebar.verticalTabs\", false);")
+  (await-true "return document.getElementById(\"gjoa-tab-panel\").hasAttribute(\"gjoa-horizontal\");" 3000))
+
+(defn to-vertical! [mn :- Any] :- Any
+  (chrome-eval "Services.prefs.setBoolPref(\"sidebar.verticalTabs\", true);")
+  (await-true "return !document.getElementById(\"gjoa-tab-panel\").hasAttribute(\"gjoa-horizontal\");" 3000))
+
+;; --- tree construction -------------------------------------------------------
+
+;; Create `n` marker root tabs `<stamp>-r0..r(n-1)`. Returns the marker list.
+(defn build-roots-js [stamp :- String n :- Int] :- String
+  (str "
+    const principal = Services.scriptSecurityManager.getSystemPrincipal();
+    const T = window.gjoaTest.treeOf;
+    const out = [];
+    for (let i = 0; i < " n "; i++) {
+      const t = gBrowser.addTab(\"about:blank\", { triggeringPrincipal: principal });
+      t.setAttribute(\"gjoa-test-marker\", \"" stamp "-r\" + i);
+      T.get(t).parentId = null;
+      out.push(\"" stamp "-r\" + i);
+    }
+    window.gjoaTest.rows.scheduleTreeResync();
+    window.gjoaTest.rows.updateVisibility();
+    return out;"))
+
+;; Nest the `child` marker tab under the `parent` marker tab (compose/fold).
+(defn nest-js [child :- String parent :- String] :- String
+  (str "
+    const T = window.gjoaTest.treeOf;
+    const find = m => [...gBrowser.tabs].find(t => t.getAttribute(\"gjoa-test-marker\") === m);
+    const c = find(\"" child "\"), p = find(\"" parent "\");
+    if (!c || !p) throw new Error(\"nest: missing child/parent\");
+    T.get(c).parentId = T.get(p).id;
+    T.get(p).collapsed = false;
+    window.gjoaTest.rows.scheduleTreeResync();
+    window.gjoaTest.rows.updateVisibility();
+    return true;"))
+
+(defn await-marker-js [marker :- String] :- String
+  (str "return [...gBrowser.tabs].some(t => t.getAttribute(\"gjoa-test-marker\") === \"" marker "\");"))
+
+;; --- the invariant checker (computed in-page, returns {ok, viol, count}) -----
+
+(def INVARIANTS-JS :- String "
+  const T = window.gjoaTest.treeOf;
+  const rows = [...document.querySelectorAll(\"#gjoa-tab-panel .gjoa-tab-row, #gjoa-tab-panel .gjoa-group-row\")];
+  const lvl = r => Math.max(0, Math.round(((parseFloat(r.style.paddingInlineStart || \"0\") || 0) - 8) / 14));
+  const nodes = rows.map((r, i) => {
+    const tab = r._tab || null;
+    const grp = r._group || null;
+    const isGroup = r.classList.contains(\"gjoa-group-row\");
+    const td = isGroup ? grp : (tab ? T.get(tab) : null);
+    return {
+      i, isGroup,
+      rawId: td ? td.id : null,
+      parentId: td ? (td.parentId == null ? null : td.parentId) : null,
+      level: lvl(r),
+      label: r.querySelector(\".gjoa-tab-label, .gjoa-group-name\")?.textContent ?? \"\",
+    };
+  });
+  const byId = new Map();
+  for (const n of nodes) if (n.rawId != null) byId.set(String(n.rawId), n);
+  const viol = [];
+  const nameOf = n => n.label || String(n.rawId);
+  // I2 parentId integrity
+  for (const n of nodes) {
+    if (n.parentId == null) continue;
+    if (!byId.has(String(n.parentId))) viol.push(\"I2:dangling parentId \" + n.parentId + \" on \" + nameOf(n));
+  }
+  // I3 acyclic + I5 level==depth (one walk, bounded)
+  for (const n of nodes) {
+    let cur = n, depth = 0, steps = 0; const seen = new Set();
+    while (cur && cur.parentId != null) {
+      if (seen.has(String(cur.rawId))) { viol.push(\"I3:cycle at \" + nameOf(n)); break; }
+      seen.add(String(cur.rawId));
+      const p = byId.get(String(cur.parentId));
+      if (!p) break;
+      depth++; cur = p;
+      if (++steps > 64) { viol.push(\"I3:depth>64 at \" + nameOf(n)); break; }
+    }
+    if (n.level !== depth) viol.push(\"I5:level \" + n.level + \" != depth \" + depth + \" on \" + nameOf(n));
+  }
+  // I4 DOM pre-order: parent row precedes child row
+  for (const n of nodes) {
+    if (n.parentId == null) continue;
+    const p = byId.get(String(n.parentId));
+    if (p && p.i > n.i) viol.push(\"I4:child \" + nameOf(n) + \" before parent \" + nameOf(p));
+  }
+  return { ok: viol.length === 0, viol, count: nodes.length };")
+
+(defn assert-sound [mn :- Any where :- String] :- Any
+  (let [r (chrome-eval INVARIANTS-JS)]
+    (expect (.-ok r)
+      (str "tree invariants violated (" where "): " (JSON/stringify (.-viol r))))
+    nil))
+
+;; Ordered DOM rows (marker tabs + groups) as {marker,label,level,parentId}.
+(def ROWS-JS :- String "
+  const T = window.gjoaTest.treeOf;
+  return [...document.querySelectorAll(\"#gjoa-tab-panel .gjoa-tab-row, #gjoa-tab-panel .gjoa-group-row\")]
+    .map(r => {
+      const tab = r._tab || null;
+      const td = r.classList.contains(\"gjoa-group-row\") ? r._group : (tab ? T.get(tab) : null);
+      return {
+        kind: r.classList.contains(\"gjoa-group-row\") ? \"group\" : \"tab\",
+        marker: (tab && tab.getAttribute) ? (tab.getAttribute(\"gjoa-test-marker\") || \"\") : \"\",
+        parentId: td ? (td.parentId == null ? null : td.parentId) : null,
+        level: Math.max(0, Math.round(((parseFloat(r.style.paddingInlineStart || \"0\") || 0) - 8) / 14)),
+        label: r.querySelector(\".gjoa-tab-label, .gjoa-group-name\")?.textContent ?? \"\",
+      };
+    });")
+
+;; Synthetic drag of DOM row `src` onto row `tgt`, dropping at the fractional
+;; (fx,fy) point inside the target (fx>=0.5 → "after"/right, fy<0.66 → not child).
+(defn drag-script [src :- Int tgt :- Int fx :- Any fy :- Any] :- String
+  (str "
+    const rows = [...document.querySelectorAll(\"#gjoa-tab-panel .gjoa-tab-row, #gjoa-tab-panel .gjoa-group-row\")];
+    const source = rows[" src "]; const target = rows[" tgt "];
+    if (!source || !target) throw new Error(\"row missing src=" src " tgt=" tgt " len=\" + rows.length);
+    const tR = target.getBoundingClientRect();
+    const dx = tR.left + tR.width * " fx "; const dy = tR.top + tR.height * " fy ";
+    const dt = new DataTransfer();
+    const fire = (el, type, x, y) => el.dispatchEvent(new DragEvent(type, { bubbles:true, cancelable:true, view:window, clientX:x, clientY:y, dataTransfer:dt }));
+    const sR = source.getBoundingClientRect();
+    fire(source, \"dragstart\", sR.left + 5, sR.top + 5);
+    fire(target, \"dragenter\", dx, dy); fire(target, \"dragover\", dx, dy);
+    fire(target, \"drop\", dx, dy); fire(source, \"dragend\", dx, dy);
+    return true;"))
+
+(defn settle [] :- Any (js/await (Promise. (fn [r] (setTimeout (fn [] (r)) 250)))) nil)
+
+;; --- tests -------------------------------------------------------------------
+
+(js/export (def tests :- Any
+  [(deftest "tree machine — invariants hold for flat roots, both modes" [mn]
+     (await-true "return !!window.gjoaTest && !!document.getElementById(\"gjoa-tab-panel\");" 5000)
+     (js/await (reset! mn))
+     (let [stamp (str "ttm-flat-" (Date/now))]
+       (chrome-eval (build-roots-js stamp 3))
+       (await-true (await-marker-js (str stamp "-r2")) 3000)
+       (assert-sound mn "vertical/flat")
+       (let [rows (chrome-eval ROWS-JS)
+             roots (.filter rows (fn [r] (.-marker r)))]
+         (expect (>= (.-length roots) 3) "expected >= 3 marker roots")
+         (.forEach roots (fn [r] (expect-eq (.-level r) 0 "flat roots must be level 0"))))
+       (js/await (to-horizontal! mn))
+       (assert-sound mn "horizontal/flat")
+       (js/await (to-vertical! mn))))
+
+   (deftest "tree machine — compose/fold stays sound, both modes" [mn]
+     (await-true "return !!window.gjoaTest;" 5000)
+     (js/await (reset! mn))
+     (let [stamp (str "ttm-fold-" (Date/now))]
+       (chrome-eval (build-roots-js stamp 3))
+       (await-true (await-marker-js (str stamp "-r2")) 3000)
+       ;; compose: r1 under r0, r2 under r1 (tabs-within-tabs, depth 2).
+       (chrome-eval (nest-js (str stamp "-r1") (str stamp "-r0")))
+       (chrome-eval (nest-js (str stamp "-r2") (str stamp "-r1")))
+       (js/await (settle))
+       (assert-sound mn "vertical/nested")
+       ;; the nested chain must be level 0 / 1 / 2 in DOM pre-order.
+       (let [rows (chrome-eval ROWS-JS)
+             r0 (.find rows (fn [r] (= (.-marker r) (str stamp "-r0"))))
+             r1 (.find rows (fn [r] (= (.-marker r) (str stamp "-r1"))))
+             r2 (.find rows (fn [r] (= (.-marker r) (str stamp "-r2"))))]
+         (expect (and r0 r1 r2) "nested markers must all be present")
+         (expect-eq (.-level r0) 0 "r0 root level 0")
+         (expect-eq (.-level r1) 1 "r1 child level 1")
+         (expect-eq (.-level r2) 2 "r2 grandchild level 2"))
+       (js/await (to-horizontal! mn))
+       (assert-sound mn "horizontal/nested")
+       (js/await (to-vertical! mn))
+       (assert-sound mn "vertical/nested-after-roundtrip")))
+
+   (deftest "tree machine — selecting a tab keeps the tree sound, both modes" [mn]
+     (await-true "return !!window.gjoaTest;" 5000)
+     (js/await (reset! mn))
+     (let [stamp (str "ttm-sel-" (Date/now))]
+       (chrome-eval (build-roots-js stamp 3))
+       (await-true (await-marker-js (str stamp "-r2")) 3000)
+       (chrome-eval (nest-js (str stamp "-r1") (str stamp "-r0")))
+       (js/await (settle))
+       (js/await (to-horizontal! mn))
+       ;; select the nested child; cursor/selection follows, tree stays sound.
+       (chrome-eval (str "gBrowser.selectedTab = [...gBrowser.tabs].find(t => t.getAttribute(\"gjoa-test-marker\") === \"" stamp "-r1\"); return true;"))
+       (js/await (settle))
+       (assert-sound mn "horizontal/after-select")
+       (let [sel (chrome-eval (str "return gBrowser.selectedTab.getAttribute(\"gjoa-test-marker\");"))]
+         (expect-eq sel (str stamp "-r1") "selection must land on the chosen child"))
+       (js/await (to-vertical! mn))))
+
+   (deftest "tree machine — horizontal move does NOT skip a tab to the leftmost column" [mn]
+     (await-true "return !!window.gjoaTest;" 5000)
+     (js/await (reset! mn))
+     (let [stamp (str "ttm-skip-" (Date/now))]
+       ;; roots A,B,C with B holding a child B1 — the target-with-children case
+       ;; that made the column-major drop-index resolve to the column head.
+       (chrome-eval (build-roots-js stamp 4))
+       (await-true (await-marker-js (str stamp "-r3")) 3000)
+       (chrome-eval (nest-js (str stamp "-r3") (str stamp "-r1")))  ; r3 becomes child of r1 (=B1 under B)
+       (js/await (settle))
+       (js/await (to-horizontal! mn))
+       (js/await (settle))
+       (let [before (chrome-eval ROWS-JS)
+             first-root-before (.-marker (.find before (fn [r] (and (= (.-kind r) "tab") (= (.-level r) 0)))))
+             ;; DOM indices: drag r2 (C, rightmost root) onto r1 (B) "after" zone.
+             idx-c (.findIndex before (fn [r] (= (.-marker r) (str stamp "-r2"))))
+             idx-b (.findIndex before (fn [r] (= (.-marker r) (str stamp "-r1"))))]
+         (expect (and (>= idx-c 0) (>= idx-b 0)) (str "setup rows: idxC=" idx-c " idxB=" idx-b))
+         (chrome-eval (drag-script idx-c idx-b 0.8 0.2))
+         (js/await (settle))
+         (assert-sound mn "horizontal/after-move")
+         (let [after (chrome-eval ROWS-JS)
+               first-root-after (.-marker (.find after (fn [r] (and (= (.-kind r) "tab") (= (.-level r) 0)))))]
+           ;; the regression: the moved tab jumped to the front. r0 (A) must
+           ;; remain the first root; the moved C must not have become leftmost.
+           (expect-eq first-root-after first-root-before
+             (str "moved tab skipped to leftmost: firstRoot " first-root-before " -> " first-root-after))
+           (expect (not= first-root-after (str stamp "-r2"))
+             "the moved tab (C) must not become the leftmost root")))
+       (js/await (to-vertical! mn))))
+
+   (deftest "tree machine — create-group adopts the whole multiselection (#95)" [mn]
+     (await-true "return !!window.gjoaTest;" 5000)
+     (js/await (reset! mn))
+     (let [stamp (str "ttm-grp-" (Date/now))]
+       (chrome-eval (build-roots-js stamp 3))
+       (await-true (await-marker-js (str stamp "-r2")) 3000)
+       ;; multiselect r0 + r1, set the context tab to r0, fire "Create Group".
+       (chrome-eval (str "
+         const find = m => [...gBrowser.tabs].find(t => t.getAttribute(\"gjoa-test-marker\") === m);
+         const a = find(\"" stamp "-r0\"), b = find(\"" stamp "-r1\");
+         gBrowser.selectedTab = a;
+         gBrowser.addToMultiSelectedTabs(b);
+         window.gjoaTest.state.contextTab = a;
+         const row = [...document.querySelectorAll(\"#gjoa-tab-panel .gjoa-tab-row\")].find(r => r._tab === a);
+         const rect = row.getBoundingClientRect();
+         row.dispatchEvent(new MouseEvent(\"contextmenu\", { bubbles:true, cancelable:true, button:2, clientX:rect.left+4, clientY:rect.top+4 }));
+         const menu = document.getElementById(\"gjoa-tab-menu\");
+         const item = [...menu.querySelectorAll(\"menuitem\")].find(mi => mi.getAttribute(\"label\") === \"Create Group\");
+         if (!item) throw new Error(\"no Create Group menuitem\");
+         item.dispatchEvent(new Event(\"command\", { bubbles:true }));
+         return true;"))
+       (js/await (settle))
+       (assert-sound mn "vertical/after-create-group")
+       (let [r (chrome-eval (str "
+               const T = window.gjoaTest.treeOf;
+               const find = m => [...gBrowser.tabs].find(t => t.getAttribute(\"gjoa-test-marker\") === m);
+               const a = find(\"" stamp "-r0\"), b = find(\"" stamp "-r1\");
+               const ap = T.get(a).parentId, bp = T.get(b).parentId;
+               return { ap: ap == null ? null : String(ap), bp: bp == null ? null : String(bp) };"))]
+         (expect (and (.-ap r) (.-bp r))
+           (str "both selected tabs must be adopted into a group (ap=" (.-ap r) " bp=" (.-bp r) ")"))
+         (expect-eq (.-ap r) (.-bp r)
+           (str "the whole multiselection must join the SAME group (ap=" (.-ap r) " bp=" (.-bp r) ")")))))]))
+
+(js/export-default tests)

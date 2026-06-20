@@ -1,149 +1,50 @@
+<div align="center">
+
+<img src="configs/branding/gjoa/content/about-logo.png" width="84" alt="gjoa" />
+
 # gjoa
 
-A Firefox fork tuned for a single power user. The idea: do natively, at
-near-zero runtime cost, the things most people bolt onto Firefox with a stack
-of extensions — an ad blocker, Dark Reader, tree-style tabs — and ship it as
-one aggressively optimized build.
+**A Firefox fork that does natively — at near-zero runtime cost — what most people bolt onto Firefox with a stack of extensions.** An ad blocker, Dark Reader, tree-style tabs — built into one aggressively optimized build.
 
-Built on Firefox 152. The UI is written in [Beagle](https://github.com/tompassarelli/beagle)
-(a typed Clojure subset) as `.bjs` modules under `src/gjoa/chrome/bjs/`,
-compiled to chrome JS and loaded through a native chrome loader
-(`src/gjoa/browser/components/gjoa/GjoaLoader.bjs`, itself compiled to a
-`.sys.mjs`) baked into `omni.ja` — no fx-autoconfig, no extension process,
-no per-page injection.
+<img src="screenshots/gjoa-newtab.png" width="760" alt="gjoa — the new-tab navigator, vertical-tab sidebar, forced-dark" />
 
-This README describes the stable shape of the project. For volatile detail —
-exact feature state, list composition, build outcomes — see
-[`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md),
-[`docs/daily-loop.md`](docs/daily-loop.md),
-[`BUILD-LEDGER.md`](BUILD-LEDGER.md), and the GitHub releases.
+</div>
+
+Built on Firefox 152. The UI is written in [Beagle](https://github.com/Autonymy/beagle) (a typed Clojure subset) as `.bjs` modules compiled to chrome JS, loaded by a native chrome loader baked into `omni.ja` — no fx-autoconfig, no extension process, no per-page injection.
+
+> This README is the stable shape. Volatile detail — exact feature state, build outcomes — lives in [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md), [`BUILD-LEDGER.md`](BUILD-LEDGER.md), and the [releases](../../releases).
 
 ## What's different
 
-Everything below is a capability that's in the build today, described by the
-mechanism that makes it work.
+Each is a capability in the build today, described by the mechanism that makes it work.
 
-### Tree-style tabs with a vim keymap
+- **Tree-style tabs + a vim keymap** — a vertical, keyboard-driven tab tree (nesting, folder groups, collapse, multi-select) driven by a modal vim layer: `hjkl` motion, indent/swap, leader chords, `/` filter, a `:` ex-command set with picker + help overlay. A chrome bundle over `gBrowser`; tree is per-tab metadata. — `tabs/{index,vim}.bjs`
 
-A vertical, keyboard-driven tab tree in the sidebar: parent/child nesting,
-named folder groups, collapse, multi-select. A modal vim layer drives it —
-`hjkl` motion, indent/outdent, swap, leader chords, `/` filter, and a `:`
-ex-command set with a picker and help overlay. Implemented as a chrome bundle
-over Firefox's `gBrowser`; tree structure is per-tab metadata, and the vim
-layer is a keydown state machine with declared key/command tables
-(`chrome/bjs/tabs/index.bjs`, `chrome/bjs/tabs/vim.bjs`).
+- **Workspaces** — tabs partitioned into named spaces; switching shows only that space's tabs, and the selected tab stays inside it (survives session restore). On the niri compositor, focusing an OS workspace switches gjoa to the same-named space. — `spaces/manager.bjs`
 
-### Workspaces (spaces)
+- **Sidebar drawer + floating urlbar** — the tab sidebar is a drawer (expand/collapse, compact, drag-resize, hover-reveal); a floating urlbar on `Ctrl/Cmd-L`. — `drawer/index.bjs`
 
-Tabs are partitioned into named workspaces; switching shows only that
-workspace's tabs, and the selected tab always stays inside the active
-workspace. Managed via `:space new/rename/delete/switch`. A spaces manager
-holds the mapping, and the space id is also persisted on each tab so it
-survives Firefox session restore (`chrome/bjs/spaces/manager.bjs`,
-`chrome/bjs/spaces/index.bjs`).
+- **Native ad / tracker blocking** — FF152 ships Brave's `adblock-rust` in-tree but only for tracker lists; gjoa drives it as a full content blocker across three layers — **network** (requests killed before they leave the browser), **cosmetic** (element-hiding as a single `USER_SHEET`), and **scriptlets** (curated, sandboxed, opt-in list-driven) — fed EasyList / EasyPrivacy / uBO. No extension, no content-script blocker. — `blocking/index.bjs`
 
-On the niri Wayland compositor, focusing an OS virtual workspace switches gjoa
-to the same-named space — a one-way OS→gjoa binding over the
-`niri msg event-stream` subprocess, inert when niri isn't present
-(`chrome/bjs/spaces/niri.bjs`).
+- **Engine-level dark mode** — respects each site rather than inverting blindly: native dark themes kept, themeless pages darkened by the engine pre-paint (no white flash), a curated registry + per-site overrides for the rest. Three Gecko-native levers driven by prefs — no content-script darkening on the core path. — `dark-mode/index.bjs`
 
-The tab picker can also fuzzy-find and activate tabs across every open window,
-not just the current one (`:tabs all`, `chrome/bjs/platform/cross-window-tabs.bjs`).
+- **`about:gjoa` — one settings home** — gjoa's settings live in a single branded page (dark mode, content blocking, profiles, and a reversible-features dashboard), not scattered through `about:config`. A one-toggle **LibreWolf mode** profile flips a bundle of privacy defaults. Firefox Settings carries a pointer to it — with zero patching of Firefox's preferences code.
 
-### Sidebar drawer + floating urlbar
+- **`about:sovereignty` — egress audit** — a source-derived list of every point the build contacts the network without user action, checked against the running build's hash. Generated by an open audit tool; the page renders what the settings actually amount to.
 
-The tab sidebar behaves as a drawer — expand/collapse, compact mode,
-drag-resize, hover-reveal — and a floating urlbar is reachable with Ctrl/Cmd-L.
-A chrome bundle repositions the sidebar and toolbox and tracks sidebar state via
-`MutationObserver` (`chrome/bjs/drawer/index.bjs` and siblings).
+- **Reversible by design** — every feature gjoa disables stays *present* and flippable — capabilities are parked behind a knob, never deleted. (gjoa keeps WebRTC and EME; nothing user-facing is stripped for vanity.)
 
-### Searchable session history
+- **Searchable session history** — workspace changes auto-save to a searchable timeline (`:checkpoint`, `:history`, `:restore`), backed by an append-only SQLite log with an FTS5 full-text index over tab URLs and titles. — `tabs/history.bjs`
 
-Every meaningful workspace change is auto-saved to a searchable timeline; you
-can name checkpoints (`:checkpoint`), browse history (`:history`), and restore
-sessions (`:restore`). Backed by an append-only, hash-deduped event log in a
-SQLite file (`<profile>/gjoa-history.sqlite`) with WAL journaling and schema
-migrations, plus an **FTS5** full-text index over tab URLs and titles (enabled
-by a build patch; falls back to `LIKE` search when FTS5 is unavailable).
-Retention prunes untagged events by age and count
-(`chrome/bjs/tabs/history.bjs`).
+- **Custom new-tab / home** — new tabs, home, and home-based startup land on a minimal forced-dark navigator page (the screenshot above). — `browser/components/gjoa/content/newtab/`
 
-### Native ad / tracker blocking
-
-Firefox 152 ships Brave's `adblock-rust` engine *in-tree* but leaves it doing
-only tracker-list processing. gjoa drives it as a real content blocker through
-the in-tree `toolkit/components/content-classifier`, fed EasyList/EasyPrivacy
-and uBlock Origin filter lists. No extension, no content-script ad blocker —
-requests are killed before they leave the browser. Three layers:
-
-- **Network** — the classifier blocks requests against the loaded filter
-  lists. A gjoa RemoteSettings-client overlay sources the lists from a
-  profile cache (fetched, integrity-checked, refreshed when stale) and pushes
-  them into the engine; a per-site allow-list synthesizes an exception engine
-  so you can toggle blocking for the current host without a restart
-  (`chrome/bjs/blocking/index.bjs`,
-  `toolkit/components/content-classifier/ContentClassifierRemoteSettingsClient.sys.mjs`).
-- **Cosmetic** — element hiding the network layer can't do. A
-  `GjoaCosmetic` JSWindowActor pair asks adblock-rust for element-hiding and
-  generic class/id selectors and injects them as a single `USER_SHEET`
-  (`display:none!important`), feeding newly-appearing classes/ids back through
-  a debounced coalescer; the parent derives the document URL from trusted state
-  (`toolkit/.../GjoaCosmeticParent.sys.mjs`, `GjoaCosmeticChild.sys.mjs`).
-- **Scriptlets** — small JS snippets injected at document-start in a
-  `Cu.Sandbox` over the content window, for ads that survive both layers (the
-  canonical case being first-party video ads). Curated-only by default; the
-  list-driven `+js()` path via a vendored uBO scriptlet-resource library is
-  wired behind an opt-in pref.
-
-### Engine-level dark mode (per-site hybrid)
-
-Dark mode that respects each site rather than inverting everything blindly.
-Sites that ship their own dark theme get it; themeless sites are darkened by the
-engine with no white flash; a curated registry plus per-site user overrides
-refine the rest. Default mode follows the OS theme live; the user cycle is
-system-follow / force-on / off.
-
-It runs on three Gecko-native levers driven by prefs: a `prefers-color-scheme`
-content override, an engine style-resolution-time luminance inversion read by
-`nsPresContext`, and a pre-paint default-invert flag — so there's no per-page
-content-script darkening on the core path. A `GjoaDarkmode` JSWindowActor pair
-refines per document from trusted parent state: a curated fix registry
-(`darkmode-fixes.json`) and user per-site prefs applied pre-paint, plus a
-post-paint refiner that retracts inversion on sites that authored themselves
-dark. A chrome `filter: invert()` mode remains as a legacy fallback
-(`chrome/bjs/dark-mode/index.bjs`, `toolkit/.../GjoaDarkmodeParent.sys.mjs`).
-
-### Custom new-tab / home page
-
-New tabs, the home button, and home-based startup land on a minimal forced-dark
-page (a live clock and date). It's a content-accessible chrome document
-(`chrome://gjoa-newtab/content/newtab.html`) installed as
-`AboutNewTab.newTabURL`, with `browser.startup.homepage` defaulted to
-`about:newtab` (`browser/components/gjoa/content/newtab/`, wired in
-`GjoaLoader.bjs`).
-
-### Security freshness gate
-
-gjoa refuses to keep running a dangerously out-of-date build. On startup and
-hourly it probes Mozilla's `firefox_versions.json` and compares against the
-running version: a full major behind latest stable shows a modal and quits; one
-point-release behind warns and surfaces a stale state. It fails open when
-offline, and `GJOA_ALLOW_INSECURE=1` bypasses it for one process
-(`chrome/bjs/security/index.bjs`).
+- **Security freshness gate** — gjoa refuses to keep running a dangerously stale build: it probes Mozilla's `firefox_versions.json` on startup + hourly; a full major behind latest stable quits, a point-release behind warns. Fails open offline. — `security/index.bjs`
 
 ## Performance
 
-The release build is compiled with `-O3`, full LTO, and `-march=native` (tuned
-to the building machine's CPU — so the release binary is **not** portable to a
-different CPU). Honest framing: stock Firefox is already PGO+LTO, so the
-gjoa-vs-stock delta is modest. The real win is the absence of the **extension
-tax** — native dark mode and native blocking do for free what Dark Reader and a
-content-script ad blocker do at real per-page cost. Measured against the
-Firefox-plus-extensions setup people actually run, gjoa is dramatically lighter.
+The release build is `-O3` + full LTO + `-march=native` (tuned to the building machine's CPU — **not** portable to a different chip). Honest framing: stock Firefox is already PGO+LTO, so the gjoa-vs-stock delta is modest. The real win is the absence of the **extension tax** — native dark mode and native blocking do for free what Dark Reader and a content-script blocker do at real per-page cost. Against the Firefox-plus-extensions setup people actually run, gjoa is dramatically lighter.
 
 ## Build
-
-**NixOS / Nix (the primary path):**
 
 ```sh
 bun run init                    # download mozilla-central + apply overlays
@@ -152,43 +53,28 @@ nix build .#gjoa-dev --impure   # dev variant — fast, no LTO, CPU-portable
 ./result/bin/gjoa
 ```
 
-`.#gjoa` is tuned to the building machine's CPU (`-march=native`) — fastest at
-runtime, but **not portable** (it SIGILLs on a different chip), so it's the
-maintainer's local daily driver, never a thing you hand out. `.#gjoa-dev` is the
-portable, fast-to-build variant for iteration.
-
-**Builds for other people.** Portable, distributable builds are the CI
-artifacts, not a nix package: `.github/workflows/` builds with mach on GitHub
-Actions — a Linux x86_64 tarball, a macOS (`macos-26`, Apple Silicon)
-`.dmg`/`.app`, and a Windows x86_64 `.zip`/installer, none of them
-`-march=native`. For a self-contained Linux executable that runs on any glibc
-distro with **no Nix on the target**, `nix bundle .#gjoa-dev --impure` emits a
-single relocatable file. (CI needs the
-[Beagle](https://github.com/tompassarelli/beagle) compiler as a sibling checkout
-— the workflows clone it and install Racket before `import`.)
+`.#gjoa` is tuned to the building machine's CPU (fastest, but SIGILLs on a different chip — the maintainer's daily driver, never handed out). Portable, distributable builds are the **CI artifacts** (`.github/workflows/`): a Linux x86_64 tarball, a macOS (Apple Silicon) `.dmg`, and a Windows x86_64 `.zip`, none `-march=native`. `nix bundle .#gjoa-dev --impure` emits a single relocatable Linux executable (no Nix on the target). CI clones the [Beagle](https://github.com/Autonymy/beagle) compiler as a sibling checkout.
 
 ## Dev loop
 
-Source-tree changes (`.sys.mjs`, branding, configure flags) need a build, but
-chrome JS/CSS iterates in ~1s without one:
+Source-tree changes (`.sys.mjs`, branding, configure flags) need a build, but chrome JS/CSS iterates in ~1s without one:
 
 ```sh
 nix develop .#mach          # shell with mach + toolchain
 cd engine && ./mach build   # one-time, ~30-60 min cold
 # edit src/gjoa/chrome/bjs/*.bjs (or chrome/css/*.css) ...
-gjoa sync                   # compile the .bjs chrome + deploy into the mach install (~1s)
-gjoa dev                    # restart the mach binary
+gjoa sync                   # compile + deploy the .bjs chrome into the mach install (~1s)
+gjoa dev                    # restart the binary
 ```
 
-See [`docs/daily-loop.md`](docs/daily-loop.md) for the cheatsheet and
-[`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for the full map.
+Cheatsheet: [`docs/daily-loop.md`](docs/daily-loop.md) · full map: [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md).
 
 ## Tests
 
 ```sh
 bun test                  # unit tests (happy-dom)
 bun run test:integration  # headless Marionette tests against a gjoa binary
-bun run preflight         # pre-build gates (patches, chrome alignment, nix eval)
+bun run preflight         # pre-build gates (patches, chrome alignment, beagle pin, nix eval)
 ```
 
 ## Layout
@@ -197,10 +83,9 @@ bun run preflight         # pre-build gates (patches, chrome alignment, nix eval
 gjoa.json            project config (version, branding, URLs)
 flake.nix            Nix build (dev + release variants)
 src/gjoa/            source overlays — chrome UI (.bjs/.css), prefs, branding, loader
-tools/prep/          Firefox-source preparation pipeline (Beagle, run on Bun)
-tools/test-driver/   Marionette integration harness
-.github/workflows/   cross-platform CI (Linux x86_64 + macOS + Windows mach builds)
-configs/branding/    icons + brand assets
+tools/               Firefox-source prep, release tooling, test harness (Beagle on Bun)
+.github/workflows/   cross-platform CI (Linux + macOS + Windows mach builds)
+configs/             branding assets + pinned source/compiler refs
 docs/                deep-dive documentation
 BUILD-LEDGER.md      every build's outcome + postmortems
 ```

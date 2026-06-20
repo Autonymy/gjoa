@@ -24,6 +24,12 @@
 (def RAF-JS :- String
   "const d=arguments[arguments.length-1];requestAnimationFrame(()=>requestAnimationFrame(()=>d(true)));")
 
+;; content-context: wait (event-driven, rAF-poll) until the in-engine actor signals
+;; it finished its async normalize pass (data-gjoa-normalized on <html>), so we
+;; measure the FINAL normalized contrast — not a fixed timer, with a 6s backstop.
+(def WAIT-NORMALIZED-JS :- String
+  "const d=arguments[arguments.length-1];const t0=Date.now();(function p(){if(document.documentElement.hasAttribute('data-gjoa-normalized')){d(true);return;}if(Date.now()-t0>6000){d(false);return;}requestAnimationFrame(p);})();")
+
 (defn make-profile! [] :- String
   (let [dir (.mkdtempSync fs (.join path (.tmpdir os) "gjoa-dmregress-"))
         mode (or (get (.-env process) "GJOA_DM_MODE") "hybrid")
@@ -88,6 +94,17 @@
       (let [_c0 (js/await (.setContext client "content"))
             navwarn (js/await (safe-nav! client url))
             _raf (js/await (.executeAsyncScript client RAF-JS []))
+            ;; when verifying the in-engine actor, wait (event-driven) for its async
+            ;; normalize pass to finish before measuring — closes the race where the
+            ;; harness measured a complex page before the actor had applied.
+            _wait (when (= (get (.-env process) "GJOA_DM_NORMALIZE_PREF") "1")
+                    ;; non-fatal: a site that client-side-redirects mid-wait unloads the
+                    ;; document ("Document was unloaded") — swallow it, don't abort the run.
+                    (try (js/await (.executeAsyncScript client WAIT-NORMALIZED-JS []))
+                         (catch Error e nil)))
+            marker (when (= (get (.-env process) "GJOA_DM_NORMALIZE_PREF") "1")
+                     (try (js/await (.executeScript client "return document.documentElement.getAttribute('data-gjoa-normalized');" []))
+                          (catch Error e "err")))
             meta (js/await (.executeScript client rects-js []))
             _c2 (js/await (.setContext client "chrome"))
             res (js/await (.executeAsyncScript client snap-js [meta threshold normalize? preinvert?]))
@@ -98,7 +115,7 @@
             shot (js/await (safe-shot client))]
         (when shot (.writeFileSync fs (.join path outdir (str host ".png")) shot {:encoding "base64"}))
         {:url url :host host :checked (or (.-checked res) 0) :fails pre-fails
-         :postFails post-fails :applied (.-length correctives)
+         :postFails post-fails :applied (.-length correctives) :marker marker
          :worst (or (.-fails res) []) :err (or (.-err res) nil) :navwarn navwarn})
       (catch Error e
         {:url url :host host :checked 0 :fails 0 :postFails 0 :applied 0 :worst [] :err (or (.-message e) (str e))}))))
@@ -145,7 +162,8 @@
                              (if (.-err r) (.-err r)
                                (if normalize?
                                  (str "(" (.-checked r) " els, " (.-fails r) "->" (.-postFails r)
-                                      " after " (.-applied r) " fixes)")
+                                      " after " (.-applied r) " fixes)"
+                                      (if (.-marker r) (str " [marker=" (.-marker r) "]") " [marker=ABSENT]"))
                                  (str "(" (.-checked r) " text els, " (.-fails r) " low-contrast)")))))))
       (.writeFileSync fs (.join path outdir "report.json")
         (JSON/stringify {:threshold threshold :normalize normalize? :results results} nil 2))

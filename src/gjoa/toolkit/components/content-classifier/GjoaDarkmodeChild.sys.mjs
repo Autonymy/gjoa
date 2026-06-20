@@ -362,6 +362,14 @@ export class GjoaDarkmodeChild extends JSWindowActorChild {
         el.style.setProperty("color", c.color, "important");
       }
     }
+    // Completion signal — lets a harness wait event-driven (not a fixed timer) for
+    // the async normalize round-trip to finish before measuring contrast.
+    try {
+      doc.documentElement.setAttribute(
+        "data-gjoa-normalized",
+        String(correctives.length)
+      );
+    } catch (e) {}
   }
 
   #injectSheet(win, css) {

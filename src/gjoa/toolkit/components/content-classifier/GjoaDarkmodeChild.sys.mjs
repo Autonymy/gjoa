@@ -356,10 +356,40 @@ export class GjoaDarkmodeChild extends JSWindowActorChild {
       return;
     }
     const correctives = (resp && resp.correctives) || [];
+    // Replicate the engine's luminance inversion (patch 0009 — an involution) so we
+    // can pre-invert per element.
+    const invertLum = rgb => {
+      const comp = u => {
+        const f = u / 255;
+        return f <= 0.03928 ? f / 12.92 : Math.pow((f + 0.055) / 1.055, 2.4);
+      };
+      const dec = x => {
+        const s = x <= 0.03928 / 12.92 ? x * 12.92 : 1.055 * Math.pow(x, 1 / 2.4) - 0.055;
+        return Math.min(255, Math.max(0, Math.round(s * 255)));
+      };
+      const lr = comp(rgb[0]), lg = comp(rgb[1]), lb = comp(rgb[2]);
+      const lum = 0.2126 * lr + 0.7152 * lg + 0.0722 * lb;
+      const factor = (1 - lum + 0.05) / (lum + 0.05);
+      const adj = l => dec(Math.max(0, (l + 0.05) * factor - 0.05));
+      return [adj(lr), adj(lg), adj(lb)];
+    };
+    const close = (a, b) =>
+      a && b && Math.abs(a[0] - b[0]) <= 8 && Math.abs(a[1] - b[1]) <= 8 && Math.abs(a[2] - b[2]) <= 8;
     for (const c of correctives) {
       const el = doc.querySelector(`[data-gjoa-cn="${c.cn}"]`);
-      if (el) {
-        el.style.setProperty("color", c.color, "important");
+      if (!el) {
+        continue;
+      }
+      const target = parse(c.color);
+      // Author the target; read what the engine actually renders. If it inverted the
+      // value (rendered far from target), re-author invertLum(target) so the engine's
+      // inversion lands ON the target. This is per-element, so a non-inverted light
+      // card inside an inverted dark page is handled correctly.
+      el.style.setProperty("color", c.color, "important");
+      const rendered = parse(win.getComputedStyle(el).color);
+      if (target && rendered && !close(rendered, target)) {
+        const inv = invertLum(target);
+        el.style.setProperty("color", `rgb(${inv[0]},${inv[1]},${inv[2]})`, "important");
       }
     }
     // Completion signal — lets a harness wait event-driven (not a fixed timer) for

@@ -312,9 +312,12 @@ export class GjoaDarkmodeParent extends JSWindowActorParent {
       if (Math.abs(_apca(el.fg, bg)) >= T) {
         continue;
       }
+      // Return the TARGET rendered color. The child decides per-element whether to
+      // pre-invert it (probe: set target, read computed — if the engine inverted it,
+      // re-author invertLum so it renders the target). Page-level inversion flags are
+      // wrong on mixed pages (a non-inverted light card inside an inverted dark page).
       const c = _correct(el.fg, bg, T);
-      const a = data.inverted ? _invertLum(c) : c;
-      correctives.push({ cn: el.cn, color: `rgb(${a[0]},${a[1]},${a[2]})` });
+      correctives.push({ cn: el.cn, color: `rgb(${c[0]},${c[1]},${c[2]})` });
     }
     return { correctives };
   }

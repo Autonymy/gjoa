@@ -37,13 +37,17 @@
         ;; GJOA_DM_NORMALIZE_PREF=1 turns the in-engine GjoaDarkmode actor's contrast
         ;; normalization ON, so the BINARY fixes contrast live and the harness just
         ;; measures the result (use with GJOA_DM_NORMALIZE=0 to avoid double-applying).
-        normpref (if (= (get (.-env process) "GJOA_DM_NORMALIZE_PREF") "1") "true" "false")]
+        normpref (if (= (get (.-env process) "GJOA_DM_NORMALIZE_PREF") "1") "true" "false")
+        ;; GJOA_DM_NOVA=1 turns FF152's nova content-card inset ON, to reproduce the
+        ;; "content not full width + wallpaper margin" report and prove the cause.
+        nova (or (get (.-env process) "GJOA_DM_NOVA") "false")]
     (.writeFileSync fs (.join path dir "prefs.js")
       (str "user_pref(\"marionette.port\", 2828);\n"
            "user_pref(\"marionette.enabled\", true);\n"
            "user_pref(\"gjoa.darkmode.enabled\", " enabled ");\n"
            "user_pref(\"gjoa.darkmode.mode\", \"" mode "\");\n"
-           "user_pref(\"gjoa.darkmode.normalize.enabled\", " normpref ");\n"))
+           "user_pref(\"gjoa.darkmode.normalize.enabled\", " normpref ");\n"
+           "user_pref(\"browser.nova.enabled\", " (if (= nova "1") "true" "false") ");\n"))
     dir))
 
 (defn host-of [url :- String] :- String

@@ -46,3 +46,6 @@ gjoa-arx
 
 # Private, never-commit strategy/vision docs
 private-docs/
+
+# private security audit ledger — never tracked
+tools/security/audit-ledger.bjs

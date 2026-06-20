@@ -17,62 +17,94 @@
   (.-Subprocess (.importESModule ChromeUtils "resource://gre/modules/Subprocess.sys.mjs")))
 
 ;; --- Pure reducer (UNIT-TESTABLE: no subprocess, no niri) --------------------
-;; cache : Map<id, workspaceObj>. Returns {:cache cache :focused <name|nil>}.
+;; cache : Map<id, workspaceObj>. Returns {:cache cache :switch <target|nil>}.
 ;;   WorkspacesChanged          → full cache replace (no switch).
-;;   WorkspaceActivated{focused} → the global focus switch; resolve name by id.
+;;   WorkspaceActivated{focused} → the global focus switch; resolve the workspace
+;;                                 by id and yield its {:name :idx} as the target.
 ;; Everything else (per-output WorkspaceActivated{focused:false}, Ok acks,
-;; WindowsChanged, unnamed workspaces) yields focused=nil = "no actionable change".
+;; WindowsChanged) yields switch=nil = "no actionable change". The target carries
+;; BOTH name and idx so the driver can name-match OR fall back to position — niri
+;; workspaces are unnamed/numeric by default, so name-only matching silently
+;; no-ops for most real configs (this was the "it never switched" bug).
 (js/export (defn reduce-event [cache :- Any ev :- Any] :- Any
   (cond
     (.-WorkspacesChanged ev)
     (let [next (Map.)
           arr (.-workspaces (.-WorkspacesChanged ev))]
       (.forEach arr #(.set next (.-id %) %))
-      {:cache next :focused nil})
+      {:cache next :switch nil})
 
     (.-WorkspaceActivated ev)
     (let [a (.-WorkspaceActivated ev)]
       (if (not (.-focused a))
-        {:cache cache :focused nil}
+        {:cache cache :switch nil}
         (let [ws (.get cache (.-id a))]
-          {:cache cache :focused (and ws (.-name ws))})))
+          (if ws
+            {:cache cache :switch {:name (.-name ws) :idx (.-idx ws)}}
+            {:cache cache :switch nil}))))
 
-    :else {:cache cache :focused nil})))
+    :else {:cache cache :switch nil})))
 
 ;; --- gjoa spaces driver ------------------------------------------------------
-;; Case-insensitive name match over Spaces.list(); create if absent; setActive.
-;; setActive no-ops when already active, and onActivated re-selects a tab in the
-;; target space — we never touch the selected tab or delete (protected "Main").
-(js/export (defn switch-to-space [spaces :- Any name :- String] :- Any
-  (when (and spaces name (> (.-length name) 0))
-    (let [match (.find (.list spaces)
-                  #(= (.toLowerCase (.-name %)) (.toLowerCase name)))]
-      (if match
-        (.setActive spaces (.-id match))
-        (let [created (.create spaces name)]
-          (.setActive spaces (.-id created))))))))
+;; Resolve a niri workspace target → gjoa space and activate it. Two-tier match:
+;;   NAMED workspace   → case-insensitive name match over Spaces.list(); create if
+;;                       absent (intentional naming provisions a same-named space).
+;;   UNNAMED workspace → position match: niri idx is 1-based → the Nth gjoa space.
+;;                       No space at that position = no-op (never auto-create
+;;                       anonymous spaces). This is what makes numeric/dynamic niri
+;;                       workspaces (the common case) actually drive gjoa.
+;; setActive no-ops when already active; onActivated re-selects a tab in the target
+;; space — we never touch the selected tab or delete (protected "Main"). Returns the
+;; action taken {:action "activate"|"create"|"none" ...} for logging + tests.
+(js/export (defn switch-to-target [spaces :- Any target :- Any] :- Any
+  (if (not (and spaces target))
+    {:action "none" :reason "no-spaces-or-target"}
+    (let [name (.-name target)
+          idx (.-idx target)]
+      (cond
+        (and name (> (.-length name) 0))
+        (let [match (.find (.list spaces)
+                      #(= (.toLowerCase (.-name %)) (.toLowerCase name)))]
+          (if match
+            (do (.setActive spaces (.-id match))
+                {:action "activate" :id (.-id match) :by "name"})
+            (let [created (.create spaces name)]
+              (.setActive spaces (.-id created))
+              {:action "create" :id (.-id created) :name name})))
+
+        (and idx (> idx 0))
+        (let [lst (.list spaces)
+              at (aget lst (- idx 1))]
+          (if at
+            (do (.setActive spaces (.-id at))
+                {:action "activate" :id (.-id at) :by "idx"})
+            {:action "none" :reason "no-space-at-idx" :idx idx}))
+
+        :else {:action "none" :reason "no-name-or-idx"})))))
 
 ;; --- Lifecycle / streaming ---------------------------------------------------
 (def st :- Any {:proc nil :alive false :debounce-id nil
                 :cache (Map.) :pending nil :backoff 500})
 
-(defn apply-focus! [name :- String] :- Any
+(defn apply-switch! [target :- Any] :- Any
   ;; Debounce rapid niri switches: only the last focus in the window is applied.
   (let [delay (pref-int "gjoa.niri.debounceMs" 120)]
-    (set! (.-pending st) name)
+    (set! (.-pending st) target)
     (when (.-debounce-id st) (clearTimeout (.-debounce-id st)))
     (set! (.-debounce-id st)
       (setTimeout
         (fn []
           (set! (.-debounce-id st) nil)
-          (let [n (.-pending st)
+          (let [tgt (.-pending st)
                 spaces (.-Spaces window)]
             (set! (.-pending st) nil)
-            (when (and n spaces)
+            (when (and tgt spaces)
               ;; Mark niri-originated so a future gjoa→niri reflector won't ping-pong.
               (set! (.-__niriDriving st) true)
               (try
-                (switch-to-space spaces n)
+                (let [res (switch-to-target spaces tgt)]
+                  (console/log "gjoa-niri: workspace" (str "name=" (.-name tgt) " idx=" (.-idx tgt))
+                               "->" (.-action res) (or (.-by res) (.-reason res) "")))
                 (catch Any e (console/error "gjoa-niri: switch failed" e))
                 (finally (set! (.-__niriDriving st) false))))))
         delay))))
@@ -80,9 +112,28 @@
 (defn handle-line! [line :- String] :- Any
   (let [ev (try (JSON/parse line) (catch Any _e nil))]
     (when ev
+      ;; Visible confirmation that niri events are actually arriving (diagnoses the
+      ;; "is it even connected?" half of "not sure it was working").
+      (when (.-WorkspacesChanged ev)
+        (console/log "gjoa-niri: workspaces changed,"
+          (.-length (.-workspaces (.-WorkspacesChanged ev))) "workspaces"))
       (let [r (reduce-event (.-cache st) ev)]
         (set! (.-cache st) (.-cache r))
-        (when (.-focused r) (apply-focus! (.-focused r)))))))
+        (when (.-switch r) (apply-switch! (.-switch r)))))))
+
+;; Pure line-framer (UNIT-TESTABLE): readString yields arbitrary byte-boundary
+;; chunks, NOT lines. Given the carried-over buffer + a fresh chunk, return the
+;; complete newline-terminated lines (empty lines dropped) plus the leftover
+;; partial to carry forward. This is the fragile heart of the stream parser.
+(js/export (defn frame-lines [buf :- String chunk :- String] :- Any
+  (let [lines []]
+    (loop [rest (str buf chunk)]
+      (let [nl (.indexOf rest "\n")]
+        (if (< nl 0)
+          {:lines lines :rest rest}
+          (let [line (.slice rest 0 nl)]
+            (when (> (.-length line) 0) (.push lines line))
+            (recur (.slice rest (+ nl 1))))))))))
 
 ;; Async read→frame→dispatch loop; the returned promise resolves on child EOF
 ;; (niri exited / killed). Self-recursive at top level to avoid a nested defn.
@@ -91,15 +142,9 @@
       (.then (fn [chunk]
         (if (= chunk "")
           nil
-          (do
-            (set! (.-s buf) (str (.-s buf) chunk))
-            (loop []
-              (let [nl (.indexOf (.-s buf) "\n")]
-                (when (>= nl 0)
-                  (let [line (.slice (.-s buf) 0 nl)]
-                    (set! (.-s buf) (.slice (.-s buf) (+ nl 1)))
-                    (when (> (.-length line) 0) (handle-line! line))
-                    (recur)))))
+          (let [framed (frame-lines (.-s buf) chunk)]
+            (set! (.-s buf) (.-rest framed))
+            (.forEach (.-lines framed) #(handle-line! %))
             (pump-step! proc buf)))))))
 
 (defn pump! [proc :- Any] :- Any

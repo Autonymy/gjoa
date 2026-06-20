@@ -33,7 +33,7 @@
     0
     (readdirSync dir)))
 
-(js/export (defn overlay [] :- Any
+(js/export (defn overlay-src [] :- Any
   (if (not (existsSync SRC-DIR))
     (do
       (.info log "no src/gjoa/ overlays present, skipping")

@@ -122,7 +122,7 @@
 
 ;; Parse one emitted module -> {:module m :names [..] :edges [[from to]..]} where
 ;; edges are kept only when BOTH ends are local function nodes (intra-module).
-(defn parse-module [file :- String] :- Any
+(defn parse-module! [file :- String] :- Any
   (let [src (.readFileSync fs file "utf8")
         ast (parse src {:ecmaVersion "latest" :sourceType "script" :allowHashBang true})
         acc {:names (Set.) :counts (Map.) :edges []}
@@ -150,7 +150,7 @@
         (.map (fn [f :- String] :- String (.join path JS-DIR f))))))
 
 (defn build-graph [] :- Any
-  (let [mods (.map (list-modules) parse-module)
+  (let [mods (.map (list-modules) parse-module!)
         fwd (Map.)   ;; id -> Set callee-id
         rev (Map.)   ;; id -> Set caller-id
         disp (Map.)  ;; id -> display name
@@ -268,7 +268,7 @@
 (defn stats! [graph :- Any] :- Any
   (let [fns (.filter (.-ids graph) (fn [id :- String] :- Bool (not (.startsWith id TOPLEVEL))))
         edges (.reduce fns (fn [a :- Number id :- String] :- Number (+ a (.-size (.get (.-fwd graph) id)))) 0)
-        mods (.map (list-modules) parse-module)
+        mods (.map (list-modules) parse-module!)
         merges (.flatMap mods (fn [m :- Any] :- Any
                                 (.map (.-merges m) (fn [kv :- Any] :- String
                                                      (str (demangle (aget kv 0)) " (" (.-module m) ", ×" (aget kv 1) ")")))))]

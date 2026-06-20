@@ -5,7 +5,7 @@
             [gjoa.tools.prep.fingerprint :refer [fingerprint!]]
             [gjoa.tools.prep.locales :refer [locales]]
             [gjoa.tools.prep.mozconfig :refer [mozconfig!]]
-            [gjoa.tools.prep.overlay :refer [overlay]]
+            [gjoa.tools.prep.overlay :refer [overlay-src]]
             [gjoa.tools.prep.patches :refer [patches]]
             [gjoa.tools.prep.sh :refer [sh]]
             [gjoa.tools.prep.log :refer [log]]
@@ -32,7 +32,7 @@
   (js/await (regen-sovereignty-manifest!))
 
   (.step log "phase 1/7 — overlaying src/gjoa/")
-  (js/await (overlay))
+  (js/await (overlay-src))
 
   (.step log "phase 2/7 — applying patches/")
   (js/await (patches))

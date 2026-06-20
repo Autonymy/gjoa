@@ -9,10 +9,14 @@
 ;; Runs only if `engine/browser/branding/gjoa/` exists — i.e. only after
 ;; `bun run init`. CI can either run init first OR skip these tests in
 ;; environments without network/disk for a full mozilla-central download.
-(ns gjoa.tests.branding.test
+;; ns is 3-segment (gjoa.tests.branding) to match the on-disk DIRECTORY depth
+;; (.beagle-tools/gjoa/tests/) — the `.test` lives in the FILENAME convention, not
+;; a directory, so a 4-segment ns made beagle emit relative imports one level too
+;; deep (../../tools vs ../tools). bun:test still recognizes the `.test.js` file.
+(ns gjoa.tests.branding
   (:require [fs :refer [existsSync readdirSync readFileSync statSync]]
             [path :refer [join]]
-            [gjoa.tools.prep.config :refer [loadConfig]]
+            [gjoa.tools.prep.config :refer [load-config!]]
             [gjoa.tools.prep.paths :refer [ENGINE-BRANDING-DIR]]))
 (define-mode strict)
 
@@ -23,7 +27,7 @@
 ;;   import { describe, expect, test } from "bun:test";
 (declare-extern [describe expect test] Any)
 
-(def cfg :- Any (loadConfig))
+(def cfg :- Any (load-config!))
 (def BRANDING-OUT :- String (join ENGINE-BRANDING-DIR (.-binaryName cfg)))
 (def HAS-ENGINE :- Any (existsSync BRANDING-OUT))
 
@@ -32,10 +36,12 @@
     (doseq [name (readdirSync dir)]
       (let [path (join dir name)]
         ;; Both branches must be plain expressions so the ternary emits cleanly:
-        ;; concat the recursive result rather than looping a push (a doseq in a
-        ;; branch emits a statement-block that breaks the surrounding `? :`).
+        ;; push each recursive result rather than reassigning the accumulator —
+        ;; `(set! out ...)` on this nested let-binding mis-emits as `const out`
+        ;; (then `out = …` throws at runtime). forEach-push keeps `out` push-only
+        ;; and both arms expressions. (beagle emit bug logged in beagle-workarounds.)
         (if (.isDirectory (statSync path))
-          (set! out (.concat out (walk! path)))
+          (.forEach (walk! path) (fn [p :- String] :- Any (.push out p)))
           (.push out path))))
     out))
 

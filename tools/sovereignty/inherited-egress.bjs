@@ -1,0 +1,85 @@
+#lang beagle/js
+;; tools/sovereignty/inherited-egress.bjs — the OTHER half of the egress picture.
+;;
+;; egress-scan.bjs enumerates what gjoa's OWN code reaches the network for. This
+;; covers FIREFOX's built-in egress (telemetry, experiments, sponsored content,
+;; connectivity probes) and reports which of those vectors gjoa turns OFF via its
+;; default prefs — and, just as important, which it does NOT (the honest gap list).
+;;
+;; Source of truth: the `(pref "name" value)` forms in src/gjoa/defaults/pref/*.bjs
+;; (the only pref channel packaged into the build). Parsed directly from source.
+;;
+;;   bun .beagle-tools/gjoa/tools/sovereignty/inherited-egress.js
+(ns gjoa.tools.sovereignty.inherited-egress
+  (:require [fs :refer [readFileSync readdirSync existsSync]]
+            [path :refer [join]])
+  )
+(define-mode strict)
+(declare-extern [process console Array RegExp JSON] Any)
+
+(def REPO :- String (.cwd process))
+(def PREF-DIR :- String (join REPO "src" "gjoa" "defaults" "pref"))
+
+;; Catalog of Firefox built-in network-egress vectors and the pref that gates each,
+;; with the value that disables it. (SafeBrowsing is deliberately EXCLUDED — it is a
+;; security feature whose egress is a worthwhile trade; gjoa keeping it on is correct,
+;; not a gap.) Extend as Mozilla adds vectors.
+(def CATALOG :- Any
+  [["toolkit.telemetry.enabled" "Telemetry upload" "false"]
+   ["toolkit.telemetry.unified" "Unified telemetry" "false"]
+   ["toolkit.telemetry.archive.enabled" "Telemetry archive" "false"]
+   ["datareporting.healthreport.uploadEnabled" "Health Report upload" "false"]
+   ["datareporting.policy.dataSubmissionEnabled" "Data submission (master)" "false"]
+   ["app.normandy.enabled" "Normandy remote experiments" "false"]
+   ["app.shield.optoutstudies.enabled" "Shield studies" "false"]
+   ["browser.discovery.enabled" "Add-on discovery (TAAR)" "false"]
+   ["extensions.pocket.enabled" "Pocket" "false"]
+   ["browser.newtabpage.activity-stream.feeds.telemetry" "Activity-Stream telemetry" "false"]
+   ["browser.ping-centre.telemetry" "ping-centre telemetry" "false"]
+   ["browser.contile.enabled" "Sponsored top sites (Contile)" "false"]
+   ["browser.newtabpage.activity-stream.showSponsored" "Sponsored stories" "false"]
+   ["identity.fxaccounts.enabled" "Firefox Accounts" "false"]
+   ["network.captive-portal-service.enabled" "Captive-portal probe" "false"]
+   ["network.connectivity-service.enabled" "Connectivity check" "false"]
+   ["app.normandy.api_url" "Normandy API endpoint" ""]])
+
+;; parse `(pref "name" value)` forms from every pref source -> Map{name -> value-str}.
+(defn collect-prefs [] :- Any
+  (let [m (Map.)]
+    (when (existsSync PREF-DIR)
+      (doseq [name (readdirSync PREF-DIR)]
+        (when (.endsWith name ".bjs")
+          (let [src (readFileSync (join PREF-DIR name) "utf8")]
+            (doseq [mt (.matchAll src (RegExp. "\\(pref\\s+\"([^\"]+)\"\\s+([^)]+)\\)" "g"))]
+              (.set m (aget mt 1) (.trim (aget mt 2))))))))
+    m))
+
+(defn audit [] :- Any
+  (let [prefs (collect-prefs) disabled [] gaps []]
+    (doseq [entry CATALOG]
+      (let [name (aget entry 0) vector (aget entry 1) want (aget entry 2)
+            have (.get prefs name)]
+        (if (and (not= have js/undefined)
+                 (or (= have want) (and (= want "") (or (= have "\"\"") (= have "")))))
+          (.push disabled {:name name :vector vector :value have})
+          (.push gaps {:name name :vector vector :have (if (= have js/undefined) "(unset — Firefox default)" have)}))))
+    {:disabled disabled :gaps gaps :catalogued (.-length CATALOG)}))
+
+(defn main! [] :- Any
+  (let [a (audit) disabled (.-disabled a) gaps (.-gaps a)]
+    (when (.includes (.-argv process) "--json")
+      (console/log (JSON/stringify a nil 2))
+      (.exit process 0))
+    (console/log (str "\nFirefox-inherited egress — what gjoa's default prefs disable\n"
+                      "(parsed from src/gjoa/defaults/pref/*.bjs)\n"))
+    (console/log (str "DISABLED by gjoa (" (.-length disabled) "/" (.-length CATALOG) " catalogued vectors):"))
+    (doseq [d disabled] (console/log (str "  ✓ " (.-vector d) "  — " (.-name d) "=" (.-value d))))
+    (when (> (.-length gaps) 0)
+      (console/log (str "\nNOT disabled — Firefox default still applies (" (.-length gaps) ") — the gap list:"))
+      (doseq [g gaps] (console/log (str "  • " (.-vector g) "  — " (.-name g) " " (.-have g)))))
+    (console/log (str "\nNOTE: SafeBrowsing egress is intentionally KEPT (security feature). This"))
+    (console/log "  catalog is the known-vector set; absence here ≠ proof of no other egress —")
+    (console/log "  it is the audited, named list, paired with egress-scan.js (our own code).")))
+
+(when (.-main (js/import-meta))
+  (main!))

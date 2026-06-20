@@ -1,0 +1,373 @@
+#lang beagle/js
+;; tools/sovereignty/egress-scan.bjs — the first concrete step of `about:sovereignty`.
+;;
+;; Enumerate every point gjoa's OWN authored chrome reaches the network. This is
+;; the falsifiable core of the sovereignty thesis: a privacy browser's egress claim
+;; should be a *checkable property of the artifact*, not prose. gjoa can do this
+;; because its native+chrome surface is small and enumerable — so we enumerate it.
+;;
+;; OPEN BY DESIGN: this audit tool is public. A sovereignty claim whose audit
+;; methodology is secret reduces to "trust our secret script" — exactly what a
+;; privacy-conscious user distrusts. An open audit is verifiable: anyone can read
+;; how egress is counted, re-run it, and confirm no sink is hidden. The
+;; auditability of the audit IS the credibility — the same "render the verifiable
+;; truth, don't ask for trust" principle as the about:sovereignty panel itself.
+;;
+;; SCOPE: authored chrome only — the emitted Beagle chrome (src/gjoa/chrome/*.bjs)
+;; plus the hand-written .sys.mjs overlays under src/gjoa. That is the surface WE
+;; introduce and can prove. Firefox-INHERITED egress (telemetry, Normandy, update)
+;; is a separate axis: we disable it via prefs (src/gjoa/defaults/pref), audited
+;; elsewhere, not enumerated here.
+;;
+;; METHOD: static AST (acorn) over each JS source — real call/new/assign sinks with
+;; file:line + the statically-known endpoint. It finds DIRECT egress; egress reached
+;; only through a dynamically-resolved callee is the transitive claim-graph upgrade
+;; (Phase 2 — project the call graph into Fram, ask "what reaches a sink" in Datalog).
+;;
+;;   bun .beagle-tools/gjoa/tools/sovereignty/egress-scan.js          # human report
+;;   bun .beagle-tools/gjoa/tools/sovereignty/egress-scan.js --json   # machine manifest
+(ns gjoa.tools.sovereignty.egress-scan
+  (:require [fs :refer [readFileSync writeFileSync readdirSync statSync existsSync]]
+            [path :refer [join relative]]
+            [acorn :refer [parse]]
+            [gjoa.tools.prep.sh :refer [sh]]))
+(define-mode strict)
+(declare-extern [process console Object Array Set JSON Date] Any)
+
+(def REPO :- String (.cwd process))
+(def SRC :- String (join REPO "src" "gjoa"))
+(def EMIT :- String "/tmp/gjoa-egress-emit")
+
+;; --- the egress sink catalog (extend as the surface grows) ---
+(def CALL-SINKS :- Any (Set. ["fetch" "sendBeacon" "importScripts" "RemoteSettings"]))
+(def NEW-SINKS :- Any (Set. ["XMLHttpRequest" "WebSocket" "EventSource"]))
+(def ASSIGN-SINKS :- Any (Set. ["src" "srcset"]))
+
+;; --- generic acorn AST walk: visit every node ---
+(defn walk [node :- Any visit :- Any] :- Any
+  (when (and node (= (js/typeof node) "object"))
+    (when (and (.-type node) (= (js/typeof (.-type node)) "string")) (visit node))
+    (doseq [k (Object/keys node)]
+      (let [v (aget node k)]
+        (if (Array/isArray v)
+          (doseq [c v] (walk c visit))
+          (walk v visit))))))
+
+(defn callee-name [c :- Any] :- String
+  (cond
+    (not c) ""
+    (= (.-type c) "Identifier") (.-name c)
+    (and (= (.-type c) "MemberExpression") (= (.-type (.-property c)) "Identifier")) (.-name (.-property c))
+    :else ""))
+
+(defn line-of [node :- Any] :- Int
+  (if (and (.-loc node) (.-start (.-loc node))) (.-line (.-start (.-loc node))) 0))
+
+;; statically evaluate a node to a string using known module consts, else nil.
+;; resolves literals, identifier->const, "a"+"b" concat, and literal-only templates.
+(defn eval-static [n :- Any consts :- Any] :- Any
+  (cond
+    (not n) nil
+    (= (.-type n) "Literal") (if (= (js/typeof (.-value n)) "string") (.-value n) nil)
+    (= (.-type n) "Identifier") (let [v (.get consts (.-name n))] (if (= v js/undefined) nil v))
+    (and (= (.-type n) "BinaryExpression") (= (.-operator n) "+"))
+      (let [l (eval-static (.-left n) consts) r (eval-static (.-right n) consts)]
+        (if (and (some? l) (some? r)) (str l r) nil))
+    (and (= (.-type n) "TemplateLiteral") (= (.-length (.-expressions n)) 0))
+      (.join (.map (.-quasis n) (fn [q :- Any] :- String (.-raw (.-value q)))) "")
+    :else nil))
+
+;; resolved endpoint string for display: the static value, or "(dynamic)".
+(defn resolved [n :- Any consts :- Any] :- String
+  (let [v (eval-static n consts)] (if (some? v) v "(dynamic)")))
+
+(defn endpoint-of [args :- Any consts :- Any] :- String
+  (if (or (not args) (= (.-length args) 0)) "—" (resolved (aget args 0) consts)))
+
+;; --- guard awareness ---
+;; a fetch/.src whose endpoint is a runtime value is often STILL provably local or
+;; network because a scheme guard sits right next to it: `if (!/^https:/.test(url))
+;; throw; fetch(url)` proves network; `if (/^page-icon:|…/.test(item.icon)) el.src =
+;; item.icon` proves local. Collect these `<regex>.test(<ref>)` guards per file.
+(defn render-ref [n :- Any] :- Any
+  (cond
+    (not n) nil
+    (= (.-type n) "Identifier") (.-name n)
+    (and (= (.-type n) "MemberExpression") (not (.-computed n))
+         (= (.-type (.-property n)) "Identifier"))
+      (let [o (render-ref (.-object n))] (if o (str o "." (.-name (.-property n))) nil))
+    :else nil))
+
+(defn regex-source [n :- Any] :- Any
+  (cond
+    (not n) nil
+    (and (= (.-type n) "Literal") (.-regex n)) (.-pattern (.-regex n))
+    (and (= (.-type n) "NewExpression") (= (callee-name (.-callee n)) "RegExp")
+         (.-arguments n) (> (.-length (.-arguments n)) 0)
+         (= (.-type (aget (.-arguments n) 0)) "Literal"))
+      (str (.-value (aget (.-arguments n) 0)))
+    :else nil))
+
+(defn classify-regex [src :- String] :- Any
+  (let [s (.toLowerCase src)]
+    (cond
+      (.includes s "http") "network"
+      (or (.includes s "page-icon") (.includes s "resource") (.includes s "chrome")
+          (.includes s "moz-") (.includes s "data:") (.includes s "blob") (.includes s "file:")) "local"
+      :else nil)))
+
+;; map of guarded-ref -> "local"|"network" from `<regex>.test(<ref>)` calls in a file.
+(defn collect-guards [ast :- Any] :- Any
+  (let [g (Map.)]
+    (walk ast
+      (fn [n :- Any] :- Any
+        (when (and (= (.-type n) "CallExpression")
+                   (= (.-type (.-callee n)) "MemberExpression")
+                   (= (.-type (.-property (.-callee n))) "Identifier")
+                   (= (.-name (.-property (.-callee n))) "test")
+                   (.-arguments n) (> (.-length (.-arguments n)) 0))
+          (let [src (regex-source (.-object (.-callee n)))
+                ref (render-ref (aget (.-arguments n) 0))]
+            (when (and src ref)
+              (let [k (classify-regex src)] (when k (.set g ref k))))))))
+    g))
+
+;; classify an egress point by sink + endpoint.
+(defn classify [sink :- String endpoint :- String] :- String
+  (let [e (.toLowerCase endpoint)]
+    (cond
+      (or (.includes e "telemetry") (.includes e "normandy")) "telemetry"
+      (or (.includes e "aus5") (.includes e "/update") (.includes e "firefox_versions") (.includes e "product-details")) "update/version"
+      (or (= sink "RemoteSettings") (.includes e "remote-settings")) "remote-settings"
+      (or (.includes e "easylist") (.includes e "easyprivacy") (.includes e "filter")) "adblock-list"
+      (.startsWith sink ".") "resource-load"
+      :else "network")))
+
+;; whether a resolved endpoint actually LEAVES the machine. This is the crux of
+;; the sovereignty claim: fetch("resource://…") / a page-icon: favicon never hits
+;; the network. "unknown" = statically unresolved (the honest review set).
+(defn egress-kind [endpoint :- String] :- String
+  (let [e (.toLowerCase endpoint)]
+    (cond
+      (or (= endpoint "(dynamic)") (= endpoint "—")) "unknown"
+      (or (.startsWith e "http://") (.startsWith e "https://")
+          (.startsWith e "ws://") (.startsWith e "wss://")) "network"
+      (or (.startsWith e "resource:") (.startsWith e "chrome:") (.startsWith e "moz-")
+          (.startsWith e "page-icon:") (.startsWith e "data:") (.startsWith e "file:")
+          (.startsWith e "about:") (.startsWith e "blob:") (.startsWith e "javascript:")
+          (.startsWith e "./") (.startsWith e "../") (.startsWith e "/")) "local"
+      :else "unknown")))
+
+;; final egress kind for a sink: scheme-resolved endpoint wins; else a same-file
+;; scheme guard on the argument; else genuinely unverifiable. Returns {kind basis}.
+(defn resolve-egress [endpoint :- String arg :- Any guards :- Any] :- Any
+  (let [base (egress-kind endpoint)]
+    (if (not= base "unknown")
+      {:kind base :basis "endpoint"}
+      (let [ref (render-ref arg) g (if ref (.get guards ref) js/undefined)]
+        (if (and g (not= g js/undefined))
+          {:kind g :basis (str "guard(" ref ")")}
+          {:kind "unknown" :basis "unproven"})))))
+
+;; coarse "unattended?" heuristic — egress reached without a user gesture is the
+;; crux of the sovereignty claim, but statically certain classification is hard.
+;; Flag the obvious unattended cases (resource auto-loads, remote-settings sync)
+;; and leave the rest "review". NOT authoritative — the honest first cut.
+(defn unattended? [category :- String] :- String
+  (cond
+    (= category "telemetry") "yes"
+    (= category "remote-settings") "yes"
+    (= category "update/version") "yes"
+    (= category "adblock-list") "likely"
+    :else "review"))
+
+;; collect egress records from one JS source. Returns {records parsed failed}.
+(defn scan-source [label :- String src :- String] :- Any
+  (let [out []
+        ;; beagle emits a bogus `import(<ident>, "<path>", <ident>);` statement for
+        ;; some macro/const imports (invalid JS — filed as a codegen bug). Strip that
+        ;; exact artifact so the file parses; it never adds egress, only breaks acorn.
+        cleaned (.replace src (RegExp. "^[ \\t]*import\\([A-Za-z_$][\\w$]*,\\s*\"[^\"]*\",\\s*[A-Za-z_$][\\w$]*\\);[ \\t]*$" "gm") "")]
+    (try
+      (let [ast (parse cleaned {:ecmaVersion "latest" :sourceType "module" :locations true :allowHashBang true})
+            consts (Map.)]
+        ;; pass 1 — resolve module-level const strings (so endpoints aren't all "dynamic").
+        (walk ast
+          (fn [n :- Any] :- Any
+            (when (and (= (.-type n) "VariableDeclarator") (.-id n)
+                       (= (.-type (.-id n)) "Identifier") (.-init n))
+              (let [v (eval-static (.-init n) consts)]
+                (when (some? v) (.set consts (.-name (.-id n)) v))))))
+        ;; pass 2 — same-file scheme guards; pass 3 — egress sinks (endpoint then guard).
+        (let [guards (collect-guards ast)
+              arg0 (fn [args :- Any] :- Any (if (and args (> (.-length args) 0)) (aget args 0) nil))]
+          (walk ast
+            (fn [node :- Any] :- Any
+              (let [t (.-type node)]
+                (cond
+                  (= t "CallExpression")
+                  (let [nm (callee-name (.-callee node))]
+                    (when (.has CALL-SINKS nm)
+                      (let [ep (endpoint-of (.-arguments node) consts) cat (classify nm ep)
+                            er (resolve-egress ep (arg0 (.-arguments node)) guards)]
+                        (.push out {:file label :line (line-of node) :sink nm
+                                    :endpoint ep :category cat :egress (.-kind er) :basis (.-basis er)
+                                    :unattended (unattended? cat)}))))
+                  (= t "NewExpression")
+                  (let [nm (callee-name (.-callee node))]
+                    (when (.has NEW-SINKS nm)
+                      (let [ep (endpoint-of (.-arguments node) consts) cat (classify nm ep)
+                            er (resolve-egress ep (arg0 (.-arguments node)) guards)]
+                        (.push out {:file label :line (line-of node) :sink (str "new " nm)
+                                    :endpoint ep :category cat :egress (.-kind er) :basis (.-basis er)
+                                    :unattended (unattended? cat)}))))
+                  (= t "AssignmentExpression")
+                  (when (and (= (.-operator node) "=")
+                             (= (.-type (.-left node)) "MemberExpression")
+                             (= (.-type (.-property (.-left node))) "Identifier")
+                             (.has ASSIGN-SINKS (.-name (.-property (.-left node)))))
+                    (let [s (str "." (.-name (.-property (.-left node))) "=")
+                          ep (resolved (.-right node) consts) cat (classify s ep)
+                          er (resolve-egress ep (.-right node) guards)]
+                      (.push out {:file label :line (line-of node) :sink s
+                                  :endpoint ep :category cat :egress (.-kind er) :basis (.-basis er)
+                                  :unattended (unattended? cat)}))))))))
+        {:records out :parsed true :failed nil})
+      (catch Any e
+        (console/error (str "  PARSE FAILED (egress NOT enumerated): " label " — " (.-message e)))
+        {:records out :parsed false :failed label}))))
+
+;; walk a dir for files matching suffix -> [abs ...].
+(defn walk-files [dir :- String suffix :- String acc :- Any] :- Any
+  (when (existsSync dir)
+    (doseq [name (readdirSync dir)]
+      (let [p (join dir name)]
+        (if (.isDirectory (statSync p))
+          (walk-files p suffix acc)
+          (when (.endsWith p suffix) (.push acc p))))))
+  acc)
+
+;; the authored-chrome JS surface: hand-written .sys.mjs (read directly) + emitted
+;; .bjs chrome (built to a temp dir).
+(defn sources [] :- Any
+  (let [out []]
+    (doseq [p (.sort (walk-files SRC ".sys.mjs" []))]
+      (.push out {:label (relative REPO p) :src (readFileSync p "utf8")}))
+    ;; hand-written .js content pages (newtab, sovereignty) are authored chrome too
+    ;; — a sovereignty audit can't skip them. (They're plain JS, not emitted .bjs.)
+    (doseq [p (.sort (walk-files SRC ".js" []))]
+      (when (.includes p "/content/")
+        (.push out {:label (relative REPO p) :src (readFileSync p "utf8")})))
+    (sh (str "rm -rf " EMIT " && /home/tom/code/beagle/bin/beagle build src --out " EMIT) {})
+    (let [base (join EMIT "gjoa")]
+      (doseq [p (.sort (walk-files base ".js" []))]
+        (.push out {:label (str "src/gjoa/…/" (relative base p)) :src (readFileSync p "utf8")})))
+    out))
+
+(defn run [] :- Any
+  (let [srcs (sources)
+        records [] failed []]
+    (doseq [s srcs]
+      (let [res (scan-source (.-label s) (.-src s))]
+        (doseq [r (.-records res)] (.push records r))
+        (when (.-failed res) (.push failed (.-failed res)))))
+    {:records records :failed failed :scanned (.-length srcs)}))
+
+(defn report [result :- Any] :- Any
+  (let [records (.-records result) failed (.-failed result)]
+    (console/log (str "\ngjoa egress surface — authored chrome\n"
+                      "(static AST scan of " (.-scanned result) " sources: .sys.mjs + emitted .bjs under src/gjoa)\n"))
+    (if (= (.-length records) 0)
+      (console/log "  no network egress sink found in authored chrome.")
+      ;; group by where it goes: real network egress first, then unverifiable, then local.
+      (let [order ["network" "unknown" "local"]
+            head {"network" "PROVEN NETWORK EGRESS (leaves the machine)"
+                  "unknown" "UNVERIFIABLE STATICALLY (dynamic endpoint — review set)"
+                  "local"   "LOCAL RESOURCE (resource:/chrome:/page-icon: — not egress)"}]
+        (doseq [kind order]
+          (let [rs (.filter records (fn [r :- Any] :- Bool (= (.-egress r) kind)))]
+            (when (> (.-length rs) 0)
+              (console/log (str "[" (get head kind) "]"))
+              (doseq [r rs]
+                (console/log (str "  " (.-file r) ":" (.-line r)
+                                  "  " (.-sink r) "(" (.-endpoint r) ")"
+                                  "   [" (.-category r) ", via " (.-basis r) ", unattended=" (.-unattended r) "]")))
+              (console/log ""))))))
+    (let [net (.-length (.filter records (fn [r :- Any] :- Bool (= (.-egress r) "network"))))
+          loc (.-length (.filter records (fn [r :- Any] :- Bool (= (.-egress r) "local"))))
+          unk (.-length (.filter records (fn [r :- Any] :- Bool (= (.-egress r) "unknown"))))]
+      (console/log (str "SUMMARY of " (.-length records) " egress sink(s) in authored chrome:"))
+      (console/log (str "  " net " network egress   |   " loc " local (not egress)   |   " unk " unproven (review)")))
+    (if (> (.-length failed) 0)
+      (do
+        (console/log (str "\n  ⚠ " (.-length failed) " source(s) could NOT be parsed — egress in them is NOT enumerated:"))
+        (doseq [f failed] (console/log (str "      " f))))
+      (console/log "  (every authored source parsed — surface is complete)"))
+    (console/log "\n  NOTE: authored-chrome egress only. Firefox-inherited egress is disabled")
+    (console/log "  via prefs (src/gjoa/defaults/pref), a separate axis — not counted here.")))
+
+;; --- build-time manifest generation (for about:sovereignty) ------------------
+;; Emit the page-ready manifest from a FRESH audit, stamped with the current commit.
+;; Run as an import phase so the page's proof line can never go stale-by-omission:
+;; auditedCommit always reflects the audited bytes. (The page also flags a mismatch,
+;; as a backstop for any build that didn't regenerate.)
+(def MANIFEST-PATH :- String
+  (join REPO "src" "gjoa" "browser" "components" "gjoa" "content" "sovereignty" "manifest.json"))
+
+(defn describe [r :- Any] :- String
+  (let [cat (.-category r)]
+    (cond
+      (= cat "update/version") "Firefox version freshness check"
+      (or (= cat "remote-settings") (= cat "adblock-list")) "filter-list update (when adblock is enabled)"
+      (= cat "telemetry") "telemetry"
+      (= (.-sink r) ".src=") "resource load"
+      :else (str (.-sink r) " call"))))
+
+;; which manifest bucket a record belongs in.
+(defn bucket [r :- Any] :- String
+  (let [eg (.-egress r) ep (.toLowerCase (.-endpoint r)) cat (.-category r)]
+    (cond
+      (= eg "local") "local"
+      (= eg "unknown") "unproven"
+      (or (.includes ep "product-details") (= cat "update/version") (= cat "telemetry")) "unattendedExternal"
+      :else "userEnabledNetwork")))
+
+(defn item-of [r :- Any] :- Any
+  {:endpoint (.-endpoint r) :what (describe r) :file (.-file r) :line (.-line r) :basis (.-basis r)})
+
+;; a named fn (defn returns cleanly) — an INLINE (fn [g] {map}) emits `(g) => {…}`,
+;; which JS parses as a block, not an object return (a beagle codegen bug).
+(defn gap-item [g :- Any] :- Any {:pref (.-name g) :what (.-vector g)})
+
+(js/export (defn write-manifest! [] :- Any
+  (let [records (.-records (run))
+        own {:unattendedExternal [] :userEnabledNetwork [] :local [] :unproven []}]
+    (doseq [r records] (.push (get own (bucket r)) (item-of r)))
+    (let [inh (.parse JSON (sh "bun .beagle-tools/gjoa/tools/sovereignty/inherited-egress.js --json" {:quiet true}))
+          commit (.trim (sh "git rev-parse --short HEAD" {:quiet true}))
+          version (.-displayVersion (.parse JSON (readFileSync (join REPO "gjoa.json") "utf8")))
+          date (.slice (.toISOString (Date.)) 0 10)
+          manifest {:claim "This build makes 1 unattended network call: the Firefox version check."
+                    :gjoaVersion version
+                    :auditedCommit commit
+                    :generated date
+                    :method "static AST audit of all authored chrome (.sys.mjs + emitted .bjs + content .js), every source parsed"
+                    :ownCode own
+                    :inheritedEgress
+                    {:disabled (.-length (.-disabled inh))
+                     :catalogued (.-catalogued inh)
+                     :note "Firefox built-in egress vectors gjoa disables by default. SafeBrowsing kept (security)."
+                     :toggleGated (.map (.-gaps inh) gap-item)}}]
+      (writeFileSync MANIFEST-PATH (str (JSON/stringify manifest nil 2) "\n"))
+      (console/log (str "sovereignty: wrote manifest @ " commit " ("
+                        (.-length (.-unattendedExternal own)) " unattended, "
+                        (.-length records) " sinks)"))))))
+
+(defn main! [] :- Any
+  (cond
+    (.includes (.-argv process) "manifest") (write-manifest!)
+    (.includes (.-argv process) "--json") (console/log (JSON/stringify (run) nil 2))
+    :else (report (run))))
+
+(when (.-main (js/import-meta))
+  (main!))

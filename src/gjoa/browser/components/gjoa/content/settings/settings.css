@@ -126,3 +126,16 @@ html, body {
 .leaf { font-size: 12px; padding: 2px 0; }
 .leaf-pref { color: var(--faint); font-family: monospace; }
 .leaf-val { color: var(--ok); }
+
+/* privacy profile picker */
+.picker { display: flex; flex-direction: column; gap: 8px; margin: 6px 0 16px; }
+.pick {
+  display: flex; gap: 12px; align-items: flex-start; padding: 12px 14px;
+  border: 1px solid var(--line); border-radius: 10px; cursor: pointer;
+}
+.pick:hover { border-color: var(--faint); }
+.pick-on { border-color: var(--accent); background: rgba(122,162,247,0.06); }
+.pick input { margin-top: 2px; accent-color: var(--accent); }
+.pick-title { font-weight: 600; color: var(--ink); }
+.pick-sum { color: var(--muted); font-size: 12.5px; margin-top: 2px; }
+.pick-custom .pick-title { opacity: 0.75; }

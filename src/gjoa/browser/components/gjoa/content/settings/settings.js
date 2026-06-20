@@ -102,45 +102,78 @@
     return row;
   }
 
-  function renderProfiles(reg, rerender) {
+  // A privacy profile's `sets` all match the live pref state?
+  function profileMatches(p) {
+    return Object.keys(p.sets).every((k) => {
+      const want = p.sets[k];
+      const typ = (typeof want === "number") ? "int" : "bool";
+      return getPref(k, typ, want) === want;
+    });
+  }
+
+  function applyProfile(p, selPref, rerender) {
+    for (const k of Object.keys(p.sets)) {
+      const v = p.sets[k];
+      if (typeof v === "number") setInt(k, v); else setBool(k, !!v);
+    }
+    if (selPref) setStr(selPref, p.id);
+    rerender();
+  }
+
+  // Privacy: a curated profile picker (presets flip a subset of the granular
+  // toggles below; hand-editing any toggle drops you to Custom).
+  function renderPrivacy(reg, rerender) {
     const root = $("profiles");
     root.textContent = "";
-    for (const p of reg.profiles || []) {
-      const card = el("div", "profile");
-      const head = el("div", "profile-head");
-      const txt = el("div", "profile-txt");
-      txt.appendChild(el("div", "profile-title", p.title));
-      if (p.claim) txt.appendChild(el("div", "profile-claim", p.claim));
-      head.appendChild(txt);
-      head.appendChild(toggle(getPref(p.pref, "bool", false), (on) => { setBool(p.pref, on); rerender(); }));
-      card.appendChild(head);
-      if (p.disclaimer) card.appendChild(el("p", "profile-disclaimer", p.disclaimer));
-      if (p.tradeoffs && p.tradeoffs.length) {
-        const ul = el("ul", "tradeoffs");
-        for (const t of p.tradeoffs) {
-          const li = el("li", "tradeoff");
-          li.appendChild(el("span", "tradeoff-title", t.title));
-          li.appendChild(el("span", "tradeoff-detail", t.detail));
-          ul.appendChild(li);
-        }
-        card.appendChild(ul);
-      }
-      if (p.leaves && p.leaves.length) {
-        const det = document.createElement("details");
-        det.className = "leaves";
-        det.appendChild(el("summary", "leaves-sum", "Flips " + p.leaves.length + " preferences"));
-        const ul = el("ul", "leaves-list");
-        for (const lf of p.leaves) {
-          const li = el("li", "leaf");
-          li.appendChild(el("span", "leaf-pref", lf.pref));
-          li.appendChild(el("span", "leaf-val", " → " + lf.on));
-          ul.appendChild(li);
-        }
-        det.appendChild(ul);
-        card.appendChild(det);
-      }
-      root.appendChild(card);
+    const pv = reg.privacy;
+    if (!pv) return;
+    const sel = pv.selector || {};
+    const profiles = sel.profiles || [];
+    const selPref = sel.pref;
+
+    const active = profiles.find(profileMatches);
+    const activeId = active ? active.id : "custom";
+
+    const block = el("section", "block");
+    block.appendChild(el("h2", "h2", pv.title || "Privacy"));
+    if (pv.intro) block.appendChild(el("p", "sub", pv.intro));
+
+    const picker = el("div", "picker");
+    const addCard = (id, title, summary, onPick, disabled) => {
+      const card = el("label", "pick" + (id === activeId ? " pick-on" : ""));
+      const radio = document.createElement("input");
+      radio.type = "radio"; radio.name = "privacy-profile";
+      radio.checked = (id === activeId);
+      if (disabled) radio.disabled = true;
+      else radio.addEventListener("change", onPick);
+      card.appendChild(radio);
+      const txt = el("div", "pick-txt");
+      txt.appendChild(el("div", "pick-title", title));
+      if (summary) txt.appendChild(el("div", "pick-sum", summary));
+      card.appendChild(txt);
+      picker.appendChild(card);
+    };
+    for (const p of profiles) {
+      addCard(p.id, p.title + (p.asterisk ? " *" : ""), p.summary,
+              () => applyProfile(p, selPref, rerender), false);
     }
+    // Custom is reached by editing a toggle, not chosen directly.
+    addCard("custom", "Custom", "Your own mix — set by editing the toggles below.", null, true);
+    block.appendChild(picker);
+
+    const ast = (active && active.asterisk) ||
+                ((profiles.find((p) => p.asterisk) || {}).asterisk);
+    if (ast) block.appendChild(el("p", "profile-disclaimer", "* " + ast));
+
+    // granular toggles — editing one recomputes the active profile (-> Custom).
+    for (const g of pv.granular || []) {
+      block.appendChild(settingRow(g, () => {
+        const now = profiles.find(profileMatches);
+        if (selPref) setStr(selPref, now ? now.id : "custom");
+        rerender();
+      }));
+    }
+    root.appendChild(block);
   }
 
   function renderSections(reg, rerender) {
@@ -169,7 +202,7 @@
 
   let REG = null;
   function render() {
-    renderProfiles(REG, render);
+    renderPrivacy(REG, render);
     renderSections(REG, render);
     renderLinks(REG);
     $("foot").textContent =

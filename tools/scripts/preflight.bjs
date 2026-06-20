@@ -14,7 +14,7 @@
             [path :refer [join basename]]
             [gjoa.tools.prep.symbol-resolve :refer [check-contract]]))
 (define-mode strict)
-(declare-extern [process JSON RegExp] Any)
+(declare-extern [process JSON RegExp Object Set Array] Any)
 
 ;; The old .ts used `resolve(import.meta.dir, "..", "..")` to climb from
 ;; tools/scripts/ to the repo root. There is no import.meta in beagle, and
@@ -425,8 +425,8 @@
 ;; actually SET in source. A dangling knob — whose feature was deleted but whose
 ;; toggle remains — is a no-op that lies to the user; this gate makes that deletion
 ;; impossible to ship silently (restore the pref, reversibly, or remove the knob).
-;; Also asserts registry's librewolf-mode `leaves` == GjoaLoader's PROFILES leaves,
-;; so the "Flips N preferences" the page shows is exactly what the loader applies.
+;; Also asserts the registry privacy-profile `sets` prefs == GjoaLoader's
+;; PRIVACY-PRESETS prefs, so the picker sets exactly what the loader applies.
 (def REGISTRY-FILE :- String
   (join REPO-ROOT "src" "gjoa" "browser" "components" "gjoa" "content" "settings" "registry.json"))
 (def LOADER-FILE :- String
@@ -437,16 +437,13 @@
   (let [m (.match s (RegExp. "\"[^\"]+\"" "g"))]
     (if m (.map m (fn [q :- String] :- String (.slice q 1 -1))) [])))
 
-(defn profiles-leaf-prefs [loader :- String] :- Any
-  ;; the PROFILES def's leaf pref-names: every quoted string in the block except
-  ;; the type tags and the profile meta-pref.
-  (let [start (.indexOf loader "(def PROFILES")
-        end (.indexOf loader "(defn apply-profile!")
+(defn preset-pref-names [loader :- String] :- Any
+  ;; pref-names referenced in the PRIVACY-PRESETS def: quoted strings containing a
+  ;; "." (pref names have dots; "bool"/"int" and the profile-id keys don't).
+  (let [start (.indexOf loader "(def PRIVACY-PRESETS")
+        end (.indexOf loader "(defn apply-privacy-profile!")
         block (if (and (>= start 0) (> end start)) (.slice loader start end) "")]
-    (.filter (quoted-strings block)
-      (fn [q :- String] :- Bool
-        (and (not (= q "bool")) (not (= q "int")) (not (= q "string"))
-             (not (.startsWith q "gjoa.profile.")))))))
+    (.filter (quoted-strings block) (fn [q :- String] :- Bool (.includes q ".")))))
 
 (defn gateN [] :- Any
   (if (not (and (existsSync REGISTRY-FILE) (existsSync LOADER-FILE) (existsSync PREF-DIR)))
@@ -457,28 +454,30 @@
           pref-src (.join (.map (.filter (readdirSync PREF-DIR) (fn [f :- String] :- Bool (.endsWith f ".bjs")))
                                 (fn [f :- String] :- String (readFileSync (join PREF-DIR f) "utf8"))) "\n")
           src (str pref-src "\n" loader)
+          pv (.-privacy reg)
+          sel (and pv (.-selector pv))
+          profiles (or (and sel (.-profiles sel)) [])
           knob-prefs []
-          _p (doseq [p (or (.-profiles reg) [])]
-               (.push knob-prefs (.-pref p))
-               (doseq [lf (or (.-leaves p) [])] (.push knob-prefs (.-pref lf))))
+          _g (doseq [g (or (and pv (.-granular pv)) [])] (.push knob-prefs (.-pref g)))
+          _ps (doseq [p profiles] (doseq [k (Object/keys (.-sets p))] (.push knob-prefs k)))
           _s (doseq [sec (or (.-sections reg) [])]
                (doseq [s (or (.-settings sec) [])] (.push knob-prefs (.-pref s))))
           dangling (.filter knob-prefs (fn [pf :- String] :- Bool (not (.includes src (str "\"" pf "\"")))))
-          reg-lw (.find (or (.-profiles reg) []) (fn [p :- Any] :- Bool (= (.-id p) "librewolf-mode")))
-          reg-leaves (.sort (.map (or (and reg-lw (.-leaves reg-lw)) []) (fn [lf :- Any] :- String (.-pref lf))))
-          prof-leaves (.sort (profiles-leaf-prefs loader))]
+          reg-prefs (.sort (Array/from (Set. (.flatMap profiles (fn [p :- Any] :- Any (Object/keys (.-sets p)))))))
+          preset-prefs (.sort (Array/from (Set. (preset-pref-names loader))))
+          drift (not (= (.join reg-prefs "|") (.join preset-prefs "|")))]
       (cond
         (> (.-length dangling) 0)
         (fail "N" "knobs backed + reversible (knob-not-delete)"
           (str (.-length dangling) " knob(s) reference a pref set nowhere in source")
           (str "a feature was deleted but its knob remains (or a typo) — restore the pref (reversible!) or drop the knob:\n    " (.join dangling "\n    ")))
-        (not (= (.join reg-leaves "|") (.join prof-leaves "|")))
+        drift
         (fail "N" "knobs backed + reversible (knob-not-delete)"
-          "librewolf-mode leaves in registry.json != GjoaLoader PROFILES"
-          (str "the page would misrepresent what the profile flips — sync them.\n    registry: " (.join reg-leaves ", ") "\n    PROFILES: " (.join prof-leaves ", ")))
+          "registry privacy `sets` prefs != GjoaLoader PRIVACY-PRESETS prefs"
+          (str "the picker would set different prefs than the loader applies — sync them.\n    registry: " (.join reg-prefs ", ") "\n    PRESETS:  " (.join preset-prefs ", ")))
         :else
         (pass "N" "knobs backed + reversible (knob-not-delete)"
-          (str (.-length knob-prefs) " knobs backed by real prefs; librewolf-mode leaves (" (.-length prof-leaves) ") in sync"))))))
+          (str (.-length knob-prefs) " knobs backed by real prefs; privacy presets (" (.-length preset-prefs) " prefs) in sync with the loader"))))))
 
 ;; ── Run + render ──────────────────────────────────────────────────────────
 (defn main! [] :- Any

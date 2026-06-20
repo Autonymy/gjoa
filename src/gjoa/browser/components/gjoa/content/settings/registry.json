@@ -1,25 +1,70 @@
 {
-  "note": "The about:gjoa settings registry. gjoa's single settings home. Each setting is a live pref (present + reversible). Costs are MEASURED, characterized as real EGRESS endpoints, or honestly 'unmeasured' — never invented. The `leaves` of a profile are the exact prefs it flips, kept in sync with GjoaLoader's PROFILES by preflight Gate N. Firefox's own settings stay in Firefox Settings; this is gjoa's surface.",
-  "profiles": [
-    { "id": "librewolf-mode", "pref": "gjoa.profile.librewolf-mode.enabled", "type": "bool", "title": "LibreWolf mode",
-      "claim": "LibreWolf-grade privacy DEFAULTS, as one toggle.",
-      "disclaimer": "NOT 'as secure as LibreWolf'. These prefs are only part of LibreWolf's hardening (their compile-time disables and ~20 C++ patches are not here), and flipping this changes none of gjoa's own added surface (the adblock classifier, content actors, custom about: pages).",
-      "leaves": [
-        { "pref": "privacy.resistFingerprinting", "on": true, "off": false, "type": "bool" },
-        { "pref": "privacy.resistFingerprinting.letterboxing", "on": true, "off": false, "type": "bool" },
-        { "pref": "network.http.referer.XOriginPolicy", "on": 2, "off": 0, "type": "int" },
-        { "pref": "network.http.referer.XOriginTrimmingPolicy", "on": 2, "off": 0, "type": "int" },
-        { "pref": "browser.search.suggest.enabled", "on": false, "off": true, "type": "bool" },
-        { "pref": "browser.urlbar.suggest.searches", "on": false, "off": true, "type": "bool" },
-        { "pref": "extensions.update.enabled", "on": false, "off": true, "type": "bool" },
-        { "pref": "privacy.donottrackheader.enabled", "on": true, "off": false, "type": "bool" }
-      ],
-      "tradeoffs": [
-        { "title": "resistFingerprinting has a high UX cost", "detail": "Breaks canvas-reliant sites, letterboxes the window, reports UTC timezone + a generic UA. Default-off for a reason; on only inside this profile." },
-        { "title": "Safe Browsing stays ON (conflict, not flipped)", "detail": "LibreWolf neuters Safe Browsing, but gjoa deliberately KEPT download-reputation on (security finding F5). LibreWolf mode does NOT disable it here — the conflict is surfaced, not silently resolved." },
-        { "title": "Prefetch stays ON (gjoa speed decision)", "detail": "LibreWolf disables prefetch/dns-prefetch; gjoa keeps them on for page-load speed. Not changed by this profile." }
-      ] }
-  ],
+  "note": "The about:gjoa settings registry. gjoa's single settings home. Each setting is a live pref (present + reversible). Privacy profiles are CURATED presets — pick one and it flips a curated subset of the granular toggles; hand-editing any toggle switches you to Custom. Costs are MEASURED, characterized as real EGRESS endpoints, or honestly 'unmeasured' — never invented. Profile `sets` are kept in sync with GjoaLoader's PRIVACY-PRESETS by preflight Gate N. Firefox's own settings stay in Firefox Settings; this is gjoa's surface.",
+  "privacy": {
+    "title": "Privacy",
+    "intro": "Pick a profile, or tune the individual toggles below (which switches you to Custom). Profiles escalate — each is a superset of the one before it.",
+    "selector": {
+      "pref": "gjoa.privacy.profile",
+      "default": "minimal",
+      "profiles": [
+        { "id": "minimal", "title": "Minimal",
+          "summary": "gjoa's privacy defaults — telemetry and phone-home off, Do-Not-Track on. Zero site breakage.",
+          "sets": {
+            "privacy.resistFingerprinting": false,
+            "privacy.resistFingerprinting.letterboxing": false,
+            "network.http.referer.XOriginPolicy": 0,
+            "network.http.referer.XOriginTrimmingPolicy": 0,
+            "browser.search.suggest.enabled": true,
+            "browser.urlbar.suggest.searches": true,
+            "extensions.update.enabled": true,
+            "privacy.donottrackheader.enabled": true
+          } },
+        { "id": "balanced", "title": "Balanced",
+          "summary": "Minimal + trims cross-site referers and turns off search / URL-bar suggestions (no keystroke leak to your search engine). Negligible breakage.",
+          "sets": {
+            "privacy.resistFingerprinting": false,
+            "privacy.resistFingerprinting.letterboxing": false,
+            "network.http.referer.XOriginPolicy": 0,
+            "network.http.referer.XOriginTrimmingPolicy": 2,
+            "browser.search.suggest.enabled": false,
+            "browser.urlbar.suggest.searches": false,
+            "extensions.update.enabled": true,
+            "privacy.donottrackheader.enabled": true
+          } },
+        { "id": "librewolf", "title": "LibreWolf-Inspired",
+          "asterisk": "A curated subset of LibreWolf's privacy DEFAULTS — not LibreWolf itself: its compile-time disables and ~20 C++ patches aren't here, and this changes none of gjoa's own added surface (the adblock classifier, content actors, about: pages).",
+          "summary": "Balanced + resistFingerprinting (canvas / timezone / UA spoofing + window letterboxing), strict referer policy, and extension auto-update off. Real UX cost: RFP breaks some sites.",
+          "sets": {
+            "privacy.resistFingerprinting": true,
+            "privacy.resistFingerprinting.letterboxing": true,
+            "network.http.referer.XOriginPolicy": 2,
+            "network.http.referer.XOriginTrimmingPolicy": 2,
+            "browser.search.suggest.enabled": false,
+            "browser.urlbar.suggest.searches": false,
+            "extensions.update.enabled": false,
+            "privacy.donottrackheader.enabled": true
+          } }
+      ]
+    },
+    "granular": [
+      { "pref": "privacy.resistFingerprinting", "type": "bool", "title": "Resist fingerprinting (RFP)", "firefoxDefault": false,
+        "help": "Spoofs canvas, timezone (UTC), and a generic UA to defeat fingerprinting. High UX cost — breaks canvas-reliant sites." },
+      { "pref": "privacy.resistFingerprinting.letterboxing", "type": "bool", "title": "Letterboxing", "firefoxDefault": false,
+        "help": "Pads the viewport to a generic size so window dimensions can't fingerprint you. Visible grey margins." },
+      { "pref": "network.http.referer.XOriginPolicy", "type": "int", "title": "Cross-origin referer policy", "firefoxDefault": 0,
+        "help": "0 = send full referer; 2 = send only on same-origin requests (strictest)." },
+      { "pref": "network.http.referer.XOriginTrimmingPolicy", "type": "int", "title": "Cross-origin referer trimming", "firefoxDefault": 0,
+        "help": "0 = full URL; 2 = trim cross-origin referer to scheme+host+port (no path/query leak)." },
+      { "pref": "browser.search.suggest.enabled", "type": "bool", "title": "Search suggestions", "firefoxDefault": true,
+        "help": "Off stops sending what you type to the search engine for suggestions." },
+      { "pref": "browser.urlbar.suggest.searches", "type": "bool", "title": "URL-bar search suggestions", "firefoxDefault": true,
+        "help": "Off stops URL-bar keystrokes reaching the search engine." },
+      { "pref": "extensions.update.enabled", "type": "bool", "title": "Extension auto-update", "firefoxDefault": true,
+        "help": "Off stops automatic add-on update checks (an egress + supply-chain consideration). You update manually." },
+      { "pref": "privacy.donottrackheader.enabled", "type": "bool", "title": "Do-Not-Track header", "firefoxDefault": false,
+        "help": "Sends DNT:1. Advisory only — most sites ignore it; gjoa's native blocking is what actually stops trackers." }
+    ]
+  },
   "sections": [
     { "id": "dark-mode", "title": "Dark mode", "intro": "Engine-level dark mode.",
       "settings": [

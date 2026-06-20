@@ -4,5 +4,7 @@
 JAR_MANIFESTS += ["jar.mn"]
 
 EXTRA_JS_MODULES.gjoa += [
+    "GjoaAboutPrefsChild.sys.mjs",
+    "GjoaAboutPrefsParent.sys.mjs",
     "GjoaLoader.sys.mjs",
 ]

@@ -360,6 +360,22 @@
     (catch Any e
       (console/error (str "gjoa-loader: register about:" what " failed") e))))
 
+;; The thin about:preferences POINTER — a window actor that injects a "gjoa Settings"
+;; pointer into Firefox Settings (→ about:gjoa). gjoa OWNS its settings surface and
+;; does NOT patch Firefox's preferences code; this only OBSERVES the page (graceful —
+;; a miss is harmless, about:gjoa is always reachable by URL). Matches about:preferences
+;; and its about:settings alias.
+(defn register-aboutprefs-actor! [] :- Any
+  (try
+    (.registerWindowActor ChromeUtils "GjoaAboutPrefs"
+      {:parent {:esModuleURI "resource:///modules/gjoa/GjoaAboutPrefsParent.sys.mjs"}
+       :child {:esModuleURI "resource:///modules/gjoa/GjoaAboutPrefsChild.sys.mjs"
+               :events {:DOMContentLoaded {:mozSystemGroup true}}}
+       :matches ["about:preferences*" "about:settings*"]})
+    (console/log "gjoa-loader: registered GjoaAboutPrefs actor (about:preferences pointer)")
+    (catch Any e
+      (console/error "gjoa-loader: register GjoaAboutPrefs actor failed" e))))
+
 (defn register-about-pages! [] :- Any
   (register-about! "sovereignty" "chrome://gjoa/content/sovereignty/sovereignty.html"
                    "{6a7c1e90-5b3d-4c2a-9f81-7e0d3a6b2c54}")
@@ -380,6 +396,7 @@
       (apply-all-profiles!)
       (.addObserver (.-prefs Services) "gjoa.profile." profile-observer)
       (register-about-pages!)
+      (register-aboutprefs-actor!)
       (set-new-tab-url!)
       (register-cosmetic-actor)
       (register-darkmode-actor)

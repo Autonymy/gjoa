@@ -15,7 +15,7 @@ do, plus a fifth that goes beyond authoring entirely:
 2. **One typed language across the entire stack** — chrome JS, the ESM loader, build tooling, tests, pref files, Nix config.
 3. **Machine-checked effect discipline** (`!`-purity) — the one bug class `tsc` cannot catch at any setting.
 4. **Targeted boilerplate collapse**, proven in a controlled experiment (the test suite).
-5. **Code as claims** — engine patches anchored by *structural identity*, not line numbers, so an upstream refactor can't silently lose them. CI-gated.
+5. **Code as claims** — engine patches anchored by *structural identity* (not line numbers, so an upstream refactor can't silently lose them), and gjoa's own source queryable as a call graph (who-calls / blast-radius / leverage). CI-gated.
 
 ---
 
@@ -188,16 +188,53 @@ build workflows):
 The payoff for gjoa today is concrete: **a patch you can't silently lose to an
 upstream refactor.**
 
-The same projection also emits gjoa's source as a **Fram claim graph** — every AST
-node as `(subject, predicate, object)` triples — that a real claim engine persists
-and answers Datalog queries over (e.g. "find every `MethodDefinition`," round-
-tripped byte-identical through the live store). That direction is where "code as
-claims" gets its real power: scope-correct *"who calls this,"* transitive blast-
-radius, leverage. **Honest status:** in gjoa today the projection is *structural*
-(the AST as queryable claims, demonstrated end-to-end against a real engine); the
-*relational* call-graph queries live in the sibling Chartroom/fram project and are
-not yet wired into gjoa. We claim the patch-resilience win as shipped and CI-gated,
-and the relational graph as the direction — not as done.
+### Relational queries over gjoa's own source
+
+The other half of "code as claims" is querying the code *relationally* — and gjoa
+now does. `tools/projector/codegraph.bjs` parses the emitted chrome JS (acorn, the
+same parser the reflector uses), builds the call graph, and answers, over gjoa's
+own 300-odd chrome functions:
+
+```sh
+bun run projector:codegraph who-calls 'parse-hosts'      # direct callers
+bun run projector:codegraph blast-radius 'tree-root'     # transitive dependents
+bun run projector:codegraph leverage 20                  # functions ranked by blast-radius
+bun run projector:codegraph emit                         # the graph as claim triples
+```
+
+`leverage` is the one a `grep` can't give you: it ranks every function by the size
+of its **transitive** dependent set — "what is load-bearing." `blast-radius` is the
+"what breaks if I change this" answer. The graph emits as `(subject, predicate,
+object)` claim triples (`defines` / `calls` / `leverage`), in EDN or Fram-log form.
+
+Two properties keep it honest rather than approximate:
+
+- **Collision-free across modules; closures roll up.** Each chrome module compiles
+  to its own IIFE-scoped bundle, so the names defined in more than one module
+  (`init!`, `apply!`, `enabled?` …) resolve to distinct per-module nodes —
+  blocking's `apply!` and dark-mode's `apply!` have *different* callers, a precision
+  a bare-name index can't reach. Nested closures aren't separate nodes; their calls
+  roll up to the module-scope function that owns them. (One residual imprecision is
+  *reported*, not hidden: when two source files bundled into one module both define
+  the same top-level name — today `destroy` and `on-tab-select` in `tabs` — they
+  share a node. `projector:codegraph stats` prints these.)
+- **More complete than the compiler's own analyzer, and CI-checked against it.**
+  `beagle callers` under-reports — it drops call sites inside `(js/export (defn …))`
+  bodies and top-level forms (so a helper used ~30× can report *zero* callers).
+  Deriving the graph from the emitted JS sees every call. **Gate C** of
+  `projector:test` enforces the relationship in CI: for a set of functions, every
+  caller `beagle callers` *does* report must appear in the projected graph — the
+  projector is a verified **superset** of the compiler's own view (an adversarial
+  sweep over all 300+ functions found zero soundness violations and zero
+  hallucinated edges).
+
+**Honest scope:** this is the **bare-call** graph — direct calls between named
+functions. Three invocation forms are deliberately *not* edges: cross-module
+`window.gjoa*` dispatch, function-as-value hand-offs (event handlers,
+`.map(f)`-style iteratees), and `.method` interop. So `leverage` / `blast-radius`
+rank the bare-call sub-graph — the dominant structure — not every dynamic call.
+Macros are compile-time-inlined and correctly are not nodes. It's **shipped and
+CI-gated**; cross-module and higher-order edges are the next layers.
 
 ---
 
@@ -211,7 +248,7 @@ and the relational graph as the direction — not as done.
 | readability | taste-dependent; the macro DSL reads at the domain level |
 | **stack uniformity** | **decisive** — one typed, macro-enabled language for the whole stack |
 | **effect discipline** | **decisive** — `!`-purity is enforced (the one bug class `tsc` cannot catch) |
-| **code as claims** | **shipped + CI-gated** for patch resilience (identity-anchored, churn-proof); relational graph is the direction, not done |
+| **code as claims** | **shipped + CI-gated**: identity-anchored churn-proof patches **and** a bare-call graph over gjoa's own source (who-calls / blast-radius / leverage), collision-free across modules and verified ⊇ the compiler's own caller analysis |
 | **correctness tooling** | macros + a repair loop with pointed, structured compile errors |
 
 The case for Beagle is **macros + uniformity + effect discipline + code-as-claims**,

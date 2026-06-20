@@ -11,7 +11,8 @@
             [path :refer [join dirname]]
             [gjoa.tools.prep.sh :refer [sh]]
             [gjoa.tools.projector.reflector :refer [round-trips?]]
-            [gjoa.tools.projector.claims :refer [json->doc replay]]))
+            [gjoa.tools.projector.claims :refer [json->doc replay]]
+            [gjoa.tools.projector.codegraph :refer [build-graph! beagle-callers projected-callers]]))
 (define-mode strict)
 (declare-extern [process console] Any)
 
@@ -49,6 +50,22 @@
       (if (and (.-ok r) (= (.-src r) patched))
         (console/error "GATE B  claim-doc equivalence: replay(pristine) == engine (patch 0011) [byte-for-byte]")
         (fail! (if (.-ok r) "claim-doc replay does not reproduce the engine file" (.-reason r))))))
+  ;; GATE C — codegraph soundness: the call graph the codegraph projector derives
+  ;; from emitted JS must be a SUPERSET of beagle's own (under-reported) caller
+  ;; analysis. For each function symbol, every caller `beagle callers` reports must
+  ;; appear among the projected callers. (Projector additionally recovers callers
+  ;; beagle drops — js/export bodies, top-level forms — so it is strictly ⊇.)
+  (let [graph (build-graph!)
+        ;; functions (NOT macros — macros inline away and are correctly not nodes)
+        symbols ["enabled?" "apply!" "parse-hosts" "allow-hosts" "make-sidebar-button!" "all-tabs"]]
+    (doseq [sym symbols]
+      (let [truth (beagle-callers sym)
+            proj (Set. (projected-callers graph sym))
+            missing (.filter truth (fn [c :- String] :- Bool (not (.has proj c))))]
+        (when (> (.-length missing) 0)
+          (fail! (str "GATE C  who-calls(" sym "): beagle reports caller(s) the projector misses: "
+                      (.join missing ", "))))))
+    (console/error (str "GATE C  codegraph soundness: beagle-callers ⊆ projected for " (.-length symbols) " function symbols")))
   (console/error "projector tests PASSED"))
 
 (when (.-main (js/import-meta))

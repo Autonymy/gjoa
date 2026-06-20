@@ -12,7 +12,7 @@
 
 Built on Firefox 152, written in [Beagle](https://github.com/Autonymy/beagle) (a typed Clojure subset) compiled to chrome JS and a native loader baked into `omni.ja`. Native means near-free at runtime — no Dark Reader repaint, no content-script ad blocker, no per-page injection tax. That's the whole point.
 
-Authoring in Beagle is a deliberate edge, not an aesthetic one: compile-time macros, **one** typed language across chrome / loader / tooling / tests / prefs, machine-checked effect discipline (`tsc` can't see purity), and engine patches anchored by *structural identity* — so an upstream refactor can't silently drop them. The honest case, including what *isn't* a win, is in [`docs/why-beagle.md`](docs/why-beagle.md).
+Authoring in Beagle is a deliberate edge, not an aesthetic one: compile-time macros, **one** typed language across chrome / loader / tooling / tests / prefs, machine-checked effect discipline (`tsc` can't see purity), engine patches anchored by *structural identity* (an upstream refactor can't silently drop them), and gjoa's own source queryable as a **call graph** — `who-calls` / `blast-radius` / `leverage`, CI-checked against the compiler. The honest case, including what *isn't* a win, is in [`docs/why-beagle.md`](docs/why-beagle.md).
 
 > This README is the stable shape. Volatile detail — exact feature state, build outcomes — lives in [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md), [`BUILD-LEDGER.md`](BUILD-LEDGER.md), and the [releases](../../releases).
 

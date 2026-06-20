@@ -1,0 +1,320 @@
+#lang beagle/js
+;; Relational code-graph projector — gjoa's chrome as a queryable call graph.
+;;
+;; gjoa authors chrome in Beagle; each module compiles to one IIFE-wrapped
+;; `dist/chrome/JS/gjoa-<module>.uc.js`. This tool parses that emitted JS with
+;; acorn (the same parser reflector.bjs uses), builds the intra-module call
+;; graph, and answers RELATIONAL questions over gjoa's own source:
+;;
+;;   who-calls <fn>     direct callers of a function
+;;   blast-radius <fn>  transitive dependents (what breaks if you change it)
+;;   leverage [N]       functions ranked by blast-radius size
+;;   emit [--fram]      the graph as claim triples (EDN, or fram log)
+;;   stats              corpus totals
+;;
+;; WHY emitted JS and not `beagle callers`: `beagle callers` under-reports —
+;; it drops call sites inside `(js/export (defn …))` bodies, top-level forms,
+;; and anonymous fns, and it conflates same-named definitions across files.
+;; acorn over the emitted JS sees EVERY call, and per-file JS scope makes the
+;; graph collision-free without any name disambiguation. We still cross-check
+;; against `beagle callers` as a ground-truth SUBSET (GATE C in test-projector).
+;;
+;; SCOPE (honest): this is the intra-module bare-call graph — calls a function
+;; makes to other functions in its own module. Cross-module dispatch goes
+;; through `window.gjoa*` objects (MemberExpression), modelled as a separate
+;; edge type is future work; macros are compile-time inlined and correctly are
+;; not nodes.
+(ns gjoa.tools.projector.codegraph
+  (:require [fs :as fs]
+            [path :as path]
+            [acorn :refer [parse]]
+            [gjoa.tools.prep.sh :refer [sh]]))
+(define-mode strict)
+(declare-extern [process console JSON Object Array Set Map Error Number RegExp] Any)
+
+(def JS-DIR :- String "dist/chrome/JS")
+(def TOPLEVEL :- String "<toplevel>")
+
+(defn node? [v :- Any] :- Bool
+  (and v (= (js/typeof v) "object") (not (Array/isArray v)) (= (js/typeof (.-type v)) "string")))
+
+;; emitted JS identifier -> source Beagle symbol (best-effort, for display).
+;; `?`/`!` are trailing by Beagle convention, so anchor those at end-of-string —
+;; otherwise a mid-name "_p" (from a source "-p", e.g. focus-panel) is mistaken
+;; for a "?". Remaining "_" came from "-".
+(defn demangle [s :- String] :- String
+  (-> s
+      (.replace (RegExp. "_bang$") "!")
+      (.replace (RegExp. "_p$") "?")
+      (.replaceAll "_GT_" "->")
+      (.replaceAll "_" "-")))
+
+;; source Beagle symbol -> emitted JS identifier (exact inverse; used by the gate
+;; to compare beagle's source-name output in emitted-name space, unambiguously).
+(defn mangle [s :- String] :- String
+  (-> s
+      (.replaceAll "->" "_GT_")
+      (.replaceAll "-" "_")
+      (.replaceAll "?" "_p")
+      (.replaceAll "!" "_bang")
+      (.replaceAll "*" "_star")))
+
+(defn module-of [file :- String] :- String
+  (-> (.basename path file) (.replace "gjoa-" "") (.replace ".uc.js" "")))
+
+;; Register a module-scope function name; also count occurrences so we can REPORT
+;; the residual imprecision: two files bundled into one module that both define the
+;; same top-level name land in separate per-file blocks (distinct JS scopes) but
+;; share a node id here. Surfaced honestly via `stats`, never hidden.
+(defn register! [acc :- Any nm :- String] :- Any
+  (.add (.-names acc) nm)
+  (.set (.-counts acc) nm (+ 1 (or (.get (.-counts acc) nm) 0))))
+
+;; Recursively walk an acorn node. `acc` accumulates {:names Set :edges [[from to]]}.
+;; `enclosing` is the nearest MODULE-SCOPE function we're inside (or TOPLEVEL).
+;;
+;; ONLY module-scope functions become nodes — a named FunctionDeclaration or named
+;; const/let = arrow|fn assignment whose `enclosing` is still TOPLEVEL (i.e. we are
+;; directly inside the module IIFE, not inside another named fn). Per-bundle JS
+;; scope then guarantees those names are unique, so the graph is collision-free.
+;; NESTED functions (closures, callbacks, helpers inside another fn) do NOT become
+;; nodes — their outgoing calls roll up to the module-scope function that owns them.
+;; This is what makes resolution exact rather than name-flattened.
+(defn walk! [node :- Any enclosing :- String acc :- Any] :- Any
+  (let [t (.-type node)
+        top? (= enclosing TOPLEVEL)]
+    (cond
+      (= t "FunctionDeclaration")
+      (let [nm (and (.-id node) (.-name (.-id node)))
+            reg? (and nm top?)]
+        (when reg? (register! acc nm))
+        (walk-children! node (if reg? nm enclosing) acc))
+
+      (= t "VariableDeclarator")
+      (let [init (.-init node)
+            id (.-id node)
+            nm (and id (= (.-type id) "Identifier") (.-name id))
+            is-fn (and init (or (= (.-type init) "ArrowFunctionExpression")
+                                (= (.-type init) "FunctionExpression")))
+            reg? (and nm is-fn top?)]
+        (when reg? (register! acc nm))
+        ;; recurse the initializer under the binding name only if it's a
+        ;; module-scope node; otherwise keep rolling up to `enclosing`.
+        (when init (walk! init (if reg? nm enclosing) acc))
+        nil)
+
+      (= t "CallExpression")
+      (let [callee (.-callee node)]
+        (when (and callee (= (.-type callee) "Identifier"))
+          (.push (.-edges acc) [enclosing (.-name callee)]))
+        (walk-children! node enclosing acc))
+
+      :else
+      (walk-children! node enclosing acc))))
+
+(defn walk-children! [node :- Any enclosing :- String acc :- Any] :- Any
+  (doseq [k (Object/keys node)]
+    (let [v (get node k)]
+      (when (Array/isArray v)
+        (doseq [el v] (when (node? el) (walk! el enclosing acc))))
+      (when (and (not (Array/isArray v)) (node? v))
+        (walk! v enclosing acc)))))
+
+;; Parse one emitted module -> {:module m :names [..] :edges [[from to]..]} where
+;; edges are kept only when BOTH ends are local function nodes (intra-module).
+(defn parse-module [file :- String] :- Any
+  (let [src (.readFileSync fs file "utf8")
+        ast (parse src {:ecmaVersion "latest" :sourceType "script" :allowHashBang true})
+        acc {:names (Set.) :counts (Map.) :edges []}
+        _walk (walk! ast TOPLEVEL acc)
+        names (.-names acc)
+        kept (.filter (.-edges acc)
+               (fn [e :- Any] :- Bool
+                 (and (.has names (aget e 1))
+                      (or (= (aget e 0) TOPLEVEL) (.has names (aget e 0))))))
+        merges (.filter (Array/from (.entries (.-counts acc)))
+                 (fn [kv :- Any] :- Bool (> (aget kv 1) 1)))]
+    {:module (module-of file) :names (Array/from names) :edges kept :merges merges}))
+
+;; ── Graph assembly ────────────────────────────────────────────────────────
+;; Node id = "<emittedName>@<module>" (collision-free). The graph carries
+;; forward edges (caller->callee) and reverse edges (callee->callers) plus a
+;; per-node display (de-mangled) name.
+(defn list-modules [] :- Any
+  (let [ensure (when (not (and (.existsSync fs JS-DIR)
+                               (> (.-length (.readdirSync fs JS-DIR)) 0)))
+                 (.log console "codegraph: dist/chrome empty — running `bun run chrome:dist`…")
+                 (sh "bun run chrome:dist" {:quiet true}))]
+    (-> (.readdirSync fs JS-DIR)
+        (.filter (fn [f :- String] :- Bool (and (.startsWith f "gjoa-") (.endsWith f ".uc.js"))))
+        (.map (fn [f :- String] :- String (.join path JS-DIR f))))))
+
+(defn build-graph [] :- Any
+  (let [mods (.map (list-modules) parse-module)
+        fwd (Map.)   ;; id -> Set callee-id
+        rev (Map.)   ;; id -> Set caller-id
+        disp (Map.)  ;; id -> display name
+        mod-of (Map.) ;; id -> module
+        ensure-node (fn [id :- String m :- String nm :- String] :- Any
+                      (when (not (.has fwd id))
+                        (.set fwd id (Set.)) (.set rev id (Set.))
+                        (.set disp id (demangle nm)) (.set mod-of id m)))]
+    (doseq [pm mods]
+      (let [m (.-module pm)]
+        (doseq [nm (.-names pm)]
+          (ensure-node (str nm "@" m) m nm))
+        (.set fwd (str TOPLEVEL "@" m) (Set.))
+        (.set rev (str TOPLEVEL "@" m) (Set.))
+        (.set disp (str TOPLEVEL "@" m) (str "<toplevel:" m ">"))
+        (.set mod-of (str TOPLEVEL "@" m) m)
+        (doseq [e (.-edges pm)]
+          (let [from (str (aget e 0) "@" m)
+                to (str (aget e 1) "@" m)]
+            (when (and (.has fwd from) (.has fwd to))
+              (.add (.get fwd from) to)
+              (.add (.get rev to) from))))))
+    {:fwd fwd :rev rev :disp disp :modOf mod-of
+     :ids (Array/from (.keys fwd))}))
+
+;; Transitive closure over an adjacency Map from a seed id (BFS), excluding seed.
+(defn closure [adj :- Any seed :- String] :- Any
+  (let [seen (Set.) stack [seed]]
+    (loop []
+      (when (> (.-length stack) 0)
+        (let [cur (.pop stack)]
+          (doseq [nxt (Array/from (or (.get adj cur) (Set.)))]
+            (when (not (.has seen nxt))
+              (.add seen nxt)
+              (.push stack nxt))))
+        (recur)))
+    seen))
+
+;; Resolve a query symbol (source or emitted name, with/without @module) to ids.
+(defn resolve-ids [graph :- Any sym :- String] :- Any
+  (let [ids (.-ids graph)
+        want-mangled (mangle sym)]
+    (.filter ids
+      (fn [id :- String] :- Bool
+        (let [at (.indexOf id "@")
+              base (.substring id 0 at)]
+          (or (= id sym)
+              (= base sym)
+              (= base want-mangled)
+              (= (.get (.-disp graph) id) sym)))))))
+
+;; ── Queries ──────────────────────────────────────────────────────────────
+(defn who-calls! [graph :- Any sym :- String] :- Any
+  (let [ids (resolve-ids graph sym)]
+    (when (= (.-length ids) 0) (.log console (str "no function matching '" sym "'")) (.exit process 1))
+    (doseq [id ids]
+      (let [callers (Array/from (.get (.-rev graph) id))]
+        (.log console (str "\n" (.get (.-disp graph) id) "  (" (.get (.-modOf graph) id) ")  ← "
+                           (.-length callers) " direct caller(s):"))
+        (doseq [c (.sort (.map callers (fn [x :- String] :- String (.get (.-disp graph) x))))]
+          (.log console (str "  " c)))))))
+
+(defn blast-radius! [graph :- Any sym :- String] :- Any
+  (let [ids (resolve-ids graph sym)]
+    (when (= (.-length ids) 0) (.log console (str "no function matching '" sym "'")) (.exit process 1))
+    (doseq [id ids]
+      (let [deps (Array/from (closure (.-rev graph) id))]
+        (.log console (str "\n" (.get (.-disp graph) id) "  (" (.get (.-modOf graph) id) ")  blast-radius = "
+                           (.-length deps) " transitive dependent(s):"))
+        (doseq [d (.sort (.map deps (fn [x :- String] :- String (.get (.-disp graph) x))))]
+          (.log console (str "  " d)))))))
+
+(defn leverage! [graph :- Any n :- Number] :- Any
+  (let [scored (.map (.filter (.-ids graph) (fn [id :- String] :- Bool (not (.startsWith id TOPLEVEL))))
+                 (fn [id :- String] :- Any
+                   {:id id :n (.-size (closure (.-rev graph) id))}))
+        ranked (.sort scored (fn [a :- Any b :- Any] :- Number (- (.-n b) (.-n a))))]
+    (.log console (str "\nTop " n " functions by blast-radius (transitive dependents):\n"))
+    (doseq [row (.slice ranked 0 n)]
+      (.log console (str "  " (.padStart (str (.-n row)) 4) "  "
+                         (.get (.-disp graph) (.-id row)) "  (" (.get (.-modOf graph) (.-id row)) ")")))))
+
+;; ── Claim emission ─────────────────────────────────────────────────────────
+;; Each function node and each call edge becomes a triple. Subject ids are the
+;; node's integer index; predicates: kind/name/module/calls/leverage.
+(defn emit-claims! [graph :- Any fram? :- Bool] :- Any
+  (let [ids (.filter (.-ids graph) (fn [id :- String] :- Bool (not (.startsWith id TOPLEVEL))))
+        idx (Map.)
+        _n (doseq [i (.keys ids)] (.set idx (aget ids i) i))
+        rows []
+        push! (fn [s :- Number p :- String o :- Any link? :- Bool] :- Any
+                (.push rows {:s s :p p :o o :link link?}))]
+    (doseq [i (.keys ids)]
+      (let [id (aget ids i)]
+        (push! i "kind" "function" false)
+        (push! i "name" (.get (.-disp graph) id) false)
+        (push! i "module" (.get (.-modOf graph) id) false)
+        (push! i "leverage" (.-size (closure (.-rev graph) id)) false)
+        (doseq [callee (Array/from (.get (.-fwd graph) id))]
+          (when (.has idx callee)
+            (push! i "calls" (.get idx callee) true)))))
+    (when fram?
+      (doseq [i (.keys rows)]
+        (let [r (aget rows i)]
+          (.log console (str "{:tx " (+ i 1) ", :op \"assert\", :l " (.-s r)
+                             ", :p " (JSON/stringify (.-p r))
+                             ", :r " (if (.-link r) (.-o r) (JSON/stringify (.-o r)))
+                             ", :frame \"gjoa-codegraph\"}")))))
+    (when (not fram?)
+      (doseq [r rows]
+        (.log console (str "[" (.-s r) " " (JSON/stringify (.-p r)) " "
+                           (if (.-link r) (.-o r) (JSON/stringify (.-o r))) "]"))))
+    (.error console (str "\n; " (.-length ids) " nodes, " (.-length rows) " claims"))))
+
+(defn stats! [graph :- Any] :- Any
+  (let [fns (.filter (.-ids graph) (fn [id :- String] :- Bool (not (.startsWith id TOPLEVEL))))
+        edges (.reduce fns (fn [a :- Number id :- String] :- Number (+ a (.-size (.get (.-fwd graph) id)))) 0)
+        mods (.map (list-modules) parse-module)
+        merges (.flatMap mods (fn [m :- Any] :- Any
+                                (.map (.-merges m) (fn [kv :- Any] :- String
+                                                     (str (demangle (aget kv 0)) " (" (.-module m) ", ×" (aget kv 1) ")")))))]
+    (.log console (str "modules: " (.-length (list-modules))
+                       "\nfunction nodes: " (.-length fns)
+                       "\ncall edges (intra-module): " edges))
+    (.log console (str "within-bundle node merges (same top-level name in >1 bundled file): " (.-length merges)))
+    (doseq [m merges] (.log console (str "  - " m)))))
+
+;; ── Ground-truth equivalence (used by GATE C in test-projector) ────────────
+;; For symbol X, beagle's reported caller-fn names (source) — forward-mangled to
+;; emitted space — MUST be a subset of the projected callers across all nodes
+;; named X. (beagle under-reports; projected is the sound superset.)
+(js/export (defn beagle-callers [sym :- String] :- Any
+  (let [out (sh (str "/home/tom/code/beagle/bin/beagle callers " sym " src/gjoa/chrome/bjs") {:quiet true})
+        lines (.filter (.split (or out "") "\n") (fn [l :- String] :- Bool (.includes l "  in  ")))]
+    (Array/from (Set. (.map lines (fn [l :- String] :- String
+                                    (-> (aget (.split l "  in  ") 1)
+                                        (.split "  (") (aget 0) (.trim)))))))))
+
+(js/export (defn projected-callers [graph :- Any sym :- String] :- Any
+  (let [ids (resolve-ids graph sym)
+        names (Set.)]
+    (doseq [id ids]
+      (doseq [c (Array/from (.get (.-rev graph) id))]
+        (let [at (.indexOf c "@")]
+          (.add names (demangle (.substring c 0 at))))))
+    (Array/from names))))
+
+(js/export (defn build-graph! [] :- Any (build-graph)))
+
+(defn usage! [] :- Any
+  (.log console "usage: codegraph <who-calls|blast-radius> <fn> | leverage [N] | emit [--fram] | stats")
+  (.exit process 2))
+
+(defn main! [] :- Any
+  (let [argv (.-argv process)
+        cmd (aget argv 2)
+        arg (aget argv 3)
+        graph (build-graph)]
+    (cond
+      (= cmd "who-calls") (if arg (who-calls! graph arg) (usage!))
+      (= cmd "blast-radius") (if arg (blast-radius! graph arg) (usage!))
+      (= cmd "leverage") (leverage! graph (or (and arg (Number/parseInt arg 10)) 20))
+      (= cmd "emit") (emit-claims! graph (= arg "--fram"))
+      (= cmd "stats") (stats! graph)
+      :else (usage!))))
+
+(when (.-main (js/import-meta)) (main!))

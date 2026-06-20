@@ -1,0 +1,81 @@
+#lang beagle/js
+;; tools/release/release-notes.bjs — factual release notes from the merged commits
+;; since the last tag. NOT marketing copy — the changelog of what actually shipped,
+;; categorized by the conventional-commit prefixes gjoa already uses (feat/fix/
+;; harden/...). Plus a backstop: refuse a release body still carrying the CI
+;; placeholder, so a release can't silently ship the "Draft assembled by CI" stub.
+;;
+;;   bun .beagle-tools/gjoa/tools/release/release-notes.js [<prev-tag>]   # generate (md to stdout)
+;;   bun .beagle-tools/gjoa/tools/release/release-notes.js check <file|text>  # gate: nonzero if placeholder present
+(ns gjoa.tools.release.release-notes
+  (:require [fs :refer [readFileSync existsSync]]
+            [gjoa.tools.prep.sh :refer [sh]]))
+(define-mode strict)
+(declare-extern [process console RegExp] Any)
+
+(def PLACEHOLDER :- String "Draft assembled by CI")
+
+;; conventional-commit type -> section heading, in display order.
+(def SECTIONS :- Any
+  [["feat" "Features"] ["harden" "Security & hardening"] ["fix" "Fixes"]
+   ["perf" "Performance"] ["refactor" "Refactors"] ["revert" "Reverts"]
+   ["build" "Build"] ["docs" "Docs"] ["chore" "Chores"]])
+
+(defn known-type? [ty :- String] :- Bool
+  (.some SECTIONS (fn [s :- Any] :- Bool (= (aget s 0) ty))))
+
+(defn last-tag [] :- String
+  (.trim (sh "git tag --list 'v*' --sort=-v:refname | head -1" {:quiet true})))
+
+;; commit subject -> {type scope subject pr}. Non-conventional -> type "other".
+(defn parse-subject [s :- String] :- Any
+  (let [m (.match s (RegExp. "^([a-z]+)(?:\\(([^)]+)\\))?!?:\\s*(.+?)(?:\\s*\\(#([0-9]+)\\))?$"))]
+    (if (not m)
+      {:type "other" :scope nil :subject (.trim s) :pr nil}
+      {:type (aget m 1) :scope (aget m 2) :subject (aget m 3) :pr (aget m 4)})))
+
+(defn fmt-row [p :- Any] :- String
+  (str "- " (if (.-scope p) (str "**" (.-scope p) "**: ") "") (.-subject p)
+       (if (.-pr p) (str " (#" (.-pr p) ")") "")))
+
+(defn section! [heading :- String rows :- Any] :- Any
+  (when (> (.-length rows) 0)
+    (console/log (str "### " heading))
+    (doseq [p rows] (console/log (fmt-row p)))
+    (console/log "")))
+
+(defn generate! [prev :- String] :- Any
+  (let [range (if (= prev "") "HEAD" (str prev "..HEAD"))
+        raw (sh (str "git log " range " --no-merges --pretty=format:%s") {:quiet true})
+        subjects (.filter (.split raw "\n") (fn [s :- String] :- Bool (> (.-length (.trim s)) 0)))
+        parsed (.map subjects parse-subject)]
+    (console/log (str "## Changes since " (if (= prev "") "the beginning" prev)
+                      "  (" (.-length parsed) " commits)\n"))
+    (doseq [section SECTIONS]
+      (section! (aget section 1)
+                (.filter parsed (fn [p :- Any] :- Bool (= (.-type p) (aget section 0))))))
+    ;; conventional types not in SECTIONS (test/ci/style/...)
+    (section! "Other"
+              (.filter parsed (fn [p :- Any] :- Bool (and (not= (.-type p) "other")
+                                                          (not (known-type? (.-type p)))))))
+    ;; non-conventional commits — list plainly rather than narrate (honest)
+    (section! "Uncategorized (non-conventional commits)"
+              (.filter parsed (fn [p :- Any] :- Bool (= (.-type p) "other"))))
+    (console/log "_Generated from the merged commit log — factual changelog, not announcement copy._")))
+
+(defn gate! [target :- String] :- Any
+  (let [body (if (existsSync target) (readFileSync target "utf8") target)]
+    (if (.includes body PLACEHOLDER)
+      (do (console/error (str "release-notes: body still contains the CI placeholder (\""
+                              PLACEHOLDER "\") — refusing. Generate real notes first."))
+          (.exit process 1))
+      (console/log "release-notes: OK — no CI placeholder in the body."))))
+
+(defn main! [] :- Any
+  (let [argv (.-argv process) cmd (aget argv 2)]
+    (cond
+      (= cmd "check") (gate! (or (aget argv 3) ""))
+      :else (generate! (or cmd (last-tag))))))
+
+(when (.-main (js/import-meta))
+  (main!))

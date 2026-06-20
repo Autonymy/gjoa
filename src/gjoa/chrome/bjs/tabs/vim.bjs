@@ -1433,17 +1433,26 @@
             (key= e "i")
             (do (blur-panel) (.focus (.-selectedBrowser gBrowser)) true)
 
+            ;; Alt+hjkl MOVES the tab. The reorder axis follows the layout: in
+            ;; VERTICAL the sequence runs ↕ (j/k reorder, h/l change depth); in
+            ;; HORIZONTAL it runs ↔ (h/l reorder, j/k change depth — children stack
+            ;; below the parent in its column). So the h/l and j/k actions transpose
+            ;; with the mode — Alt+h is always "move left", Alt+j always "move down".
             (and (.-altKey e) (or (key= e "h") (= (.-code e) "KeyH") (key= e "ArrowLeft")))
-            (do (when (.-cursor state) (move-to-root (.-cursor state))) true)
+            (do (when (.-cursor state)
+                  (if (is-horizontal) (swap-up (.-cursor state)) (move-to-root (.-cursor state)))) true)
 
             (and (.-altKey e) (or (key= e "l") (= (.-code e) "KeyL") (key= e "ArrowRight")))
-            (do (when (.-cursor state) (make-child-of-above (.-cursor state))) true)
+            (do (when (.-cursor state)
+                  (if (is-horizontal) (swap-down (.-cursor state)) (make-child-of-above (.-cursor state)))) true)
 
             (and (.-altKey e) (or (key= e "j") (= (.-code e) "KeyJ") (key= e "ArrowDown")))
-            (do (when (.-cursor state) (swap-down (.-cursor state))) true)
+            (do (when (.-cursor state)
+                  (if (is-horizontal) (make-child-of-above (.-cursor state)) (swap-down (.-cursor state)))) true)
 
             (and (.-altKey e) (or (key= e "k") (= (.-code e) "KeyK") (key= e "ArrowUp")))
-            (do (when (.-cursor state) (swap-up (.-cursor state))) true)
+            (do (when (.-cursor state)
+                  (if (is-horizontal) (move-to-root (.-cursor state)) (swap-up (.-cursor state)))) true)
 
             :else
             (do

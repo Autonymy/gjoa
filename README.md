@@ -4,13 +4,13 @@
 
 # gjoa
 
-**A Firefox fork that does natively — at near-zero runtime cost — what most people bolt onto Firefox with a stack of extensions.** An ad blocker, Dark Reader, tree-style tabs — built into one aggressively optimized build.
+**gjoa is a Firefox fork where the power-user extension stack is native.** Ad blocking, forced dark mode, vertical/tree tabs, workspaces, vim navigation, session history, and egress auditing live in the browser chrome and engine — not in extensions, content scripts, or autoconfig hacks.
 
 <img src="screenshots/gjoa-newtab.png" width="760" alt="gjoa — the new-tab navigator, vertical-tab sidebar, forced-dark" />
 
 </div>
 
-Built on Firefox 152. The UI is written in [Beagle](https://github.com/Autonymy/beagle) (a typed Clojure subset) as `.bjs` modules compiled to chrome JS, loaded by a native chrome loader baked into `omni.ja` — no fx-autoconfig, no extension process, no per-page injection.
+Built on Firefox 152, written in [Beagle](https://github.com/Autonymy/beagle) (a typed Clojure subset) compiled to chrome JS and a native loader baked into `omni.ja`. Native means near-free at runtime — no Dark Reader repaint, no content-script ad blocker, no per-page injection tax. That's the whole point.
 
 > This README is the stable shape. Volatile detail — exact feature state, build outcomes — lives in [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md), [`BUILD-LEDGER.md`](BUILD-LEDGER.md), and the [releases](../../releases).
 

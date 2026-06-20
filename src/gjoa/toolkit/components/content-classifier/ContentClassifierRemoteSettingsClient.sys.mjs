@@ -280,9 +280,29 @@ export class ContentClassifierRemoteSettingsClient {
         // to the engine.
         bytes = await this.#readVerified(path);
         if (!bytes) {
-          // No (trustworthy) cache: fetch now so blocking works on first launch
-          // and so a tampered cache is replaced with a known-good copy.
-          bytes = await this.#fetchAndCache(url, path);
+          // No (trustworthy) cache: fetch a fresh, verified copy — this also
+          // self-heals a cache written before the sidecar-integrity hardening
+          // (its missing sidecar made #readVerified reject it) on the first
+          // online launch.
+          try {
+            bytes = await this.#fetchAndCache(url, path);
+          } catch (fe) {
+            // Fetch failed (offline / CDN error / transport reject). Silently
+            // dropping the list would let trackers + ads back in across the web
+            // — the visible symptom of the post-hardening cache invalidation.
+            // If a cache file is still on disk (the un-sidecar'd pre-hardening
+            // copy), fall back to it to preserve blocking continuity. Logged
+            // loudly; the background staleness refresh replaces it with a
+            // verified copy once the network recovers.
+            if (await IOUtils.exists(path)) {
+              bytes = await IOUtils.read(path);
+              lazy.log.warn(
+                `"${name}": fetch failed (${fe.message || fe}); using existing unverified cache to preserve blocking`
+              );
+            } else {
+              throw fe;
+            }
+          }
         }
       } catch (e) {
         lazy.log.error(`load "${name}" failed`, e);

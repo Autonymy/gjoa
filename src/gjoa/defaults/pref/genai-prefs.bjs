@@ -1,0 +1,24 @@
+#lang beagle/js
+;; gjoa GenAI/ML feature prefs — default branch.
+;; Shipped as DEFAULTS by compiling this file and appending its pref() output
+;; onto the branding pref file (firefox-branding.js) in tools/prep/branding.bjs
+;; — the same channel as perf-prefs / adblock-prefs / dark-mode-prefs.
+;; (`;;` comments don't survive the beagle→js emit; rationale lives here.)
+;;
+;; Mozilla's "Link Preview" (browser/components/genai/LinkPreview.sys.mjs) is an
+;; AI/ML feature: long-press or right-click a link → it generates an on-device
+;; summary (reading time, key points). On gjoa it surfaces a broken
+;; "can't preview this link" overlay (the model/fetch backend is unavailable)
+;; and is an AI/egress surface gjoa does not enable by default. Disable it at
+;; the single entry-point gate so no long-press trigger, no "Preview Link"
+;; context-menu item, and no onboarding callout appear. (LinkPreview.init reads
+;; lazy.enabled before wiring any listener, and shouldShowContextMenu checks it.)
+(ns gjoa.defaults.pref.genai)
+(define-mode strict)
+(declare-extern [pref] Any)
+
+;; The master gate — false disables every Link Preview entry point.
+(pref "browser.ml.linkPreview.enabled" false)
+;; Belt: explicitly disable the click-and-hold trigger too, so a future default
+;; flip of one pref can't silently re-arm the long-press.
+(pref "browser.ml.linkPreview.longPress" false)

@@ -6,8 +6,6 @@
 
 (declare-extern [window] Any)
 
-(js/import create-logger! "../tabs/log.js" create_logger)
-
 (def WIDTH-PREF :- String "gjoa.sidebar.width")
 
 (js/export (defn make-layout! [deps] :- Any

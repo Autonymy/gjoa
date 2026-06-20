@@ -7,9 +7,6 @@
 
 (declare-extern [document window Services requestAnimationFrame] Any)
 
-(js/import create-logger! "../tabs/log.js" create_logger)
-(js/import collapse-protection-duration-ms "./timing.js" collapse_protection_duration_ms)
-
 (defn make-mode-ops! [cfg :- Any] :- Any
   (let [st       (.-st cfg)
         elem     (.-elem cfg)

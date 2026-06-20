@@ -63,7 +63,8 @@
     "bench:memory": "bun run tools:compile && bun .beagle-tools/gjoa/tools/bench/memory.js",
     "bench:env": "sudo bash tools/bench/env.sh",
     "bench:env:restore": "sudo bash tools/bench/env.sh --restore",
-    "projector:codegraph": "bun run tools:compile && bun .beagle-tools/gjoa/tools/projector/codegraph.js"
+    "projector:codegraph": "bun run tools:compile && bun .beagle-tools/gjoa/tools/projector/codegraph.js",
+    "darkmode:regress": "bun run tools:compile && bun .beagle-tools/gjoa/tools/darkmode-regress/runner.js"
   },
   "devDependencies": {
     "acorn": "^8.17.0",

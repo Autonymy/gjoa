@@ -177,6 +177,18 @@
                                  {:capabilities {:alwaysMatch {} :firstMatch [{}]}}))]
            (.-sessionId r)))
 
+       ;; WebDriver:Navigate blocks until the page's load event (pageLoadStrategy
+       ;; "normal") — event-driven, Fission-safe. Bound it with setTimeouts.
+       :navigate
+       (fn [url :- String] :- Any
+         (js/await (send "WebDriver:Navigate" {:url url}))
+         nil)
+
+       :setTimeouts
+       (fn [timeouts :- Any] :- Any
+         (js/await (send "WebDriver:SetTimeouts" timeouts))
+         nil)
+
        :setContext
        (fn [context :- String] :- Any
          (set! (.-desired ctxState) context)

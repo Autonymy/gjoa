@@ -223,8 +223,9 @@
       (.setBoolPref d "browser.startup.homepage.abouthome_cache.enabled" false)
       ;; sovereignty: the maximal-egress-lockdown meta-pref, default OFF (see apply-lockdown!).
       (.setBoolPref d "gjoa.sovereignty.maximalLockdown" false)
-      ;; knobs: profile meta-prefs, default OFF (see PROFILES / apply-profile!).
-      (.setBoolPref d "gjoa.profile.librewolf-mode.enabled" false))
+      ;; privacy: the curated-profile selector. Default "minimal" (gjoa defaults;
+      ;; zero site breakage). See PRIVACY-PRESETS / apply-privacy-profile!.
+      (.setCharPref d "gjoa.privacy.profile" "minimal"))
     (catch Any e
       (console/error "gjoa-loader: setDefaults failed" e))))
 
@@ -298,41 +299,58 @@
 (def lockdown-observer :- Any
   {:observe (fn [_subject :- Any _topic :- Any _data :- Any] :- Any (apply-lockdown!))})
 
-;; --- knob profiles -----------------------------------------------------------
-;; A profile is a named meta-pref (gjoa.profile.<id>.enabled, default false) that
-;; batch-overrides a set of leaf prefs when ON. Same machine as apply-lockdown!,
-;; generalized: each leaf is [name on-value off-value type] — when the profile is on
-;; we set on-value, when off we set off-value (the gjoa/Firefox default), so toggling
-;; is cleanly reversible and nothing is ever destroyed. The about:knobs dashboard
-;; reads the live state; see private-docs/plan-knobs-debloat-librewolf.md.
-;; #79(a): "LibreWolf-grade DEFAULTS as one toggle" — NOT "as secure as LibreWolf".
-(def PROFILES :- Any
-  [{:pref "gjoa.profile.librewolf-mode.enabled"
-    :leaves [["privacy.resistFingerprinting" true false "bool"]
-             ["privacy.resistFingerprinting.letterboxing" true false "bool"]
-             ["network.http.referer.XOriginPolicy" 2 0 "int"]
-             ["network.http.referer.XOriginTrimmingPolicy" 2 0 "int"]
-             ["browser.search.suggest.enabled" false true "bool"]
-             ["browser.urlbar.suggest.searches" false true "bool"]
-             ["extensions.update.enabled" false true "bool"]
-             ["privacy.donottrackheader.enabled" true false "bool"]]}])
+;; --- privacy profiles --------------------------------------------------------
+;; CURATED presets. `gjoa.privacy.profile` selects one ("minimal"/"balanced"/
+;; "librewolf"/"custom"); applying it batch-sets a curated subset of privacy prefs
+;; on the DEFAULT branch (so each stays individually overridable, reversible — the
+;; about:gjoa picker flips to "custom" the moment a user hand-edits one). Each leaf
+;; is [name value type]. Presets escalate: minimal ⊂ balanced ⊂ librewolf. Kept in
+;; sync with settings/registry.json `sets` by preflight Gate N. #79(a):
+;; "LibreWolf-INSPIRED" — a curated subset of LibreWolf's DEFAULTS, NOT LibreWolf.
+(def PRIVACY-PRESETS :- Any
+  {"minimal"
+   [["privacy.resistFingerprinting" false "bool"]
+    ["privacy.resistFingerprinting.letterboxing" false "bool"]
+    ["network.http.referer.XOriginPolicy" 0 "int"]
+    ["network.http.referer.XOriginTrimmingPolicy" 0 "int"]
+    ["browser.search.suggest.enabled" true "bool"]
+    ["browser.urlbar.suggest.searches" true "bool"]
+    ["extensions.update.enabled" true "bool"]
+    ["privacy.donottrackheader.enabled" true "bool"]]
+   "balanced"
+   [["privacy.resistFingerprinting" false "bool"]
+    ["privacy.resistFingerprinting.letterboxing" false "bool"]
+    ["network.http.referer.XOriginPolicy" 0 "int"]
+    ["network.http.referer.XOriginTrimmingPolicy" 2 "int"]
+    ["browser.search.suggest.enabled" false "bool"]
+    ["browser.urlbar.suggest.searches" false "bool"]
+    ["extensions.update.enabled" true "bool"]
+    ["privacy.donottrackheader.enabled" true "bool"]]
+   "librewolf"
+   [["privacy.resistFingerprinting" true "bool"]
+    ["privacy.resistFingerprinting.letterboxing" true "bool"]
+    ["network.http.referer.XOriginPolicy" 2 "int"]
+    ["network.http.referer.XOriginTrimmingPolicy" 2 "int"]
+    ["browser.search.suggest.enabled" false "bool"]
+    ["browser.urlbar.suggest.searches" false "bool"]
+    ["extensions.update.enabled" false "bool"]
+    ["privacy.donottrackheader.enabled" true "bool"]]})
 
-(defn apply-profile! [profile :- Any] :- Any
+(defn apply-privacy-profile! [] :- Any
   (try
-    (let [d (.getDefaultBranch (.-prefs Services) "")
-          on (.getBoolPref (.-prefs Services) (.-pref profile) false)]
-      (doseq [leaf (.-leaves profile)]
-        (let [name (aget leaf 0) v (if on (aget leaf 1) (aget leaf 2))]
-          (if (= (aget leaf 3) "int") (.setIntPref d name v) (.setBoolPref d name v))))
-      (console/log (str "gjoa-loader: profile " (.-pref profile) " " (if on "ON" "off"))))
+    (let [id (.getCharPref (.-prefs Services) "gjoa.privacy.profile" "minimal")
+          preset (get PRIVACY-PRESETS id)
+          d (.getDefaultBranch (.-prefs Services) "")]
+      (when (and (not (= id "custom")) preset)
+        (doseq [leaf preset]
+          (let [name (aget leaf 0) v (aget leaf 1)]
+            (if (= (aget leaf 2) "int") (.setIntPref d name v) (.setBoolPref d name v))))
+        (console/log (str "gjoa-loader: privacy profile '" id "' applied"))))
     (catch Any e
-      (console/error "gjoa-loader: apply-profile failed" e))))
-
-(defn apply-all-profiles! [] :- Any
-  (doseq [p PROFILES] (apply-profile! p)))
+      (console/error "gjoa-loader: apply-privacy-profile failed" e))))
 
 (def profile-observer :- Any
-  {:observe (fn [_subject :- Any _topic :- Any _data :- Any] :- Any (apply-all-profiles!))})
+  {:observe (fn [_subject :- Any _topic :- Any _data :- Any] :- Any (apply-privacy-profile!))})
 
 ;; --- about: pages (sovereignty + knobs) --------------------------------------
 ;; Register a privileged chrome page as a real about:<what> page at runtime (no
@@ -393,8 +411,8 @@
       (set-defaults)
       (apply-lockdown!)
       (.addObserver (.-prefs Services) LOCKDOWN-PREF lockdown-observer)
-      (apply-all-profiles!)
-      (.addObserver (.-prefs Services) "gjoa.profile." profile-observer)
+      (apply-privacy-profile!)
+      (.addObserver (.-prefs Services) "gjoa.privacy.profile" profile-observer)
       (register-about-pages!)
       (register-aboutprefs-actor!)
       (set-new-tab-url!)

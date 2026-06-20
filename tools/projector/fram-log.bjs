@@ -1,0 +1,100 @@
+#lang beagle/js
+;; tools/projector/fram-log.bjs — Phase 5 / JS-on-Fram (#75): project a JS source
+;; file's lossless CST into Fram-format claim records, and reconstruct byte-
+;; identically. This is the JS analogue of bin/fram-ingest-code (which does .bclj
+;; via racket): it mirrors the Beagle node vocabulary (kind / seg / child) and uses
+;; the CRDT order-key predicates the fram rewrite landed (f<path>~<tie>; single-
+;; writer ingest = sequential path, tie 0). Byte-identity proves the claim
+;; representation is lossless — the JS analogue of chartroom/roundtrip_fram.clj.
+;;
+;; This is the persistence FORMAT, verified standalone (no live daemon). Writing the
+;; records to a live Fram code-log + Datalog queries is the next layer.
+;;   bun .beagle-tools/gjoa/tools/projector/fram-log.js <file.js>
+(ns gjoa.tools.projector.fram-log
+  (:require [fs :refer [readFileSync]]
+            [gjoa.tools.projector.reflector :refer [reflect render]]))
+(define-mode strict)
+(declare-extern [process console] Any)
+
+(def ORD-STEP :- Int 65536)
+;; CRDT order key for the k-th child of a node: sequential path, tie 0 (the single-
+;; writer ingest case; concurrent edits would get distinct ties via the daemon).
+(defn ord-key [k :- Int] :- String (str "f" (* ORD-STEP (+ k 1)) "~0"))
+;; parse the path int out of "f<int>~<tie>" (for sort-order on read).
+(defn ord-path [p :- String] :- Int
+  (parseInt (.slice p 1 (.indexOf p "~")) 10))
+(defn ord-key? [p :- String] :- Bool
+  (and (.startsWith p "f") (.includes p "~")))
+
+;; CST -> flat Fram claim records [{:l id :p pred :r obj} ...] + the root id.
+;; ids are "@<module>#<n>". preds: "kind" (-> type literal), "seg<i>" (-> literal),
+;; and an order-key "f<path>~<tie>" per child (-> child id link). `link?` marks an
+;; :r that is a node ref vs a literal value (mirrors fram-ingest-code's int-vs-string).
+(defn cst->records [cst :- Any module :- String] :- Any
+  (let [records []
+        counter [0]]
+    (loop-emit cst module records counter)
+    {:root (str "@" module "#0") :records records}))
+
+;; (defined as a separate recursive walker so beagle can self-call cleanly)
+(defn loop-emit [c :- Any module :- String records :- Any counter :- Any] :- String
+  (let [id (str "@" module "#" (aget counter 0))]
+    (aset counter 0 (+ (aget counter 0) 1))
+    (.push records {:l id :p "kind" :r (.-kind c) :link false})
+    (let [segs (.-segs c) kids (.-kids c)]
+      (loop [i 0]
+        (when (< i (.-length segs))
+          (.push records {:l id :p (str "seg" i) :r (aget segs i) :link false})
+          (recur (+ i 1))))
+      (loop [i 0]
+        (when (< i (.-length kids))
+          (let [cid (loop-emit (aget kids i) module records counter)]
+            (.push records {:l id :p (ord-key i) :r cid :link true}))
+          (recur (+ i 1)))))
+    id))
+
+;; reconstruct a CST from the records, starting at `root`. Indexes records by node
+;; id (a JS Map for string keys), orders children by their CRDT key, and rebuilds
+;; the seg/child interleave.
+(defn records->cst [root :- String records :- Any] :- Any
+  (let [groups (Map.)]
+    (doseq [r records]
+      (let [g (.get groups (.-l r))]
+        (if (some? g) (.push g r) (.set groups (.-l r) [r]))))
+    (rebuild root groups)))
+
+(defn rebuild [id :- String groups :- Any] :- Any
+  (let [rs (.get groups id)
+        kind [""]
+        segs []         ; collected by index below
+        seg-pairs []    ; [index text]
+        kids []]        ; [pathInt childId]
+    (doseq [r rs]
+      (let [p (.-p r)]
+        (cond
+          (= p "kind") (aset kind 0 (.-r r))
+          (.startsWith p "seg") (.push seg-pairs {:i (parseInt (.slice p 3) 10) :t (.-r r)})
+          (ord-key? p) (.push kids {:k (ord-path p) :id (.-r r)})
+          :else nil)))
+    ;; segs in index order
+    (.sort seg-pairs (fn [a :- Any b :- Any] :- Int (- (.-i a) (.-i b))))
+    (doseq [sp seg-pairs] (.push segs (.-t sp)))
+    ;; children in CRDT-key order
+    (.sort kids (fn [a :- Any b :- Any] :- Int (- (.-k a) (.-k b))))
+    (let [child-csts []]
+      (doseq [kd kids] (.push child-csts (rebuild (.-id kd) groups)))
+      {:kind (aget kind 0) :start 0 :end 0 :segs segs :kids child-csts})))
+
+(defn main! [] :- Any
+  (let [path (aget (.-argv process) 2)
+        src (readFileSync path "utf8")
+        cst (reflect src)
+        proj (cst->records cst "newtab")
+        records (.-records proj)
+        round (render (records->cst (.-root proj) records))
+        ok (= round src)]
+    (console/log (str path ": " (.-length records) " claim records, byte-identical=" ok))
+    (when (not ok) (.exit process 1))))
+
+(when (.-main (js/import-meta))
+  (main!))

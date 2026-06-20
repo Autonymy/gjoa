@@ -53,7 +53,12 @@ nix build .#gjoa-dev --impure   # dev variant — fast, no LTO, CPU-portable
 ./result/bin/gjoa
 ```
 
-`.#gjoa` is tuned to the building machine's CPU (fastest, but SIGILLs on a different chip — the maintainer's daily driver, never handed out). Portable, distributable builds are the **CI artifacts** (`.github/workflows/`): a Linux x86_64 tarball, a macOS (Apple Silicon) `.dmg`, and a Windows x86_64 `.zip`, none `-march=native`. `nix bundle .#gjoa-dev --impure` emits a single relocatable Linux executable (no Nix on the target). CI clones the [Beagle](https://github.com/Autonymy/beagle) compiler as a sibling checkout.
+Two flavors, and the only difference is CPU portability:
+
+- **Your own machine → `.#gjoa`.** Compiled `-march=native` (for the CPU it's built on) — fastest, but it can crash (SIGILL) on hardware that lacks those instructions, so it's a *local* build, not for arbitrary machines.
+- **Sharing with anyone else → a portable build.** The **release artifacts** (`.github/workflows/` builds them on every tag — a Linux x86_64 tarball, a macOS Apple-Silicon `.dmg`, a Windows x86_64 `.zip`, all non-`-march=native`), or `nix bundle .#gjoa-dev --impure` for a single relocatable Linux executable that runs on any glibc distro with no Nix on the target. These are the builds to hand out.
+
+CI clones the [Beagle](https://github.com/Autonymy/beagle) compiler as a sibling checkout before building.
 
 ## Dev loop
 

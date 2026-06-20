@@ -2,8 +2,9 @@
 ;; Deterministic dark-mode contrast regression runner.
 ;;
 ;; Spawns a built gjoa headless under Marionette (engine dark mode ON). Per corpus
-;; site: WebDriver:Navigate (event-driven — waits on the real load event), one
-;; rAF settle (next painted frame), collect text rects+colors (content), capture
+;; site: WebDriver:Navigate ("eager" — resolves at DOMContentLoaded; the slow ad/
+;; tracker tail never settles), one rAF settle (next painted frame), collect text
+;; rects+colors (content), capture
 ;; the composited pixels via drawSnapshot (chrome, Fission-safe), and compute APCA
 ;; Lc(text-color, median backdrop) per element. |Lc| < threshold = a dark-on-dark /
 ;; low-contrast FAIL. Writes per-site PNG + report.json; exits nonzero on any fail.
@@ -40,6 +41,14 @@
 (defn safe-shot [client :- Any] :- Any
   (try (js/await (.takeScreenshot client)) (catch Error e nil)))
 
+;; A nav that times out (slow ad/tracker tail) still left a rendered DOM behind —
+;; pageLoadStrategy "eager" returns at DOMContentLoaded, and the rAF settle paints
+;; the above-the-fold text we measure. So a timeout must NOT abort the site: swallow
+;; it and let rects/snap measure what actually painted. Returns the error msg (for
+;; the report) or nil.
+(defn safe-nav! [client :- Any url :- String] :- Any
+  (try (js/await (.navigate client url)) nil (catch Error e (or (.-message e) (str e)))))
+
 ;; Navigate + measure one site. Per-site try so one bad site can't kill the run.
 (defn process-site! [client :- Any url :- String threshold :- Any
                      rects-js :- String snap-js :- String outdir :- String] :- Any
@@ -48,7 +57,7 @@
       ;; content context FIRST — WebDriver:Navigate + the DOM scripts are
       ;; content-only; the previous site left us in chrome (drawSnapshot).
       (let [_c0 (js/await (.setContext client "content"))
-            _nav (js/await (.navigate client url))
+            navwarn (js/await (safe-nav! client url))
             _raf (js/await (.executeAsyncScript client RAF-JS []))
             meta (js/await (.executeScript client rects-js []))
             _c2 (js/await (.setContext client "chrome"))
@@ -56,7 +65,7 @@
             shot (js/await (safe-shot client))]
         (when shot (.writeFileSync fs (.join path outdir (str host ".png")) shot {:encoding "base64"}))
         {:url url :host host :checked (or (.-checked res) 0) :fails (or (.-total res) 0)
-         :worst (or (.-fails res) []) :err (or (.-err res) nil)})
+         :worst (or (.-fails res) []) :err (or (.-err res) nil) :navwarn navwarn})
       (catch Error e
         {:url url :host host :checked 0 :fails 0 :worst [] :err (or (.-message e) (str e))}))))
 
@@ -78,8 +87,12 @@
                         :env (.assign Object {} (.-env process)
                                {"GJOA_ALLOW_INSECURE" "1" "MOZ_HEADLESS" "1"})})
           client (js/await (connect-marionette {:connectTimeoutMs 60000}))
-          _ses (js/await (.newSession client))
-          _to (js/await (.setTimeouts client {:pageLoad 20000 :script 30000}))
+          ;; "eager" → Navigate resolves at DOMContentLoaded (DOM painted) rather
+          ;; than the full load event, which heavy news/ad sites never reach inside
+          ;; any sane bound. pageLoad here is just a backstop; safe-nav! measures a
+          ;; partial page if even that trips.
+          _ses (js/await (.newSession client {:pageLoadStrategy "eager"}))
+          _to (js/await (.setTimeouts client {:pageLoad 30000 :script 30000}))
           results []]
       (doseq [site sites]
         (let [r (js/await (process-site! client (.-url site) threshold rects-js snap-js outdir))]

@@ -172,13 +172,17 @@
           ctxState {:desired nil}]
 
       {:newSession
-       (fn [] :- Any
+       ;; caps: optional alwaysMatch map (e.g. {:pageLoadStrategy "eager"} to
+       ;; return Navigate at DOMContentLoaded instead of the full load event —
+       ;; heavy sites never settle their ad/tracker tail). No arg = {} (default).
+       (fn [caps :- Any] :- Any
          (let [r (js/await (send "WebDriver:NewSession"
-                                 {:capabilities {:alwaysMatch {} :firstMatch [{}]}}))]
+                                 {:capabilities {:alwaysMatch (or caps {}) :firstMatch [{}]}}))]
            (.-sessionId r)))
 
-       ;; WebDriver:Navigate blocks until the page's load event (pageLoadStrategy
-       ;; "normal") — event-driven, Fission-safe. Bound it with setTimeouts.
+       ;; WebDriver:Navigate blocks until the session's pageLoadStrategy is met
+       ;; (default "normal" = load event; "eager" = DOMContentLoaded) — event-
+       ;; driven, Fission-safe. Bound it with setTimeouts.
        :navigate
        (fn [url :- String] :- Any
          (js/await (send "WebDriver:Navigate" {:url url}))

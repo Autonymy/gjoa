@@ -22,6 +22,7 @@
     "preflight": "bun run tools:compile && bun .beagle-tools/gjoa/tools/scripts/preflight.js",
     "cost": "bun run tools:compile && bun .beagle-tools/gjoa/tools/prep/patch-cost.js",
     "forecast": "bun run tools:compile && bun .beagle-tools/gjoa/tools/prep/conflict-forecast.js",
+    "firefox-api-drift": "bun run tools:compile && bun .beagle-tools/gjoa/tools/prep/firefox-api-surface.js",
     "projector:roundtrip": "bun run tools:compile && bun .beagle-tools/gjoa/tools/projector/reflector.js",
     "projector:pilot": "bun run tools:compile && bun .beagle-tools/gjoa/tools/projector/run-pilot.js",
     "projector:gen-claims": "bun run tools:compile && bun .beagle-tools/gjoa/tools/projector/gen-claims.js",

@@ -3,4 +3,4 @@
 # ref so drift is visible. Preflight Gate M warns if ../beagle's HEAD differs; the
 # build fingerprint bakes the ACTUAL ref into the binary (gjoa.build.beagle-ref).
 # Bump deliberately — review the beagle changelog — when tracking a new beagle.
-e8555b487b8bd98c064688410bde3c6ac264b45d
+77df8a9343ee3c242187872cf6c5f39b6bec619f

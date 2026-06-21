@@ -3,6 +3,7 @@
   (:require [gjoa.macros :refer [q qa xul-new attr! on! onc! bool has? rmattr! css! tabs! toggle! undef-or last-of]]
             [gjoa.tabs.log :refer [create-logger!]]
             [gjoa.tabs.state :refer [state row-of selection moving-tabs]]
+            [gjoa.tabs.constants :refer [INDENT]]
             [gjoa.tabs.helpers :refer [all-rows data-of! is-horizontal level-of level-of-row subtree-rows tab-by-id tree-data!]]))
 (define-mode strict)
 
@@ -72,6 +73,29 @@
                       #(.-_tab %)
                       #(.-previousElementSibling %))]
     (and hit (.-_tab hit))))
+
+;; Resolve the grid cell (.gjoa-tab-row / .gjoa-group-row) actually under the
+;; pointer, scoped to `container`'s visible rows. In the horizontal column-major
+;; grid (rows.bjs update-horizontal-grid) each root opens a new COLUMN and its
+;; children stack BELOW it, so the per-row `dragover` listener can fire on a
+;; neighbouring cell when the pointer is near a column/row boundary — which is
+;; the #101 imprecision. Hit-testing the real rects makes the drop land on the
+;; cell the user is actually pointing at. Returns nil when the pointer is in a
+;; grid gap (the caller then falls back to the listener's own row).
+(defn cell-under! [container :- Any client-x :- Any client-y :- Any] :- Any
+  (let [rows (when container
+               (.querySelectorAll container
+                 ".gjoa-tab-row:not([hidden]), .gjoa-group-row:not([hidden])"))
+        found :- Any {:v nil}]
+    (when rows
+      (.forEach rows
+        (fn [r]
+          (when (not (.-v found))
+            (let [rect (.getBoundingClientRect r)]
+              (when (and (>= client-x (.-left rect)) (< client-x (.-right rect))
+                         (>= client-y (.-top rect)) (< client-y (.-bottom rect)))
+                (set! (.-v found) r)))))))
+    (.-v found)))
 
 ;; Last tab inside the group's visual subtree, or -- if the group has no
 ;; tabs in its subtree -- the closest preceding tab before the group.
@@ -576,17 +600,39 @@
                                   row)))
                   (.preventDefault e)
                   (set! (.-dropEffect (.-dataTransfer e)) "move")
-                  (let [rect (.getBoundingClientRect row)
+                  (let [horizontal (is-horizontal)
+                        ;; #101: in horizontal mode the drop maps to the real grid
+                        ;; cell under the pointer, not whichever row's per-row
+                        ;; listener happened to fire (they diverge near a column/
+                        ;; row boundary). Skip the resolved cell if it's the drag
+                        ;; source or inside its subtree; fall back to the listener
+                        ;; row when the pointer is in a grid gap.
+                        target (if horizontal
+                                 (let [c (cell-under! (.-parentNode row)
+                                           (.-clientX e) (.-clientY e))]
+                                   (if (and c
+                                            (not= c (.-dragSource ds))
+                                            (not (.includes
+                                                   (subtree-rows (.-dragSource ds)) c)))
+                                     c
+                                     row))
+                                 row)
+                        rect (.getBoundingClientRect target)
                         x (- (.-clientX e) (.-left rect))
                         y (- (.-clientY e) (.-top rect))
-                        horizontal (is-horizontal)
                         pos-info :- Any {:branch ""}]
                     (if horizontal
                       (cond
-                        (> y (* (.-height rect) (/ 2 3)))
+                        ;; child only in the bottom QUARTER (was the lower third —
+                        ;; too greedy: a column cell is short, so a sibling drop
+                        ;; aimed at a cell's body kept getting stolen into
+                        ;; child-of-target, which IS the #101 imprecision). Nesting
+                        ;; still works by aiming the lower strip; the upper 3/4 is
+                        ;; precise before/after sibling space.
+                        (> y (* (.-height rect) 0.75))
                         (do (set! (.-dropPosition ds) "child")
                             (set! (.-branch pos-info)
-                                  "hz/y>2/3->child"))
+                                  "hz/y>3/4->child"))
 
                         (< x (/ (.-width rect) 2))
                         (do (set! (.-dropPosition ds) "before")
@@ -614,12 +660,12 @@
                           (do (set! (.-dropPosition ds) "child")
                               (set! (.-branch pos-info)
                                     "vt/middle->child")))))
-                    (set! (.-dropTarget ds) row)
-                    (when (or (.-_group row)
+                    (set! (.-dropTarget ds) target)
+                    (when (or (.-_group target)
                               (not= (.-v last-logged)
                                     (.-dropPosition ds)))
                       (log "dragover"
-                           {:target (row-desc row)
+                           {:target (row-desc target)
                             :source (row-desc (.-dragSource ds))
                             :position (.-dropPosition ds)
                             :posBranch (.-branch pos-info)
@@ -629,7 +675,7 @@
                                     :y (Math/round y)}
                             :horizontal horizontal})
                       (set! (.-v last-logged) (.-dropPosition ds)))
-                    (show-drop-indicator row (.-dropPosition ds)))))))
+                    (show-drop-indicator target (.-dropPosition ds)))))))
 
           ;; dragleave
           (on! row "dragleave"
@@ -642,37 +688,44 @@
           ;; drop
           (on! row "drop"
             (fn [e]
-              (log "drop/row:fired"
-                   {:listenerOnRow (row-desc row)
-                    :hasDragSource (bool (.-dragSource ds))
-                    :sourceEqualsRow (= (.-dragSource ds) row)})
               (.preventDefault e)
-              (cond
-                (not (.-dragSource ds))
-                (log "drop/row:abort" {:reason "no-dragSource"})
+              ;; Commit to the cell the dragover RESOLVED (#101): for the
+              ;; horizontal grid that's the real cell under the pointer, which can
+              ;; differ from THIS listener's row near a column/row boundary —
+              ;; dragover computed dropPosition for that resolved cell, so the drop
+              ;; must use it too. Falls back to the listener row when no dragover
+              ;; ran (dropTarget unset).
+              (let [tgt (or (.-dropTarget ds) row)]
+                (log "drop/row:fired"
+                     {:listenerOnRow (row-desc row)
+                      :resolvedTarget (row-desc tgt)
+                      :hasDragSource (bool (.-dragSource ds))})
+                (cond
+                  (not (.-dragSource ds))
+                  (log "drop/row:abort" {:reason "no-dragSource"})
 
-                (= (.-dragSource ds) row)
-                (log "drop/row:abort" {:reason "source-equals-row"})
+                  (= (.-dragSource ds) tgt)
+                  (log "drop/row:abort" {:reason "source-equals-target"})
 
-                (.includes (subtree-rows (.-dragSource ds)) row)
-                (log "drop/row:abort" {:reason "row-in-source-subtree"})
+                  (.includes (subtree-rows (.-dragSource ds)) tgt)
+                  (log "drop/row:abort" {:reason "target-in-source-subtree"})
 
-                :else
-                (do
-                  (log "drop/row:proceeding"
-                       {:target (row-desc row)
-                        :source (row-desc (.-dragSource ds))
-                        :position (.-dropPosition ds)})
-                  (if (and (.-dropPosition ds)
-                           (not= (.-dropPosition ds)
-                                 "into-empty-pinned")
-                           (not= (.-dropPosition ds)
-                                 "into-empty-panel"))
-                    (execute-drop (.-dragSource ds) row
-                      (.-dropPosition ds))
-                    (log "drop/row:abort"
-                         {:reason "no-or-empty-zone-position"
-                          :dropPosition (.-dropPosition ds)}))))
+                  :else
+                  (do
+                    (log "drop/row:proceeding"
+                         {:target (row-desc tgt)
+                          :source (row-desc (.-dragSource ds))
+                          :position (.-dropPosition ds)})
+                    (if (and (.-dropPosition ds)
+                             (not= (.-dropPosition ds)
+                                   "into-empty-pinned")
+                             (not= (.-dropPosition ds)
+                                   "into-empty-panel"))
+                      (execute-drop (.-dragSource ds) tgt
+                        (.-dropPosition ds))
+                      (log "drop/row:abort"
+                           {:reason "no-or-empty-zone-position"
+                            :dropPosition (.-dropPosition ds)})))))
               (clear-drop-indicator))))
 
         ;; --- setupPinnedContainerDrop ---

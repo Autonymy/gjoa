@@ -1,4 +1,16 @@
 #lang beagle/js
+;; ⚠️ WIP / BLOCKED (2026-06-21) — structural drawSnapshot conversion in place, but
+;; the text-rect ENUMERATE pass still uses Marionette CONTENT context, which discards
+;; ("Browsing context has been discarded") on ANY gjoa-loaded page in headless —
+;; independent of dark mode (off discards too), the nav mechanism (chrome loadURI
+;; discards too), and the darkmode actor (gated, still discards). It's a general
+;; gjoa-content + Marionette-content-context incompatibility, NOT a product defect
+;; (the product renders — validated by the 11/0 drawSnapshot suite + smoke). See
+;; [[project_darkmode_marionette_content_ctx_limit]]. PATH FORWARD: enumerate text
+;; rects without a Marionette content handle — a content frame-script / JSActor query
+;; (the content PROCESS is alive, only the WebDriver handle detaches), or bake known
+;; text rects into the fixtures (as the /dark white-probe does). Network lane only.
+;;
 ;; Dark-mode contrast-regression harness (#55) — the no-mistakes gate.
 ;;
 ;; For each golden fixture it drives the REAL binary in the production dark-mode
@@ -21,7 +33,7 @@
 ;; Precondition: tools/test-driver/contrast-fixture-server.mjs serving :8976
 ;; (the runner --with-fixtures flag spawns it).
 (ns gjoa.tests.integration.contrast
-  (:require [gjoa.tests.dsl :refer [deftest expect sleep NAV-JS]]
+  (:require [gjoa.tests.dsl :refer [deftest expect sleep NAV-JS await-true wait-for]]
             [gjoa.tools.test-driver.contrast-score :refer [evaluate-box score-page]]
             [gjoa.tools.test-driver.contrast-sample :refer [decode-png sample-backdrop sample-foreground]]))
 (define-mode strict)
@@ -50,6 +62,34 @@
        " Services.prefs.setCharPref('gjoa.darkmode.mode', 'hybrid');"
        " return 'on';"))
 
+;; darkmode OFF — for the rect-enumeration pass. Content getComputedStyle works
+;; pre-inversion, and page LAYOUT is inversion-invariant so the rects stay valid
+;; for the inverted snapshot.
+(def DARK-OFF-JS :- String
+  (str "Services.prefs.setBoolPref('gjoa.darkmode.enabled', false);"
+       " Services.prefs.setBoolPref('gjoa.darkmode.invert.enabled', false);"
+       " return 'off';"))
+
+;; Chrome-side full-page capture: drawSnapshot the document (w×h CSS px at dpr) into
+;; an OffscreenCanvas, PNG-encode, base64. Replaces Marionette TakeScreenshot, which
+;; needs a content WebDriver handle that engine inversion detaches ("discarded"). PNG
+;; keeps the payload compact (raw full-page RGBA is too big to serialize back) and
+;; feeds the EXISTING decode-png unchanged.
+(defn snapshot-png-js [w :- Any h :- Any] :- String
+  (str "const done = arguments[arguments.length-1];"
+       "(async () => { try {"
+       "  const win = Services.wm.getMostRecentWindow('navigator:browser');"
+       "  const wg = win.gBrowser.selectedBrowser.browsingContext.currentWindowGlobal;"
+       "  const scale = win.devicePixelRatio || 1;"
+       "  const W = Math.max(1, Math.round(" w ")), H = Math.max(1, Math.round(" h "));"
+       "  const bm = await wg.drawSnapshot(new win.DOMRect(0,0,W,H), scale, 'rgb(255,255,255)');"
+       "  const cv = new win.OffscreenCanvas(Math.round(W*scale), Math.round(H*scale));"
+       "  cv.getContext('2d').drawImage(bm,0,0);"
+       "  const buf = new Uint8Array(await (await cv.convertToBlob({type:'image/png'})).arrayBuffer());"
+       "  let s=''; for (let i=0;i<buf.length;i+=0x8000){ s += String.fromCharCode.apply(null, buf.subarray(i,i+0x8000)); }"
+       "  done(win.btoa(s));"
+       "} catch(e){ done('ERR:'+(e&&e.message||e)); } })();"))
+
 ;; Content-side enumeration: every visible text run -> page-relative box + its
 ;; post-inversion computed color + size/weight. Range.getClientRects (not the
 ;; element box) so we measure the text itself, not its padding. Capped at 400.
@@ -76,39 +116,52 @@
 
 ;; Run the full measure flow for one fixture and assert its baseline floor.
 (defn check-fixture [mn :- Any name :- String] :- Any
-  (js/await (.setContext mn "chrome"))
-  (js/await (.executeScript mn PREFS-JS))
-  (let [url (str BASE name)
-        navOk (js/await (.executeAsyncScript mn NAV-JS [url]))]
-    (expect navOk (str "fixture " url " did not load — is contrast-fixture-server on :8976?"))
-    (js/await (sleep 800))
+  (let [url (str BASE name)]
+    ;; PASS 1 — darkmode OFF: navigate + enumerate text rects in CONTENT (works
+    ;; pre-inversion). Layout is inversion-invariant, so these page-relative rects
+    ;; stay valid for the inverted snapshot below.
+    (js/await (.setContext mn "chrome"))
+    (js/await (.executeScript mn DARK-OFF-JS))
+    (js/await (.executeAsyncScript mn NAV-JS [url]))
+    (js/await (sleep 500))
     (js/await (.setContext mn "content"))
-    (let [meta (JSON/parse (js/await (.executeScript mn ENUMERATE-JS)))
-          shot (js/await (.takeScreenshot mn))
-          png (decode-png shot)
-          page-w (.-pageWidth meta)
-          scale (if (> page-w 0) (/ (:width png) page-w) 1)
-          boxes (.-boxes meta)
-          results (.map boxes
-                    (fn [b :- Any] :- Any
-                      (let [rect {:x (.-x b) :y (.-y b) :w (.-w b) :h (.-h b)}
-                            bg (sample-backdrop png rect scale)
-                            ;; PAINTED glyph (M3-aware), not the computed CSS color
-                            ;; (which is 0009-inverted and M3-blind).
-                            fg (sample-foreground png rect scale)]
-                        (evaluate-box fg bg (.-fontSize b) (.-bold b) (.-text b)))))
-          score (score-page results)
-          ratio (:passRatio score)
-          baseline (or (get BASELINES name) 0)]
-      (console/log (str "\n[contrast] " name ": passRatio=" (.toFixed ratio 3)
-                         " (" (:passes score) "/" (:total score) ") minRatio="
-                         (.toFixed (:minRatio score) 2) " baseline=" baseline))
-      (doseq [w (:worst5 score)]
-        (when (not (:pass w))
-          (console/log (str "    FAIL box ratio=" (.toFixed (:ratio w) 2)
-                             " need=" (:thr w) " \"" (:text w) "\""))))
-      (expect (>= ratio baseline)
-              (str name " contrast regressed: passRatio " (.toFixed ratio 3) " < baseline " baseline)))))
+    ;; await-true POLLS (wait-for catches errors + retries at 20ms) past the transient
+    ;; post-navigation "Browsing context has been discarded" until the content doc is
+    ;; ready; a one-shot executeScript here fails on that transient. Then enumerate.
+    (await-true "return document.readyState === 'complete';" 8000)
+    (let [meta (JSON/parse (js/await (.executeScript mn ENUMERATE-JS)))]
+      ;; PASS 2 — enable production darkmode (hybrid) + re-navigate so the page
+      ;; re-cascades INVERTED, then read the PAINTED result chrome-side (the metric
+      ;; is now painted contrast — exactly what M3 guarantees).
+      (js/await (.setContext mn "chrome"))
+      (js/await (.executeScript mn PREFS-JS))
+      (js/await (.executeAsyncScript mn NAV-JS [url]))
+      (js/await (sleep 800))
+      (let [page-w (.-pageWidth meta)
+            shot (js/await (.executeAsyncScript mn (snapshot-png-js page-w (.-pageHeight meta)) []))
+            _ (when (.startsWith shot "ERR:") (expect false (str name " drawSnapshot capture failed: " shot)))
+            png (decode-png shot)
+            scale (if (> page-w 0) (/ (:width png) page-w) 1)
+            boxes (.-boxes meta)
+            results (.map boxes
+                      (fn [b :- Any] :- Any
+                        (let [rect {:x (.-x b) :y (.-y b) :w (.-w b) :h (.-h b)}
+                              bg (sample-backdrop png rect scale)
+                              ;; PAINTED glyph (M3-aware), not the computed CSS color.
+                              fg (sample-foreground png rect scale)]
+                          (evaluate-box fg bg (.-fontSize b) (.-bold b) (.-text b)))))
+            score (score-page results)
+            ratio (:passRatio score)
+            baseline (or (get BASELINES name) 0)]
+        (console/log (str "\n[contrast] " name ": passRatio=" (.toFixed ratio 3)
+                           " (" (:passes score) "/" (:total score) ") minRatio="
+                           (.toFixed (:minRatio score) 2) " baseline=" baseline))
+        (doseq [w (:worst5 score)]
+          (when (not (:pass w))
+            (console/log (str "    FAIL box ratio=" (.toFixed (:ratio w) 2)
+                               " need=" (:thr w) " \"" (:text w) "\""))))
+        (expect (>= ratio baseline)
+                (str name " contrast regressed: passRatio " (.toFixed ratio 3) " < baseline " baseline))))))
 
 (js/export (def tests :- Any
   [(deftest "contrast: mit-news (image-hero — the failing baseline)" [mn ctx] (js/await (check-fixture mn "mit-news")))

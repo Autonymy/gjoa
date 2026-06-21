@@ -430,3 +430,6 @@ export function max_key(k, ...xs) {
 export function min_key(k, ...xs) {
   return xs.reduce((a, b) => k(b) < k(a) ? b : a);
 }
+
+// ── pin-compat shim (tools/prep/overlay.bjs) ──
+export { equiv as equivV };

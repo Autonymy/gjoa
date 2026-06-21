@@ -576,6 +576,109 @@
           (pass "P" "patch hashes match recorded manifest (#104a)"
             (str (.-length patches) "/" (.-length patches) " patch hashes match configs/patch-hashes.json")))))))
 
+;; ── Gate Q: $$bc runtime export-closure (emit ↔ vendored core.js) ──────────
+;; gjoa's chrome compiles against the pinned beagle (configs/beagle.ref) and
+;; references the value-semantics runtime ($$bc) two ways:
+;;   (a) namespace property access `$$bc.X`        — in the .uc.js bundles
+;;       (window.$$bc is the ESM namespace import set up by GjoaLoader), and
+;;   (b) ESM NAMED imports `import { X as $$bc$… } from '…/beagle/core.js'`
+;;       — in the .sys.mjs (GjoaLoader). THIS form is what broke 2026-06-21:
+;;       the pin's bin/beagle-build emitted `import { equivV … }` but the pin's
+;;       core.js exports only `equiv` — a named-import of a missing export is a
+;;       module-load SyntaxError that kills GjoaLoader.sys.mjs at import and the
+;;       whole gjoa chrome never initializes. A gate that greps only `$$bc.X`
+;;       would MISS this — so we parse BOTH forms.
+;; Assertion: for every emitted gjoa chrome file, the set of beagle-runtime
+;; symbols it references must be a SUBSET of the vendored core.js export surface.
+;; Any `file: symbol` not exported is a hard fail — the same skew the shim fixes.
+(def VENDORED-CORE :- String
+  (join ENGINE-DIR "browser" "components" "gjoa" "beagle" "core.js"))
+(def GJOA-LOADER-MJS :- String
+  (join ENGINE-DIR "browser" "components" "gjoa" "GjoaLoader.sys.mjs"))
+(def GJOA-BUNDLE-DIR :- String
+  (join ENGINE-DIR "obj-x86_64-pc-linux-gnu" "dist" "bin" "browser" "chrome" "browser" "content" "gjoa" "scripts"))
+;; Fallback bundle source (engine/ src copy), used when the obj-* deploy dir
+;; isn't populated yet (no mach build) — the bundles are identical .uc.js.
+(def GJOA-BUNDLE-SRC-DIR :- String
+  (join ENGINE-DIR "browser" "components" "gjoa" "content" "scripts"))
+
+;; export surface of the vendored core.js: `export function NAME`,
+;; `export const NAME`, and re-exports `export { A as B }` (B is the exported
+;; name) / `export { A }` (A is exported). The compat shim's
+;; `export { equiv as equivV };` lands `equivV` here.
+(defn core-export-surface [src :- String] :- Any
+  (let [surface (Set.)]
+    (doseq [m (Array/from (.matchAll src (RegExp. "export\\s+(?:function|const)\\s+([A-Za-z_$][A-Za-z0-9_$]*)" "g")))]
+      (.add surface (aget m 1)))
+    ;; `export { a as b, c }` → exported names are b and c.
+    (doseq [m (Array/from (.matchAll src (RegExp. "export\\s*\\{([^}]*)\\}" "g")))]
+      (doseq [clause (.split (aget m 1) ",")]
+        (let [t (.trim clause)]
+          (when (> (.-length t) 0)
+            (let [asM (.match t (RegExp. "\\bas\\s+([A-Za-z_$][A-Za-z0-9_$]*)\\s*$"))]
+              (.add surface (if asM (aget asM 1) (.trim (aget (.split t (RegExp. "\\s")) 0)))))))))
+    surface))
+
+;; beagle-runtime symbols a chrome file REFERENCES, both forms:
+;;   (a) `$$bc.X` namespace access, and
+;;   (b) `import { X as … } from '<…>/beagle/core.js'` named-import list.
+(defn referenced-runtime-symbols [src :- String] :- Any
+  (let [refs (Set.)]
+    ;; (a) namespace property access
+    (doseq [m (Array/from (.matchAll src (RegExp. "\\$\\$bc\\.([A-Za-z_$][A-Za-z0-9_$]*)" "g")))]
+      (.add refs (aget m 1)))
+    ;; (b) ESM named imports from any `…/beagle/core.js` specifier — the form
+    ;; that broke. Capture the brace clause, then each `X` / `X as Y` (the
+    ;; imported name X is what must exist in the export surface).
+    (doseq [m (Array/from (.matchAll src (RegExp. "import\\s*\\{([^}]*)\\}\\s*from\\s*['\"][^'\"]*beagle/core\\.js['\"]" "g")))]
+      (doseq [clause (.split (aget m 1) ",")]
+        (let [t (.trim clause)]
+          (when (> (.-length t) 0)
+            (.add refs (.trim (aget (.split t (RegExp. "\\s")) 0)))))))
+    refs))
+
+(defn gateQ [] :- Any
+  (if (not (existsSync VENDORED-CORE))
+    (warn "Q" "$$bc runtime export-closure (emit ↔ core.js)"
+      "engine/.../beagle/core.js not vendored yet — run after `bun run import`")
+    (let [surface (core-export-surface (readFileSync VENDORED-CORE "utf8"))
+          ;; Scan the loader + every deployed bundle (or its engine/ source
+          ;; fallback when the obj-* deploy dir isn't populated).
+          bundle-dir (if (existsSync GJOA-BUNDLE-DIR) GJOA-BUNDLE-DIR GJOA-BUNDLE-SRC-DIR)
+          bundle-files (if (existsSync bundle-dir)
+                         (.map (.filter (readdirSync bundle-dir) (fn [f :- String] :- Bool (.endsWith f ".uc.js")))
+                               (fn [f :- String] :- String (join bundle-dir f)))
+                         [])
+          ;; Any other emitted gjoa .sys.mjs that imports the beagle runtime.
+          gjoa-dir (join ENGINE-DIR "browser" "components" "gjoa")
+          mjs-files (if (existsSync gjoa-dir)
+                      (.map (.filter (readdirSync gjoa-dir)
+                                     (fn [f :- String] :- Bool
+                                       (and (.endsWith f ".sys.mjs")
+                                            (.includes (readFileSync (join gjoa-dir f) "utf8") "beagle/core.js"))))
+                            (fn [f :- String] :- String (join gjoa-dir f)))
+                      [])
+          ;; GjoaLoader is always in mjs-files if present (it imports core.js),
+          ;; but include it explicitly so a non-importing-but-$$bc file is caught too.
+          files (.filter (Array/from (Set. (.concat [GJOA-LOADER-MJS] bundle-files mjs-files)))
+                         (fn [f :- String] :- Bool (existsSync f)))
+          offenders []]
+      (doseq [f files]
+        (let [refs (referenced-runtime-symbols (readFileSync f "utf8"))]
+          (doseq [sym (Array/from refs)]
+            (when (not (.has surface sym))
+              (.push offenders (str (basename f) ": " sym))))))
+      (if (> (.-length offenders) 0)
+        (fail "Q" "$$bc runtime export-closure (emit ↔ core.js)"
+          (str (.-length offenders) " emitted runtime reference(s) not exported by the vendored core.js")
+          (str "the beagle emit references a $$bc symbol the vendored core.js doesn't export "
+               "(ESM named-import of a missing export = module-load SyntaxError → gjoa chrome never initializes). "
+               "reconcile via the compat re-export in tools/prep/overlay.bjs (vendor-core-js!) or bump configs/beagle.ref to a beagle whose core.js exports it:\n    "
+               (.join offenders "\n    ")))
+        (pass "Q" "$$bc runtime export-closure (emit ↔ core.js)"
+          (str (.-length files) " emitted file(s) scanned; all $$bc refs (namespace + named-import) ⊆ "
+               (.-size surface) " core.js exports"))))))
+
 ;; ── Run + render ──────────────────────────────────────────────────────────
 (defn main! [] :- Any
   (console/log (bold "gjoa preflight"))
@@ -585,7 +688,7 @@
   (let [gates [["A" gateA] ["B" gateB] ["C" gateC] ["D" gateD]
                ["E" gateE] ["F" gateF] ["G" gateG] ["H" gateH]
                ["I" gateI] ["J" gateJ] ["K" gateK] ["L" gateL] ["M" gateM]
-               ["N" gateN] ["O" gateO] ["P" gateP]]]
+               ["N" gateN] ["O" gateO] ["P" gateP] ["Q" gateQ]]]
     (doseq [gate gates]
       (let [fn (aget gate 1)]
         (try (fn)

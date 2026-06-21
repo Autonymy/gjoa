@@ -64,9 +64,28 @@
                       "<beagle-pin>/beagle-lib/lib/beagle/core.js (configs/beagle.ref = " ref ").\n"
                       "// DO NOT EDIT BY HAND — re-vendored on every `bun run import` so the\n"
                       "// $$bc value-semantics runtime always matches the beagle the chrome was\n"
-                      "// compiled against. Bump configs/beagle.ref + re-import to change it.\n")]
-      (writeFileSync VENDORED-CORE-DST (str header body))
-      (.step log (str "vendored beagle/core.js @ " ref)))))
+                      "// compiled against. Bump configs/beagle.ref + re-import to change it.\n")
+          ;; PIN-COMPAT SHIM (beagle 77df8a9): bin/beagle-build emits ESM
+          ;; value-`=` as a NAMED import of `equivV`
+          ;;   `import { equivV as $$bc$equiv } from '…/beagle/core.js';`
+          ;; but this pin's core.js exports only `equiv` — there is ZERO
+          ;; `equivV` in it. An ESM named-import of a missing export is a
+          ;; module-load SyntaxError, which kills GjoaLoader.sys.mjs (the only
+          ;; gjoa .sys.mjs using value-`=`) at import → the whole gjoa chrome
+          ;; never initializes. `equivV` is just the emitter's name for the same
+          ;; value-equality this core.js exports as `equiv` (the loader's `=`
+          ;; are all on primitives), so re-exporting equiv-as-equivV is exact.
+          ;; Idempotent: only append when the vendored copy doesn't already
+          ;; export equivV, so a future pin whose core.js exports equivV
+          ;; natively never gets a duplicate. REVISIT: drop this shim once
+          ;; configs/beagle.ref moves to a beagle whose core.js exports equivV.
+          shim (str "\n// ── pin-compat shim (tools/prep/overlay.bjs) ──\n"
+                    "export { equiv as equivV };\n")
+          already-has-equivV (.includes body "equivV")
+          out (if already-has-equivV (str header body) (str header body shim))]
+      (writeFileSync VENDORED-CORE-DST out)
+      (.step log (str "vendored beagle/core.js @ " ref
+                      (if already-has-equivV "" " (+ equivV compat shim)"))))))
 
 (defn count-files [dir :- String] :- Any
   (reduce

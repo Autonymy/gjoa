@@ -1,0 +1,104 @@
+# gjoa-patch:
+#   baseline-firefox: 152.0.1
+#   touches:
+#     - layout/base/nsPresContext.cpp
+#     - layout/style/GeckoBindings.h
+#     - layout/style/GeckoBindings.cpp
+#     - servo/components/style/device/gecko.rs
+#   depends-on:
+#     - cpp-method nsPresContext::ApplyHybridDefaultInvertIfThemeless
+#     - cpp-method nsPresContext::DefaultBackgroundColorScheme
+#     - cpp-method LookAndFeel::ColorSchemeForFrame
+#
+# gjoa dark-mode v2 (M4 Tier-0): color-scheme-bit native detection. The hybrid
+# default-invert decision in nsPresContext::ApplyHybridDefaultInvertIfThemeless
+# used a luminance-only test (lum >= 0.22) to decide "is this page already dark?",
+# which is racy: a dark page read before its CSS settles looks light (wrongly
+# inverted), and a page that flashes dark looks native (wrongly left alone). Tier-0
+# replaces it with the page's USED color-scheme -- the resolved `color-scheme` CSS
+# property via LookAndFeel::ColorSchemeForFrame(frame), NOT the <meta>-only
+# Document::mColorSchemeBits -- gated by a luminance backstop: a page keeps its own
+# theme only if it BOTH declares dark AND actually renders dark, so a page that
+# merely claims dark but paints light still inverts. The same signal is exposed to
+# the style system as Device::used_color_scheme_is_dark() over a new
+# Gecko_UsedColorSchemeIsDark(doc) binding wrapping the public
+# nsPresContext::DefaultBackgroundColorScheme(), mirroring Gecko_IsDarkColorScheme.
+# Tier-0 only -- the M4 band-clamp / halation ceiling is already handled by M3 (0013).
+#
+diff --git a/layout/base/nsPresContext.cpp b/layout/base/nsPresContext.cpp
+--- a/layout/base/nsPresContext.cpp
++++ b/layout/base/nsPresContext.cpp
+@@ -829,9 +829,12 @@
+ // un-inverted; only ApplyHybridDefaultInvertIfThemeless flips it). If the page
+ // did NOT author a dark theme -- background is light or transparent (the UA white
+ // canvas shows through) -- flip the whole document to inverted pre-paint so it
+-// renders dark from the first paint with no flash. A native-dark page (authored
+-// luminance < 0.22, matching the JS actor's #luminance threshold) is left alone
+-// and keeps its own theme. The decision is recorded in mHybridDefaultInvert so it
++// renders dark from the first paint with no flash. A page is left alone (keeps its
++// own theme) only when it USES a dark color-scheme -- the `color-scheme` CSS
++// property resolved on the root frame (LookAndFeel::ColorSchemeForFrame), not a
++// bare <meta> claim -- AND a luminance backstop confirms it actually renders dark,
++// so a page that merely claims dark but paints light still inverts. The decision is
++// recorded in mHybridDefaultInvert so it
+ // survives later UpdateColorInversion re-derives (durable).
+ void nsPresContext::ApplyHybridDefaultInvertIfThemeless() {
+   if (mColorInversion || mHybridDefaultInvert) {
+@@ -852,8 +855,11 @@
+   }
+   auto bg = nsCSSRendering::FindEffectiveBackgroundColor(
+       frame, /* aStopAtThemed = */ true, /* aPreferBodyToCanvas = */ true);
+-  const bool themeless = NS_GET_A(bg.mColor) == 0 ||
+-                         RelativeLuminanceUtils::Compute(bg.mColor) >= 0.22f;
++  const bool usedDark =
++      LookAndFeel::ColorSchemeForFrame(frame) == ColorScheme::Dark;
++  const bool rendersDark = NS_GET_A(bg.mColor) != 0 &&
++                           RelativeLuminanceUtils::Compute(bg.mColor) < 0.22f;
++  const bool themeless = !(usedDark && rendersDark);
+   if (themeless) {
+     mHybridDefaultInvert = true;
+     UpdateColorInversion(/* aNotify = */ true);  // mColorInversion=true + restyle
+diff --git a/layout/style/GeckoBindings.cpp b/layout/style/GeckoBindings.cpp
+--- a/layout/style/GeckoBindings.cpp
++++ b/layout/style/GeckoBindings.cpp
+@@ -702,6 +702,11 @@
+   return LookAndFeel::ColorSchemeForStyle(*aDoc, *aStyle) == ColorScheme::Dark;
+ }
+ 
++bool Gecko_UsedColorSchemeIsDark(const Document* aDoc) {
++  nsPresContext* pc = aDoc->GetPresContext();
++  return pc && pc->DefaultBackgroundColorScheme() == ColorScheme::Dark;
++}
++
+ nscolor Gecko_ComputeSystemColor(StyleSystemColor aColor, const Document* aDoc,
+                                  const StyleColorSchemeFlags* aStyle) {
+   auto colorScheme = LookAndFeel::ColorSchemeForStyle(*aDoc, *aStyle);
+diff --git a/layout/style/GeckoBindings.h b/layout/style/GeckoBindings.h
+--- a/layout/style/GeckoBindings.h
++++ b/layout/style/GeckoBindings.h
+@@ -527,6 +527,7 @@
+ 
+ bool Gecko_IsDarkColorScheme(const mozilla::dom::Document*,
+                              const mozilla::StyleColorSchemeFlags*);
++bool Gecko_UsedColorSchemeIsDark(const mozilla::dom::Document*);
+ nscolor Gecko_ComputeSystemColor(mozilla::StyleSystemColor,
+                                  const mozilla::dom::Document*,
+                                  const mozilla::StyleColorSchemeFlags*);
+diff --git a/servo/components/style/device/gecko.rs b/servo/components/style/device/gecko.rs
+--- a/servo/components/style/device/gecko.rs
++++ b/servo/components/style/device/gecko.rs
+@@ -397,6 +397,14 @@
+         self.pres_context().map_or(false, |pc| pc.mColorInversion)
+     }
+ 
++    /// gjoa M4: whether the document's USED color-scheme (its resolved
++    /// `color-scheme`, via nsPresContext::DefaultBackgroundColorScheme) is dark --
++    /// the native-detection signal for hybrid default-invert.
++    #[inline]
++    pub fn used_color_scheme_is_dark(&self) -> bool {
++        unsafe { bindings::Gecko_UsedColorSchemeIsDark(self.document()) }
++    }
++
+     /// Computes a system color and returns it as an nscolor.
+     pub(crate) fn system_nscolor(
+         &self,

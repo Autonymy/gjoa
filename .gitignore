@@ -6,6 +6,7 @@ __pycache__/
 dist/
 .beagle-out/
 .beagle-tools/
+.beagle-pin-collects/
 target/
 mozconfig
 

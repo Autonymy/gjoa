@@ -1,6 +1,9 @@
-# Pinned beagle compiler ref — the ~/code/beagle commit gjoa is known-good against.
-# gjoa builds against ../beagle directly (no submodule); this records the EXPECTED
-# ref so drift is visible. Preflight Gate M warns if ../beagle's HEAD differs; the
-# build fingerprint bakes the ACTUAL ref into the binary (gjoa.build.beagle-ref).
-# Bump deliberately — review the beagle changelog — when tracking a new beagle.
-77df8a9343ee3c242187872cf6c5f39b6bec619f
+# Pinned beagle ref — the FROZEN beagle commit gjoa builds against, COMPILER AND
+# runtime. gjoa does NOT track live ~/code/beagle. A dedicated worktree at this ref
+# lives at ~/code/beagle-pin; the build resolves the beagle COMPILER from it — .envrc
+# sets PLTCOLLECTS -> .beagle-pin-collects/beagle -> the worktree, so racket uses the
+# pinned compiler, NOT the global raco link to live beagle — and core.js is vendored
+# from it. CI checks out ../beagle at this ref + raco-links it, so CI matches local.
+# Preflight Gate M enforces the worktree is at this ref. Bump DELIBERATELY (review the
+# beagle changelog): re-point the worktree, then re-import + re-vendor.
+9d791ed57e84e8a1ebe48a5dda588f9842168e26

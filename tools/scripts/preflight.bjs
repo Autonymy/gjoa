@@ -11,6 +11,7 @@
 (ns gjoa.tools.scripts.preflight
   (:require [fs :refer [existsSync readFileSync readdirSync]]
             [child_process :refer [execSync]]
+            [crypto :refer [createHash]]
             [path :refer [join basename]]
             [gjoa.tools.prep.symbol-resolve :refer [check-contract]]))
 (define-mode strict)
@@ -83,32 +84,47 @@
             (fail "A" "patches apply clean on fresh source" "tarball extract failed" (.slice (.-out extract) 0 400))
             (do
               (sh (str "cd " tmp " && git init -q && git add -A && git -c user.email=t@t -c user.name=t commit -q -m baseline") {:timeout 60000})
+              ;; Apply patches CUMULATIVELY in patch order — each on the result of
+              ;; all prior — matching `bun run import`'s real apply order. The old
+              ;; per-patch `git apply --check` against the pristine tarball
+              ;; false-positives when a later patch depends on lines an EARLIER one
+              ;; added (the 0014-on-0013 case): in isolation 0014's context is
+              ;; absent, so it "fails", though the real sequenced apply succeeds.
+              ;; Here we mutate `tmp` in place (real `git apply`, no --check) so each
+              ;; patch sees its predecessors' output. On the FIRST failure we stop —
+              ;; subsequent patches build on the failed tree and would cascade.
               (let [patches (.sort (.filter (readdirSync PATCHES-DIR) (fn [p] (.endsWith p ".patch"))))
                     failed []
-                    drifted []]
+                    drifted []
+                    stopped (atom false)]
                 (doseq [p patches]
-                  (let [path (join PATCHES-DIR p)
-                        r (sh (str "cd " tmp " && git apply --check " path) {})]
-                    (if (not (.-ok r))
-                      (.push failed (str p ": " (.trim (or (aget (.split (.-out r) "\n") 0) ""))))
-                      ;; Applies clean via git apply — now detect line-offset DRIFT,
-                      ;; the early warning the .rej arrives a release after. GNU patch
-                      ;; reports "Hunk #N succeeded at M (offset L lines)" for drift
-                      ;; that git apply tolerates silently. Take the largest |offset|.
-                      (let [pr (sh (str "cd " tmp " && patch -p1 --dry-run --fuzz=0 --force -i " path " 2>&1 | grep -oiE 'offset -?[0-9]+' | grep -oE '[0-9]+' | sort -rn | head -1") {})
-                            off (parseInt (.trim (or (.-out pr) "")) 10)]
+                  (when (not @stopped)
+                    (let [path (join PATCHES-DIR p)
+                          ;; Drift WARN is computed BEFORE the real apply, on the
+                          ;; current cumulative tree (--dry-run leaves it untouched):
+                          ;; GNU patch reports "Hunk #N succeeded at M (offset L lines)"
+                          ;; for offset git apply tolerates silently. Largest |offset|.
+                          pr (sh (str "cd " tmp " && patch -p1 --dry-run --fuzz=0 --force -i " path " 2>&1 | grep -oiE 'offset -?[0-9]+' | grep -oE '[0-9]+' | sort -rn | head -1") {})
+                          off (parseInt (.trim (or (.-out pr) "")) 10)
+                          ;; Real cumulative apply (no --check): mutate tmp so the
+                          ;; next patch sees this one's added lines.
+                          r (sh (str "cd " tmp " && git apply " path) {})]
+                      (if (not (.-ok r))
+                        (do
+                          (.push failed (str p ": " (.trim (or (aget (.split (.-out r) "\n") 0) ""))))
+                          (reset! stopped true))
                         (when (> off 0)
                           (.push drifted (str p " (offset " off ")")))))))
                 (cond
                   (> (.-length failed) 0)
                   (fail "A" "patches apply clean on fresh source"
-                    (str (.-length failed) "/" (.-length patches) " patches fail")
-                    (str "regenerate each failing patch via `git diff` in a fresh extract:\n    " (.join failed "\n    ")))
+                    (str "cumulative apply stopped at the first failing patch (later patches build on it): " (.-length failed) " failed")
+                    (str "regenerate the failing patch via `git diff` in a fresh extract WITH all prior patches applied (cumulative order matters):\n    " (.join failed "\n    ")))
                   (> (.-length drifted) 0)
                   (warn "A" "patches apply clean on fresh source"
-                    (str (.-length patches) "/" (.-length patches) " apply, but " (.-length drifted) " drifting on line-offset (early warning — regenerate before they .rej): " (.join drifted ", ")))
+                    (str (.-length patches) "/" (.-length patches) " apply cumulatively, but " (.-length drifted) " drifting on line-offset (early warning — regenerate before they .rej): " (.join drifted ", ")))
                   :else
-                  (pass "A" "patches apply clean on fresh source" (str (.-length patches) "/" (.-length patches) " apply clean, no drift")))))))))))
+                  (pass "A" "patches apply clean on fresh source" (str (.-length patches) "/" (.-length patches) " apply clean cumulatively, no drift")))))))))))
 
 ;; ── Gate B: chrome registration uses a known-working pattern ──────────────
 (defn gateB [] :- Any
@@ -392,42 +408,48 @@
         (str (.-length resolved) " declared upstream dependencies resolve")))))
 
 ;; ── Gate M: beagle compiler pinned (beagle-currency) ───────────────────────
-;; gjoa compiles against ../beagle directly (no submodule), so WHATEVER branch that
-;; checkout is on silently determines the compiler — non-reproducible, and exactly
-;; how a parked beagle branch can change gjoa's build with no reference anywhere.
-;; configs/beagle.ref records the expected ref. This is a HARD FAIL on drift: the
-;; build MUST compile chrome against the pinned ref (the emit/runtime contract is
+;; gjoa compiles against a DEDICATED beagle worktree at ~/code/beagle-pin (NOT the
+;; shared ../beagle checkout — detaching that tree is forbidden, it's shared across
+;; concurrent agents). The worktree is parked permanently at the pinned ref so the
+;; compiler is deterministic and no other agent's branch switch can change gjoa's
+;; build. configs/beagle.ref records the expected ref. This is a HARD FAIL on drift:
+;; the build MUST compile chrome against the pinned ref (the emit/runtime contract is
 ;; ref-specific). A warn here is what let 4 serial breaks ship — the drift was
 ;; visible but nothing forced the build to honor the pin. Now it does.
 (def BEAGLE-REF-FILE :- String (join REPO-ROOT "configs" "beagle.ref"))
-(def GATE-M-FIX :- String
-  (str "checkout the pin: `cd ../beagle && git checkout <pin>` — OR bump deliberately, "
-       "ATOMICALLY: bump configs/beagle.ref → `bun run import` (re-vendors core.js) → "
-       "`bun run sovereignty:manifest` (recompile chrome) → smoke-test → commit together."))
+;; The dedicated pinned worktree gjoa compiles against. $HOME-relative so it
+;; resolves on any machine, never a literal /home/<user> path.
+(def BEAGLE-PIN-DIR :- String (join (.-HOME (.-env process)) "code" "beagle-pin"))
+(defn gate-m-fix [pinned :- String] :- String
+  (str "re-point the DEDICATED pin worktree (NEVER `cd ../beagle && git checkout` — that detaches the SHARED tree):\n"
+       "      create: `git -C ../beagle worktree add " BEAGLE-PIN-DIR " " (.slice pinned 0 12) "`\n"
+       "      re-point: `git -C " BEAGLE-PIN-DIR " checkout " (.slice pinned 0 12) "`\n"
+       "    — OR bump deliberately, ATOMICALLY: bump configs/beagle.ref → re-point the worktree → "
+       "`bun run import` (re-vendors core.js) → `bun run sovereignty:manifest` (recompile chrome) → smoke-test → commit together."))
 (defn gateM [] :- Any
   (if (not (existsSync BEAGLE-REF-FILE))
     (fail "M" "beagle compiler pinned (beagle-currency)"
-      "no configs/beagle.ref — gjoa builds against whatever ../beagle is checked out on (non-reproducible)"
-      "create configs/beagle.ref with the intended ../beagle commit, then checkout that ref")
+      "no configs/beagle.ref — gjoa builds against an unpinned beagle worktree (non-reproducible)"
+      "create configs/beagle.ref with the intended beagle commit, then add the pin worktree at it")
     (let [lines (.split (readFileSync BEAGLE-REF-FILE "utf8") "\n")
           pinned (.trim (or (.find lines (fn [l :- String] :- Bool
                                            (and (> (.-length (.trim l)) 0)
                                                 (not (.startsWith (.trim l) "#"))))) ""))
-          r (sh "git -C ../beagle rev-parse HEAD" {})
+          r (sh (str "git -C " BEAGLE-PIN-DIR " rev-parse HEAD") {})
           actual (.trim (or (.-out r) ""))]
       (cond
         (= pinned "") (fail "M" "beagle compiler pinned (beagle-currency)"
                         "configs/beagle.ref has no ref line"
-                        "add the intended ../beagle commit hash to configs/beagle.ref")
+                        "add the intended beagle commit hash to configs/beagle.ref")
         (or (not (.-ok r)) (= actual "")) (fail "M" "beagle compiler pinned (beagle-currency)"
-                                            "could not read ../beagle HEAD — is ../beagle checked out?"
-                                            "ensure ../beagle exists and `git -C ../beagle rev-parse HEAD` works")
+                                            (str "could not read " BEAGLE-PIN-DIR " HEAD — the pin worktree is missing")
+                                            (gate-m-fix pinned))
         (.startsWith actual pinned) (pass "M" "beagle compiler pinned (beagle-currency)"
-                                      (str "../beagle at pinned ref " (.slice pinned 0 12)))
+                                      (str BEAGLE-PIN-DIR " at pinned ref " (.slice pinned 0 12)))
         :else (fail "M" "beagle compiler pinned (beagle-currency)"
-                (str "../beagle HEAD " (.slice actual 0 12) " != pinned " (.slice pinned 0 12)
+                (str BEAGLE-PIN-DIR " HEAD " (.slice actual 0 12) " != pinned " (.slice pinned 0 12)
                      " — chrome would be compiled against a DIFFERENT beagle than pinned (emit/$$bc-runtime drift)")
-                GATE-M-FIX)))))
+                (gate-m-fix pinned))))))
 
 ;; ── Gate N: knobs backed + reversible (knob-not-delete) ────────────────────
 ;; Every knob about:gjoa exposes (settings/registry.json) must be backed by a pref
@@ -510,6 +532,50 @@
             (str "unresolvable bare `import from 'beagle/...'` in: " (.replaceAll hits "\n" ", "))
             "compile that .bjs with BEAGLE_JS_RUNTIME_PREFIX=resource:///modules/gjoa/beagle/ (tools/prep/overlay.bjs) + vendor the runtime"))))))
 
+;; ── Gate P: patch-hash drift (#104a) ───────────────────────────────────────
+;; configs/patch-hashes.json records the EXPECTED SHA-256 of every patches/*.patch
+;; (a tracked, reviewed trust anchor). Gate P recomputes each patch's digest and
+;; HARD-FAILS on any mismatch, any patch missing from the manifest, or any manifest
+;; entry whose patch was deleted — so a patch can't change (or appear/vanish) without
+;; a corresponding, review-gated manifest update. This is the per-patch, drift-gating
+;; record; DISTINCT from the aggregate `gjoa.build.engine-patch-hash` that
+;; tools/prep/fingerprint.bjs bakes into the binary for provenance.
+(def PATCH-HASHES-FILE :- String (join REPO-ROOT "configs" "patch-hashes.json"))
+(defn sha256-file [path :- String] :- String
+  (.digest (.update (createHash "sha256") (readFileSync path)) "hex"))
+(defn gateP [] :- Any
+  (if (not (existsSync PATCH-HASHES-FILE))
+    (fail "P" "patch hashes match recorded manifest (#104a)"
+      "no configs/patch-hashes.json — patch drift is unguarded"
+      "create configs/patch-hashes.json with {\"algorithm\":\"sha256\",\"patches\":{<file>:<sha256>}} for every patches/*.patch")
+    (let [manifest (JSON/parse (readFileSync PATCH-HASHES-FILE "utf8"))
+          recorded (or (.-patches manifest) {})
+          patches (.sort (.filter (readdirSync PATCHES-DIR) (fn [p :- String] :- Bool (.endsWith p ".patch"))))
+          mismatched []
+          missing []]
+      ;; current patches whose hash drifted or that aren't recorded at all
+      (doseq [p patches]
+        (let [actual (sha256-file (join PATCHES-DIR p))
+              expected (aget recorded p)]
+          (cond
+            (nil? expected) (.push missing (str p " (no entry in manifest)"))
+            (not (= actual expected))
+            (.push mismatched (str p ": recorded " (.slice expected 0 12) "… actual " (.slice actual 0 12) "…")))))
+      ;; manifest entries whose patch was deleted (stale record)
+      (let [stale (.filter (Object/keys recorded) (fn [k :- String] :- Bool (= (.indexOf patches k) -1)))]
+        (cond
+          (or (> (.-length mismatched) 0) (> (.-length missing) 0) (> (.-length stale) 0))
+          (fail "P" "patch hashes match recorded manifest (#104a)"
+            (str (.-length mismatched) " drifted, " (.-length missing) " unrecorded, " (.-length stale) " stale entry(ies)")
+            (str "a patch changed without updating its recorded hash — review the diff, then regenerate the manifest:\n"
+                 "      cd patches && for f in $(ls *.patch | sort); do echo \"$f $(sha256sum \"$f\" | cut -d' ' -f1)\"; done\n"
+                 "    drift:      " (.join mismatched "\n                ") "\n"
+                 "    unrecorded: " (.join missing ", ") "\n"
+                 "    stale:      " (.join stale ", ")))
+          :else
+          (pass "P" "patch hashes match recorded manifest (#104a)"
+            (str (.-length patches) "/" (.-length patches) " patch hashes match configs/patch-hashes.json")))))))
+
 ;; ── Run + render ──────────────────────────────────────────────────────────
 (defn main! [] :- Any
   (console/log (bold "gjoa preflight"))
@@ -519,7 +585,7 @@
   (let [gates [["A" gateA] ["B" gateB] ["C" gateC] ["D" gateD]
                ["E" gateE] ["F" gateF] ["G" gateG] ["H" gateH]
                ["I" gateI] ["J" gateJ] ["K" gateK] ["L" gateL] ["M" gateM]
-               ["N" gateN] ["O" gateO]]]
+               ["N" gateN] ["O" gateO] ["P" gateP]]]
     (doseq [gate gates]
       (let [fn (aget gate 1)]
         (try (fn)

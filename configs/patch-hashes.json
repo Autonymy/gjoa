@@ -1,0 +1,16 @@
+{
+  "_comment": "Per-patch SHA-256 manifest (#104a). Records the expected hash of every patches/*.patch so silent drift is caught: preflight Gate P recomputes each patch's SHA-256 and FAILS if it differs from the value here. Editing a patch REQUIRES updating its hash in this file (review-gated), which is the whole point — a patch can't change unreviewed. This is DISTINCT from the aggregate `gjoa.build.engine-patch-hash` baked into the binary by tools/prep/fingerprint.bjs (a 12-char fold-hash computed at build time for provenance); this file is the per-patch, tracked, drift-gating record. Regenerate with: cd patches && for f in $(ls *.patch | sort); do echo \"$f $(sha256sum \"$f\" | cut -d' ' -f1)\"; done",
+  "algorithm": "sha256",
+  "patches": {
+    "0001-browser-components-mozbuild-include-gjoa.patch": "8e749716e47f910b646505072d07b16b35286d8a1f93a8a8b7d58f35d3d53d63",
+    "0002-browser-glue-import-gjoa-loader.patch": "2f6ae37659aff8b29bedd47336c8d800c6a9ce169d8f7bb1368fd1e604681db9",
+    "0007-enable-sqlite-fts5.patch": "1407c9049294c558f2d7a96c447503868b90d642d03126319c5f04b6e3311c05",
+    "0008-content-classifier-cosmetic-filtering.patch": "90919d25d1c129c6a513842b11f39aa2740febd701b5d5e748f0344e17148884",
+    "0009-dark-mode-engine-color-inversion.patch": "0282086bf76128a93834ba1b20f63b5c025081b229dcc7f6c7325c6168090192",
+    "0010-dark-mode-island-scrim.patch": "69d287b6b04b928d85b7a9862f70eacc993b6424627b73495f2282818fb0f805",
+    "0011-newtab-redirector-gjoa.patch": "556b014511a16c996f4a2eefd4650e9cf9487343e97c07ec20651a67b489f63e",
+    "0012-dark-mode-role-resolver.patch": "a76f124386c1709ad66f1317335d5c1e2afc1047bbf45fb2bb1cc3c3d81c09ad",
+    "0013-dark-mode-text-solve.patch": "ec84450a838e134b0d01485d05f3279ec4087f434029c80d25a969fbee567457",
+    "0014-dark-mode-tier0.patch": "911e78f6836a7c3eff7cec3e461f8dfb091bf4654bd53bfb15d2fc913a0a4784"
+  }
+}

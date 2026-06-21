@@ -69,7 +69,7 @@
     { "id": "dark-mode", "title": "Dark mode", "intro": "Engine-level dark mode.",
       "settings": [
         { "pref": "gjoa.darkmode.enabled", "type": "bool", "title": "Dark mode", "default": true },
-        { "pref": "gjoa.darkmode.mode", "type": "enum", "title": "Mode", "default": "system", "options": ["system", "auto", "filter", "hybrid", "invert"], "help": "How pages are darkened (system = follow OS theme; auto = color-scheme only; hybrid = native-where-available + invert-the-rest)." },
+        { "pref": "gjoa.darkmode.mode", "type": "enum", "title": "Mode", "default": "system", "options": ["system", "auto", "filter", "hybrid"], "help": "How pages are darkened (system = follow the OS theme; auto = honor color-scheme only; filter = legacy compositor invert; hybrid = native dark + invert themeless pages)." },
         { "pref": "gjoa.darkmode.scrim.alpha", "type": "int", "title": "Scrim strength", "default": 140, "help": "0-255; higher = darker scrim over un-themed pages." },
         { "pref": "gjoa.darkmode.invert.enabled", "type": "bool", "title": "Allow per-site invert", "default": false },
         { "pref": "gjoa.darkmode.image-analysis.enabled", "type": "bool", "title": "Image-analysis refinement", "default": false, "help": "Optional polish; off by default (unverified refinement on top of the correctness floor)." }

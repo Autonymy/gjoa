@@ -172,6 +172,13 @@
   (register-style-sheet-url (.-spec (.newFileURI (.-io Services) file)) (.-leafName file)))
 
 (defn load-into-chrome-window [window :- Any] :- Any
+  ;; gjoa-tabs.uc.js (a concatenated .uc.js bundle) references $$bc — beagle's
+  ;; value-semantics runtime ($$bc.equiv for =) — which a bundle can't import
+  ;; (loadSubScript isn't an ESM context). Expose the vendored runtime on the
+  ;; window the bundles load into so the free reference resolves. (.sys.mjs get it
+  ;; via the BEAGLE_JS_RUNTIME_PREFIX import instead; see tools/prep/overlay.bjs.)
+  (set! (.-$$bc window)
+        (.importESModule ChromeUtils "resource:///modules/gjoa/beagle/core.js"))
   (let [dev (dev-mode-dir)]
     (if dev
       (let [js-dir (.clone dev)

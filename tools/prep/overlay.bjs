@@ -77,8 +77,10 @@
           ;; are all on primitives), so re-exporting equiv-as-equivV is exact.
           ;; Idempotent: only append when the vendored copy doesn't already
           ;; export equivV, so a future pin whose core.js exports equivV
-          ;; natively never gets a duplicate. REVISIT: drop this shim once
-          ;; configs/beagle.ref moves to a beagle whose core.js exports equivV.
+          ;; natively never gets a duplicate.
+          ;; CHORE(pin-bump): revert when configs/beagle.ref passes the beagle ref
+          ;; whose core.js exports `equivV` natively — drop this shim and the
+          ;; already-has-equivV branch.
           shim (str "\n// ── pin-compat shim (tools/prep/overlay.bjs) ──\n"
                     "export { equiv as equivV };\n")
           already-has-equivV (.includes body "equivV")

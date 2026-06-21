@@ -69,6 +69,8 @@
     ;; Reflect.get is the string-keyed member-access form (Cc[cid]) at the pinned
     ;; beagle (77df8a9): bare `get` emits a $$bc.get call the pinned core.js runtime
     ;; doesn't export, and `aget` is Int-only array indexing (rejected here).
+    ;; CHORE(pin-bump): revert when configs/beagle.ref passes the beagle ref whose
+    ;; core.js exports a string-keyed `get` — restore bare `(get Cc cid)`.
     (.getService (.get Reflect Cc cid) (.-nsIStyleSheetService Ci))))
 
 ;; browser.xhtml is the only chrome document we want to inject into for now.
@@ -360,6 +362,9 @@
 (defn apply-privacy-profile! [] :- Any
   (try
     (let [id (.getCharPref (.-prefs Services) "gjoa.privacy.profile" "minimal")
+          ;; CHORE(pin-bump): revert when configs/beagle.ref passes the beagle ref
+          ;; whose core.js exports a string-keyed `get` — restore bare
+          ;; `(get PRIVACY-PRESETS id)`. (Same string-key workaround as STYLE-SHEET-SERVICE.)
           preset (.get Reflect PRIVACY-PRESETS id)
           d (.getDefaultBranch (.-prefs Services) "")]
       (when (and (not (= id "custom")) preset)

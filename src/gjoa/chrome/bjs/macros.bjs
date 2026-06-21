@@ -81,6 +81,8 @@
 (defmacro bool [x]
   ;; (boolean x) coerces any value to Bool. The old `(not (not x))` re-trips
   ;; beagle 77df8a9's tightened `not` (rejects Bool?/Nil args), so coerce directly.
+  ;; CHORE(pin-bump): revert when configs/beagle.ref passes the beagle ref that
+  ;; relaxes `not` on Bool?/Nil — restore the `(not (not x))` double-negation form.
   `(boolean ,x))
 (defmacro has? [el name]
   `(.hasAttribute ,el ,name))

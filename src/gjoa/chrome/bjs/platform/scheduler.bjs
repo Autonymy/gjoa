@@ -79,6 +79,9 @@
 
           flush (fn []
                   (if (not (.-pendingFlush state))
+                    ;; CHORE(pin-bump): revert when configs/beagle.ref passes the
+                    ;; beagle ref that emits zero-arg Promise/resolve — drop the
+                    ;; explicit `js/undefined` (pinned 77df8a9 needs the arg).
                     (Promise/resolve js/undefined)
                     (.then (.-pendingFlush state)
                       #(when (.-pendingFlush state)

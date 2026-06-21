@@ -370,6 +370,9 @@
         schedule-tree-resync (fn []
           (when (not (.-resync-pending counters))
             (set! (.-resync-pending counters) true)
+            ;; CHORE(pin-bump): revert when configs/beagle.ref passes the beagle ref
+            ;; that emits zero-arg Promise/resolve — drop the explicit `js/undefined`
+            ;; (pinned 77df8a9 needs the arg). microtask-defer the tree resync.
             (.then (Promise/resolve js/undefined) (fn []
               (set! (.-resync-pending counters) false)
               (.forEach (tabs!)

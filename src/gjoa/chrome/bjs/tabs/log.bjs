@@ -65,4 +65,7 @@
         (.push lines (str (Date/now) " [" tag "] " event " " (JSON/stringify (or data {}))))
         (when (not (.-flush-pending state))
           (set! (.-flush-pending state) true)
+          ;; CHORE(pin-bump): revert when configs/beagle.ref passes the beagle ref
+          ;; that emits zero-arg Promise/resolve — drop the explicit `js/undefined`
+          ;; (pinned 77df8a9 needs the arg). microtask-defer the log flush.
           (.then (Promise/resolve js/undefined) flush-lines!)))))))

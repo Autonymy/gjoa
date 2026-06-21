@@ -395,14 +395,20 @@
 ;; gjoa compiles against ../beagle directly (no submodule), so WHATEVER branch that
 ;; checkout is on silently determines the compiler — non-reproducible, and exactly
 ;; how a parked beagle branch can change gjoa's build with no reference anywhere.
-;; configs/beagle.ref records the expected ref; WARN (not fail) on drift so the
-;; co-dev workflow (iterating on beagle) isn't blocked — but the drift is visible,
-;; and the build fingerprint bakes the ACTUAL ref. Bump the pin deliberately.
+;; configs/beagle.ref records the expected ref. This is a HARD FAIL on drift: the
+;; build MUST compile chrome against the pinned ref (the emit/runtime contract is
+;; ref-specific). A warn here is what let 4 serial breaks ship — the drift was
+;; visible but nothing forced the build to honor the pin. Now it does.
 (def BEAGLE-REF-FILE :- String (join REPO-ROOT "configs" "beagle.ref"))
+(def GATE-M-FIX :- String
+  (str "checkout the pin: `cd ../beagle && git checkout <pin>` — OR bump deliberately, "
+       "ATOMICALLY: bump configs/beagle.ref → `bun run import` (re-vendors core.js) → "
+       "`bun run sovereignty:manifest` (recompile chrome) → smoke-test → commit together."))
 (defn gateM [] :- Any
   (if (not (existsSync BEAGLE-REF-FILE))
-    (warn "M" "beagle compiler pinned (beagle-currency)"
-      "no configs/beagle.ref — gjoa builds against whatever ../beagle is checked out on (non-reproducible)")
+    (fail "M" "beagle compiler pinned (beagle-currency)"
+      "no configs/beagle.ref — gjoa builds against whatever ../beagle is checked out on (non-reproducible)"
+      "create configs/beagle.ref with the intended ../beagle commit, then checkout that ref")
     (let [lines (.split (readFileSync BEAGLE-REF-FILE "utf8") "\n")
           pinned (.trim (or (.find lines (fn [l :- String] :- Bool
                                            (and (> (.-length (.trim l)) 0)
@@ -410,15 +416,18 @@
           r (sh "git -C ../beagle rev-parse HEAD" {})
           actual (.trim (or (.-out r) ""))]
       (cond
-        (= pinned "") (warn "M" "beagle compiler pinned (beagle-currency)"
-                        "configs/beagle.ref has no ref line")
-        (or (not (.-ok r)) (= actual "")) (warn "M" "beagle compiler pinned (beagle-currency)"
-                                            "could not read ../beagle HEAD — skipping (non-fatal)")
+        (= pinned "") (fail "M" "beagle compiler pinned (beagle-currency)"
+                        "configs/beagle.ref has no ref line"
+                        "add the intended ../beagle commit hash to configs/beagle.ref")
+        (or (not (.-ok r)) (= actual "")) (fail "M" "beagle compiler pinned (beagle-currency)"
+                                            "could not read ../beagle HEAD — is ../beagle checked out?"
+                                            "ensure ../beagle exists and `git -C ../beagle rev-parse HEAD` works")
         (.startsWith actual pinned) (pass "M" "beagle compiler pinned (beagle-currency)"
                                       (str "../beagle at pinned ref " (.slice pinned 0 12)))
-        :else (warn "M" "beagle compiler pinned (beagle-currency)"
+        :else (fail "M" "beagle compiler pinned (beagle-currency)"
                 (str "../beagle HEAD " (.slice actual 0 12) " != pinned " (.slice pinned 0 12)
-                     " — compiling against a different beagle than pinned; bump configs/beagle.ref deliberately (review the beagle changelog) or checkout the pin"))))))
+                     " — chrome would be compiled against a DIFFERENT beagle than pinned (emit/$$bc-runtime drift)")
+                GATE-M-FIX)))))
 
 ;; ── Gate N: knobs backed + reversible (knob-not-delete) ────────────────────
 ;; Every knob about:gjoa exposes (settings/registry.json) must be backed by a pref

@@ -210,10 +210,30 @@
           "measurement": { "method": "egress", "endpoint": "contile.services.mozilla.com", "confidence": "documented", "basis": "Sponsored-tile placement is fetched from contile.services.mozilla.com. No functional cost (custom new-tab); the cost is the egress." } }
       ] },
     { "id": "layout", "title": "Layout",
-      "intro": "How gjoa arranges tabs and chrome.",
+      "intro": "How gjoa arranges tabs and chrome. Nothing here lives in about:config — every layout knob is below.",
       "settings": [
         { "pref": "gjoa.layout.dynamicOrientation", "type": "bool", "title": "Dynamic orientation (width-responsive tabs)", "default": true,
-          "measurement": { "method": "feature", "basis": "Auto-switches to horizontal tabs on a narrow / half-width window and vertical (sidebar) tabs on a wide one, live as the window resizes. No egress; pure layout." } }
+          "help": "When ON, gjoa auto-switches between vertical tabs (sidebar) on a wide window and horizontal tabs on a narrow / half-width one, live as you resize. A manual mode switch is honoured until the width next crosses the threshold below.",
+          "examples": [
+            { "label": "ON (default)", "detail": "Tile gjoa to half your screen and tabs flow horizontal; widen it and they return to the sidebar — automatically." },
+            { "label": "OFF", "detail": "gjoa stays in whatever tab orientation you last chose, regardless of window width." }
+          ],
+          "measurement": { "method": "feature", "basis": "Auto-switches to horizontal tabs on a narrow / half-width window and vertical (sidebar) tabs on a wide one, live as the window resizes. No egress; pure layout." } },
+        { "pref": "gjoa.layout.narrowThreshold", "type": "int", "title": "Narrow-width threshold (px)", "default": 1000, "min": 600, "max": 1920, "slider": true,
+          "help": "The window inner-width, in pixels, at or below which Dynamic orientation flips to horizontal tabs. ~half of a common 1920px display. Only has an effect while Dynamic orientation (above) is ON; tune it for your display or tiling setup.",
+          "examples": [
+            { "label": "1000 (default)", "detail": "Windows narrower than ~1000px get horizontal tabs; wider stays vertical — a good half-of-1920 split." },
+            { "label": "1280", "detail": "Switches to horizontal sooner (at a wider window) — good if you want the sidebar only on large windows." },
+            { "label": "700", "detail": "Keeps the vertical sidebar down to quite narrow windows before flipping horizontal." }
+          ],
+          "note": "Ignored when Dynamic orientation is OFF." },
+        { "pref": "gjoa.layout.horizontalSingleRow", "type": "bool", "title": "Horizontal tabs — single-row style", "default": false,
+          "help": "Chooses the STYLE of horizontal tabs. OFF = the classic layout (toolbar on top, tabs in their own strip below it). ON = a single combined row where the toolbar icons collapse into the omni-icon menu, the URL bar grows, and tabs flow on the same row: [menu][url][tab1 … tabN]. Only affects horizontal mode — vertical (sidebar) tabs are unchanged.",
+          "examples": [
+            { "label": "OFF — classic (default)", "detail": "Two rows in horizontal mode: the toolbar, then a dedicated tab strip beneath it." },
+            { "label": "ON — single row", "detail": "Everything on one line to save vertical space: omni-menu, a wide URL bar, then the tabs — compact, good on short windows." }
+          ],
+          "note": "No effect in vertical / sidebar tab mode." }
       ] }
   ],
   "links": [

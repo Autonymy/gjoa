@@ -45,7 +45,19 @@
 ;; "engine" mode; read by nsPresContext::UpdateColorInversion to drive the Servo
 ;; cascade hook. Default off; the chrome module owns it (in "hybrid" mode the
 ;; per-document BrowsingContext.colorInversionOverride drives inversion instead).
+;; NOT a user knob — the controller (apply!) sets it on every mode change, so it is
+;; deliberately kept out of about:gjoa (it would lie: any reapply overwrites a hand
+;; toggle). Tune mode via gjoa.darkmode.mode instead.
 (pref "gjoa.darkmode.invert.enabled" false)
+
+;; Engine pre-paint default-invert flag (hybrid / system-dark modes). Read by
+;; nsPresContext so a themeless page renders dark from frame 1 (no white flash),
+;; retracted pre-paint per-document for sites that authored their own dark theme.
+;; Set by the dark-mode chrome module (set-default-invert! in index.bjs) — this
+;; default makes the pref a real, backed pref (so a fresh profile / the engine read
+;; has a defined value before the chrome module first runs), matching the controller
+;; default (off until "hybrid" or dark-OS "system" engages it). Not a user knob.
+(pref "gjoa.darkmode.hybrid.default-invert" false)
 
 ;; "Darkness" knob — how dark un-themed pages get under engine inversion. This is
 ;; the floor of the OKLCH-L band the servo inverter compresses page lightness onto

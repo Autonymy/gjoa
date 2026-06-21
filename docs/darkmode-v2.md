@@ -346,6 +346,89 @@ hold-hue — are currently **unfalsifiable**. Top backlog: add to the harness �
 4. **Convergence:** assert surfaces-frozen-first terminates while a joint solve oscillates
    (instrument the root-find iteration count).
 
+### Harness status — what runs Lane-1 today vs what is build-gated (P2)
+
+The contrast/APCA harness splits cleanly along the Lane boundary, and the split is
+the honest answer to "is quality measured or asserted?":
+
+- **Lane-1, green today (no binary):** the canonical color math —
+  `tools/darkmode-regress/colormath.js` + `colormath.test.js` (11 tests, 99
+  assertions) and the pure scorer `tools/test-driver/contrast-score.bjs` — are
+  pure functions, unit-tested with **zero running binary**, and wired into
+  `bun run test` (`test:unit`). This is the floor under every later engine change:
+  the APCA/OKLab math the engine and the harness share is regression-gated now.
+- **Lane-3, build-gated (the actual P2 block):** the end-to-end oracle —
+  `tools/darkmode-regress/runner.bjs` and the test-driver `darkmode` / `contrast`
+  subsystems — drive a **built gjoa binary** under Marionette (it spawns
+  `<gjoa-bin>` and `drawSnapshot`s composited pixels). It therefore needs a Lane-3
+  build (`nix build` or mach + `nix develop .#mach`) before it can run; it cannot be
+  unblocked from chrome JS. This is *not* a chrome-side bug to fix — it is an
+  inherent dependency on a compiled engine, because the thing being measured (the
+  cascade-time inversion + paint-time text solve) only exists in the binary.
+- **The known content-context limit** (noted in the executive report): inversion
+  detaches the content `BrowsingContext` handle, so the harness measures via
+  chrome-side `drawSnapshot` of the *composited* result, not a content-context
+  read — `runner.bjs` already does exactly this (it `setContext`es to `chrome` for
+  the snapshot). So that limit is already worked around in the harness design; what
+  remains is purely the build dependency above.
+
+**Net P2 conclusion:** the Lane-1 portion of the harness is unblocked and green; the
+remaining gap is a Lane-3 engine build to run the end-to-end oracle, which is out of
+scope for a chrome-only change and is sequenced behind the M3/M4 engine builds.
+
+---
+
+## The escape-hatch hierarchy (how to override dark mode on a site)
+
+Dark mode is layered: a global default you can shift, then progressively narrower
+overrides for the sites the general path gets wrong. The layers compose — each one
+overrides the layer before it — so you reach for the *narrowest* hatch that fixes
+your problem and leave everything else on the smart default. From broadest to
+narrowest:
+
+1. **Global mode** — `about:gjoa` → Dark mode section → **Mode**
+   (pref `gjoa.darkmode.mode`). The top-level switch for *how* pages get dark:
+   - `system` (default) — follow the OS theme. Dark OS → always-dark (native-dark
+     sites use their theme, the rest are engine-inverted); light OS → sites render
+     as authored.
+   - `hybrid` — always dark regardless of OS (same native-or-invert split).
+   - `auto` — only sites that ship their own dark theme go dark; nothing is inverted.
+   - `engine` / `filter` / `off` — legacy / debug modes, reachable only by setting
+     the pref in `about:config` (not surfaced in `about:gjoa`).
+
+2. **The "how dark" knobs** — still global, but tune the *output* rather than the
+   strategy: **Darkness** (`gjoa.darkmode.invert.bgLightness`, the OKLCH-L floor
+   inverted pages land on) and **Scrim strength** (`gjoa.darkmode.scrim.alpha`, the
+   darkening over full-bleed background photos). Both in `about:gjoa`. Their advanced
+   companions — the light-text ceiling `gjoa.darkmode.invert.fgLightness` and the
+   APCA contrast floor `gjoa.darkmode.normalize.floor` — live in `about:config`.
+
+3. **Per-site overrides** — `about:config` host lists (comma-separated), applied in
+   `hybrid`/`system`-dark by `GjoaDarkmodeParent`. Precedence within this layer:
+   `off` > `force-invert` > `force-native`.
+   - `gjoa.darkmode.user.force-native` — *keep the site's own look*; never invert it
+     (use when inversion makes a site you like worse).
+   - `gjoa.darkmode.user.force-invert` — *always invert this site*, even if it claims
+     a dark theme (use when a site's "dark" theme is broken).
+   - `gjoa.darkmode.user.off` — *no dark-mode treatment at all* for this site.
+
+4. **The curated per-site fixes DB** — a built-in, shipped database of per-host CSS
+   overrides and invert-selectors (a Dark Reader v4.9.127 MIT port). This is the
+   pre-tuned escape hatch for sites the general path gets wrong, applied
+   automatically; you don't configure it per-site, but it is the reason most tricky
+   sites already look right without a manual `user.*` entry.
+
+5. **The engine layers** — the lowest level, not user-facing knobs but the mechanism
+   the above ride on: tier-0 native-dark detection (leave declared-dark sites alone),
+   the style-resolution-time color inversion (cached in the cascade), the island
+   scrim over photos, the role resolver, and the paint-time APCA text solve. A site is
+   handled by whichever engine layers its mode + overrides select.
+
+**Rule of thumb:** wrong globally → change **Mode** or **Darkness**; one site too
+dark / not dark / double-inverted → a `user.force-native` / `force-invert` / `off`
+entry for that host; a site the general path mangles → it is probably already in (or
+belongs in) the curated fixes DB.
+
 ---
 
 ## Part III — The corpus

@@ -29,7 +29,7 @@ const CEILING = arguments[4] || 90;   // halation ceiling (the band's upper edge
     const data = ctx.getImageData(0, 0, W, H).data;
     const px = (x, y) => { const i = (y * W + x) * 4; return [data[i], data[i + 1], data[i + 2]]; };
 
-    const fails = []; const correctives = []; const halation = []; let checked = 0;
+    const fails = []; const correctives = []; const halation = []; const paintedFails = []; let checked = 0;
     for (const el of meta.els) {
       const x0 = Math.max(0, el.x), y0 = Math.max(0, el.y);
       const x1 = Math.min(W - 1, el.x + el.w), y1 = Math.min(H - 1, el.y + el.h);
@@ -40,6 +40,18 @@ const CEILING = arguments[4] || 90;   // halation ceiling (the band's upper edge
       if (samples.length < 4) continue;
       samples.sort((a, c) => Ys(a) - Ys(c));
       const bg = samples[Math.floor(samples.length / 2)]; // median luminance ≈ backdrop
+      // PAINTED glyph contrast — validates M3 (the paint-time text re-solve at
+      // nsTextPaintStyle::GetTextColor), which getComputedStyle + el.fg CANNOT see.
+      // The glyph ≈ the luminance extreme furthest from the backdrop; its APCA vs the
+      // median backdrop is the REAL legibility M3 guarantees (the computed el.fg below
+      // is the 0009-inverted value, M3-blind, kept for the corrective path).
+      const sLo = samples[Math.floor(samples.length * 0.05)];
+      const sHi = samples[Math.min(samples.length - 1, Math.floor(samples.length * 0.95))];
+      const glyph = (Ys(sHi) - Ys(bg)) >= (Ys(bg) - Ys(sLo)) ? sHi : sLo;
+      const paintedLc = Math.abs(apca(glyph, bg));
+      if (paintedLc < THRESHOLD) {
+        paintedFails.push({ lc: Math.round(paintedLc), glyph, bg, tag: el.tag, x: el.x, y: el.y });
+      }
       const Lc = Math.abs(apca(el.fg, bg)); checked++;
       // Two-sided band (docs/darkmode-v2.md): the HALATION ceiling. |Lc| above the
       // ceiling (e.g. pure-white-on-near-black ~106) is over-contrast = a fail the
@@ -60,7 +72,10 @@ const CEILING = arguments[4] || 90;   // halation ceiling (the band's upper edge
     }
     fails.sort((a, c) => a.lc - c.lc);
     halation.sort((a, c) => c.lc - a.lc);
+    paintedFails.sort((a, c) => a.lc - c.lc);
     done({ checked, total: fails.length, fails: fails.slice(0, 40), correctives,
-           halationCount: halation.length, halation: halation.slice(0, 40) });
+           halationCount: halation.length, halation: halation.slice(0, 40),
+           // painted = the metric that actually reflects M3 (the paint-time solve).
+           paintedFailCount: paintedFails.length, paintedFails: paintedFails.slice(0, 40) });
   } catch (e) { done({ err: String(e && e.message || e) }); }
 })();

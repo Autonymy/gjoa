@@ -123,6 +123,10 @@
          ;; two-sided band: marks above the halation ceiling (over-contrast), the
          ;; upper-edge metric the floor-only gate is blind to (docs/darkmode-v2.md).
          :halation (or (.-halationCount res) 0)
+         ;; PAINTED text below the floor — the metric that actually reflects M3
+         ;; (the paint-time text solve; computed el.fg is M3-blind). Post-M3 this
+         ;; should trend to ~0; it's the real legibility gate.
+         :painted (or (.-paintedFailCount res) 0)
          :worst (or (.-fails res) []) :err (or (.-err res) nil) :navwarn navwarn})
       (catch Error e
         {:url url :host host :checked 0 :fails 0 :postFails 0 :applied 0 :worst [] :err (or (.-message e) (str e))}))))

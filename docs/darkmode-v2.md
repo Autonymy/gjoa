@@ -350,6 +350,49 @@ gates against the photo/SVG slices; the Tier-0 gate against `owns-dark-mode`.
 
 ---
 
+## Prior art & honest caveats (the not-a-crank check)
+
+Each load-bearing pillar was verified against published literature/standards. None is
+invented; three are textbook, three are real-but-debated. The caveats below are folded
+into the theory's own honesty (the atom is already stated as "a calibrated bet";
+APCA/OKLab as "instruments"; the band numbers as "confessed free").
+
+- **Reading rides the luminance channel** — *well-established.* The achromatic channel
+  is band-pass and carries edge acuity; the chromatic channels are low-pass (Mullen 1985,
+  *J. Physiol.* 359:381–400; Legge et al. 1990; Knoblauch et al. 1991). *Caveat:* "one
+  wire" is an idealization — chromatic channels still resolve to ~11–12 cpd and isoluminant
+  text reads at ~300 wpm; and do **not** claim a specific magno/parvo wiring (contested,
+  Skottun 2003). Rest the weight on the psychophysical channel result, not a pathway story.
+- **OKLab/OKLCH perceptual, hue-separable space** — *well-established.* Ottosson (2020);
+  CSS Color 4; ships in browsers. *Caveat:* "roughly hue-uniform," not hue-exact — OKLab
+  holds hue well but is slightly worse than IPT/ICtCp on Ottosson's own metric. "Hold hue
+  exactly" means *hold the OKLab h coordinate exactly* (which we do); perceptual hue
+  constancy is excellent but not literally perfect.
+- **Paint-time, role-classified auto-dark (photos excluded)** — *well-established prior
+  art*, so the architecture is not novel/crank: Chromium `DarkModeFilter` (ElementRole
+  {kText,kListSymbol,kBackground,kSVG}), Android force-dark. *Caveat:* Chromium gates on
+  fixed brightness *thresholds*; gjoa's contribution is replacing those with a perceptual
+  **band-solve** (APCA) + perceptual **retone** (OKLCH) — that's the delta, stated honestly.
+- **APCA / polarity-aware contrast** — *supported-but-debated.* APCA is a real, recognized
+  model and the polarity asymmetry (dark-on-light vs light-on-dark) is peer-reviewed
+  (Buchner & Baumgartner 2007; Piepenbrock et al. 2013/14); WCAG 2's symmetric ratio is
+  genuinely poor near black. *Caveat:* APCA is **not** a standard — it was a WCAG 3
+  candidate, removed from the draft in 2023, non-normative as of 2026. Use it as the
+  instrument; never imply it is The Standard.
+- **Helmholtz–Kohlrausch (compress chroma)** — *supported-but-debated.* The effect (chroma
+  reads as added brightness) is established. *Caveat:* the magnitude is strongly
+  hue-dependent (large for blue/red, ~nil for yellow), so the *direction* of
+  chroma-compression is forced but a single fixed magnitude is not — exactly why the
+  compression curve is a confessed free parameter, not a derived constant.
+- **Soft-dark floor / avoid pure-white-on-pure-black** — *supported-but-debated.* Polarity
+  and glance-legibility effects are measured (Dobres et al., *Applied Ergonomics*); the
+  ~#121212 floor is Material Design guidance. *Caveat:* "halation" is a motivating
+  mechanism, not a separately-quantified outcome in the legibility studies — so the floor
+  and ceiling are well-motivated design bounds whose *exact* values are confessed free, not
+  hard physical constants.
+
+---
+
 ## Decision Record
 
 **Decision:** Build dark mode v2 as the Legibility-Channel Frame Shift — a per-pair,

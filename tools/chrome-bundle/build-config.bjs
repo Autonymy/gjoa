@@ -34,6 +34,7 @@
             (str B "/drawer/drag-overlay.js")
             (str B "/drawer/layout.js")
             (str B "/drawer/sidebar-button.js")
+            (str B "/drawer/omni-icon.js")
             (str B "/drawer/urlbar.js")
             (str B "/drawer/index.js")]
     :banner (.join ["// ==UserScript=="

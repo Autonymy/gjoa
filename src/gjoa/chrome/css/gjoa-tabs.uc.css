@@ -664,3 +664,42 @@
 }
 
 /* #endregion picker */
+
+
+/* #region single-row horizontal (#98)
+ *
+ * Classic horizontal already flows the tab panel into the toolbar row. The
+ * single-row variant adds two things, gated on gjoa.layout.horizontalSingleRow:
+ *   1. The toolbar icons (back/fwd/reload/extensions/sidebar) collapse into one
+ *      "omni-icon" dropdown (#gjoa-omni-icon-button, built by drawer/omni-icon).
+ *   2. Tabs stay on ONE non-wrapping, horizontally-scrolling row.
+ * Net read: [omni][url][tab1 … tabN] on a single line. Toggle in about:gjoa. */
+
+/* The omni-icon is created always; hide it unless single-row is on. */
+#gjoa-omni-icon-button { display: none; }
+
+@media -moz-pref("gjoa.layout.horizontalSingleRow") {
+  /* Reveal the omni-icon; hide the buttons it now stands in for. */
+  #gjoa-omni-icon-button { display: -moz-box !important; }
+  :root[gjoa-horizontal-tabs] #nav-bar #back-button,
+  :root[gjoa-horizontal-tabs] #nav-bar #forward-button,
+  :root[gjoa-horizontal-tabs] #nav-bar #stop-reload-button,
+  :root[gjoa-horizontal-tabs] #nav-bar #unified-extensions-button,
+  :root[gjoa-horizontal-tabs] #gjoa-sidebar-button {
+    display: none !important;
+  }
+
+  /* Tabs on a single non-wrapping, horizontally-scrolling row. */
+  #gjoa-tab-panel[gjoa-horizontal] {
+    flex-wrap: nowrap !important;
+    overflow-x: auto !important;
+    overflow-y: hidden !important;
+    scrollbar-width: thin;
+  }
+  #gjoa-tab-panel[gjoa-horizontal] .gjoa-tab-row {
+    flex: 0 0 auto !important;
+    max-width: 180px !important;
+  }
+}
+
+/* #endregion single-row horizontal */

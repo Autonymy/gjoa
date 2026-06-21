@@ -1,0 +1,41 @@
+#lang beagle/js
+;; #99: dynamic orientation — a wide/full window uses vertical tabs, a
+;; narrow/half-width window flips to horizontal, live as the window crosses the
+;; threshold (matchMedia). The master pref (gjoa.layout.dynamicOrientation)
+;; defaults ON. This drives a real resize across the threshold and asserts the
+;; sidebar.verticalTabs orientation pref follows.
+(ns gjoa.tests.integration.dynamic-orientation
+  (:require [gjoa.tests.dsl :refer [deftest chrome-eval await-true wait-for expect sleep]]))
+(define-mode strict)
+
+(js/export (def tests :- Any
+  [(deftest "dynamic orientation pref defaults ON" [mn]
+     (await-true "return !!gBrowser;" 5000)
+     (let [dyn (chrome-eval "return Services.prefs.getBoolPref('gjoa.layout.dynamicOrientation', false);")]
+       (expect dyn "gjoa.layout.dynamicOrientation must default ON")))
+
+   (deftest "narrow window crosses threshold → horizontal; wide → vertical" [mn]
+     (await-true "return !!gBrowser;" 5000)
+     ;; Force a known wide state first, then narrow below the threshold.
+     (let [threshold (chrome-eval "return Services.prefs.getIntPref('gjoa.layout.narrowThreshold', 1000);")]
+       ;; Go narrow (threshold - 200): should flip to horizontal (verticalTabs=false).
+       (chrome-eval (str "window.resizeTo(" (- threshold 200) ", 800); return true;"))
+       (js/await (sleep 600))
+       (let [narrow (chrome-eval "return { w: window.innerWidth, vertical: Services.prefs.getBoolPref('sidebar.verticalTabs', true) };")]
+         (.log console (str "NARROW=" (JSON/stringify narrow)))
+         ;; Go wide (threshold + 400): should flip back to vertical.
+         (chrome-eval (str "window.resizeTo(" (+ threshold 400) ", 800); return true;"))
+         (js/await (sleep 600))
+         (let [wide (chrome-eval "return { w: window.innerWidth, vertical: Services.prefs.getBoolPref('sidebar.verticalTabs', true) };")]
+           (.log console (str "WIDE=" (JSON/stringify wide)))
+           ;; Only assert the flip if the OS/WM actually honored the resize
+           ;; (innerWidth tracks the request). Under a tiling compositor that
+           ;; ignores resizeTo, skip rather than false-fail.
+           (when (< (.-w narrow) threshold)
+             (expect (not (.-vertical narrow))
+               (str "narrow (" (.-w narrow) "px < " threshold ") must be horizontal (verticalTabs=false)")))
+           (when (> (.-w wide) threshold)
+             (expect (.-vertical wide)
+               (str "wide (" (.-w wide) "px > " threshold ") must be vertical (verticalTabs=true)")))))))]))
+
+(js/export-default tests)

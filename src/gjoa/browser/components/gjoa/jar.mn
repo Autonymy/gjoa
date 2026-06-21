@@ -16,6 +16,7 @@
 
 browser.jar:
 % content gjoa %content/gjoa/
+  content/gjoa/gjoa.svg (content/gjoa.svg)
   content/gjoa/scripts/gjoa-security.uc.js (content/scripts/gjoa-security.uc.js)
   content/gjoa/scripts/gjoa-drawer.uc.js (content/scripts/gjoa-drawer.uc.js)
   content/gjoa/scripts/gjoa-tabs.uc.js (content/scripts/gjoa-tabs.uc.js)
@@ -46,3 +47,4 @@ browser.jar:
 % content gjoa-newtab %content/gjoa-newtab/ contentaccessible=yes
   content/gjoa-newtab/newtab.html (content/newtab/newtab.html)
   content/gjoa-newtab/newtab.js (content/newtab/newtab.js)
+  content/gjoa-newtab/gjoa.svg (content/gjoa.svg)

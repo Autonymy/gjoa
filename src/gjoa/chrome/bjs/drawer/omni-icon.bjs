@@ -1,0 +1,58 @@
+#lang beagle/js
+;; Omni-icon: a single nav-bar button whose dropdown collects the toolbar
+;; actions (back / forward / reload / extensions / sidebar) — the icon-cluster
+;; collapse for single-row horizontal mode (#98, Zen-inspired). Created always;
+;; CSS reveals it only when gjoa.layout.horizontalSingleRow is on (and hides the
+;; individual buttons), so no JS toggling is needed.
+(ns gjoa.drawer.omni-icon
+  (:require [gjoa.macros :refer [by-id xul-id mi sep attr! on! off!]]
+            [gjoa.tabs.log :refer [create-logger!]]))
+(define-mode strict)
+
+(declare-extern [window gBrowser] Any)
+
+(js/export (defn make-omni-icon! [deps :- Any] :- Any
+  (let [log (create-logger! "drawer/omni-icon")
+        nav-bar (by-id "nav-bar")]
+    (if (or (not nav-bar) (by-id "gjoa-omni-icon-button"))
+      {:destroy (fn [] :- Any nil)}
+      (let [btn (xul-id "toolbarbutton" "gjoa-omni-icon-button")
+            menu (xul-id "menupopup" "gjoa-omni-icon-menu")
+            do-action (fn [name :- String thunk :- Any] :- Any
+                        (try (thunk) (catch Any e (.error log (str name " failed") e))))]
+        (attr! btn "class" "toolbarbutton-1 chromeclass-toolbar-additional")
+        (attr! btn "type" "menu")
+        (attr! btn "tooltiptext" "Navigation")
+        (attr! btn "removable" "false")
+        ;; CustomizableUI rebuilds #nav-bar from its saved widget list on init and
+        ;; reaps any unregistered toolbarbutton it finds there. skipintoolbarset
+        ;; tells CUI to leave this one alone (the standard escape hatch).
+        (attr! btn "skipintoolbarset" "true")
+        (attr! btn "label" "Navigation")
+
+        (let [back   (mi "Back"
+                       (fn [] (do-action "back" #(when (.-canGoBack gBrowser) (.goBack gBrowser)))))
+              fwd    (mi "Forward"
+                       (fn [] (do-action "forward" #(when (.-canGoForward gBrowser) (.goForward gBrowser)))))
+              reload (mi "Reload"
+                       (fn [] (do-action "reload" #(.reload gBrowser))))
+              ext    (mi "Extensions"
+                       (fn [] (do-action "extensions"
+                                #(let [b (by-id "unified-extensions-button")] (when b (.click b))))))
+              side   (mi "Toggle sidebar"
+                       (fn [] (do-action "sidebar"
+                                #(let [sc (.-SidebarController window)]
+                                   (cond
+                                     (and sc (.-toggle sc)) (.toggle sc)
+                                     :else (let [cmd (by-id "cmd_toggleSidebar")]
+                                             (when (and cmd (.-doCommand cmd)) (.doCommand cmd))))))))]
+          (.append menu back fwd reload (sep) ext side))
+
+        (.appendChild btn menu)
+        ;; Sit right after the hamburger (PanelUI), else at the nav-bar start.
+        (let [pui (by-id "PanelUI-button")]
+          (if (and pui (= (.-parentNode pui) nav-bar))
+            (.after pui btn)
+            (.prepend nav-bar btn)))
+
+        {:destroy (fn [] :- Any (.remove btn))})))))

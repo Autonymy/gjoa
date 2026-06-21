@@ -238,6 +238,20 @@
         (fn [e]
           (let [tab (.-target e)
                 td (tree-data! tab)]
+            ;; Stamp the gjoa sailboat on gjoa pages immediately so they never
+            ;; flash the generic globe placeholder while loading (#100). The
+            ;; <link rel=icon> in each page sets it too; this just beats the
+            ;; load for fresh / background tabs.
+            (let [spec (or (some-> tab .-linkedBrowser .-currentURI .-spec) "")]
+              (when (or (.startsWith spec "chrome://gjoa-newtab")
+                        (.startsWith spec "chrome://gjoa/")
+                        (.startsWith spec "about:newtab")
+                        (.startsWith spec "about:home")
+                        (.startsWith spec "about:gjoa")
+                        (.startsWith spec "about:knobs")
+                        (.startsWith spec "about:sovereignty"))
+                (try (.setIcon gBrowser tab "chrome://gjoa/content/gjoa.svg")
+                     (catch Any _e nil))))
             ;; Assign to the persisted space if this tab carries one (a tab
             ;; restored from a prior session keeps its gjoa-space-id), else to
             ;; the active space. This re-anchors restored tabs to their real
@@ -529,6 +543,22 @@
         install
         (fn []
           (let [tc (.-tabContainer gBrowser)]
+            ;; Firefox's setDefaultIcon stamps about:newtab / about:home /
+            ;; about:welcome with the branding icon32.png (FAVICON_DEFAULTS in
+            ;; tabbrowser.js), which fires on navigation and clobbers the sailboat
+            ;; our TabOpen belt + <link rel=icon> set. Wrap it so gjoa's own pages
+            ;; keep the sailboat; every other URI falls through untouched (#100).
+            (let [orig (.-setDefaultIcon gBrowser)]
+              (when (and orig (not (.-gjoaIconPatched gBrowser)))
+                (set! (.-gjoaIconPatched gBrowser) true)
+                (set! (.-setDefaultIcon gBrowser)
+                  (fn [tab uri]
+                    (let [spec (or (some-> uri .-spec) "")]
+                      (if (or (= spec "about:newtab") (= spec "about:home") (= spec "about:welcome"))
+                        (try (.setIcon gBrowser tab "chrome://gjoa/content/gjoa.svg")
+                             (catch Any _e nil))
+                        (.call orig gBrowser tab uri)))))))
+
             (on! tc "TabOpen" on-tab-open)
             (on! tc "TabClose" on-tab-close)
             (on! tc "TabSelect" on-tab-select)

@@ -100,6 +100,12 @@
           "measurement": { "method": "egress", "endpoint": "normandy.cdn.mozilla.net", "confidence": "documented", "basis": "Normandy pulls remote experiment/recipe definitions from normandy.cdn.mozilla.net and can flip prefs remotely. Disabling it removes both that egress and remote mutation of your build." } },
         { "pref": "browser.contile.enabled", "type": "bool", "title": "Sponsored top sites (Contile)", "default": false, "firefoxDefault": true,
           "measurement": { "method": "egress", "endpoint": "contile.services.mozilla.com", "confidence": "documented", "basis": "Sponsored-tile placement is fetched from contile.services.mozilla.com. No functional cost (custom new-tab); the cost is the egress." } }
+      ] },
+    { "id": "layout", "title": "Layout",
+      "intro": "How gjoa arranges tabs and chrome.",
+      "settings": [
+        { "pref": "gjoa.layout.dynamicOrientation", "type": "bool", "title": "Dynamic orientation (width-responsive tabs)", "default": true,
+          "measurement": { "method": "feature", "basis": "Auto-switches to horizontal tabs on a narrow / half-width window and vertical (sidebar) tabs on a wide one, live as the window resizes. No egress; pure layout." } }
       ] }
   ],
   "links": [

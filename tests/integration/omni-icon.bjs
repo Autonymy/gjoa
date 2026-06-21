@@ -1,0 +1,37 @@
+#lang beagle/js
+;; #98: the omni-icon dropdown collapses the toolbar nav actions (back / forward
+;; / reload / extensions / sidebar) into a single nav-bar button — the icon
+;; cluster for single-row horizontal mode. This verifies the mechanic: the
+;; button exists in the nav-bar and its menu carries the actions. (The single-row
+;; visual layout itself is pref-gated CSS, eyeballed live.)
+(ns gjoa.tests.integration.omni-icon
+  (:require [gjoa.tests.dsl :refer [deftest chrome-eval await-true wait-for expect]]))
+(define-mode strict)
+
+(js/export (def tests :- Any
+  [(deftest "omni-icon button + its dropdown actions exist in the nav-bar" [mn]
+     ;; The drawer userscript runs init! a tick after the static XUL (#nav-bar)
+     ;; exists, so await the button itself — not just the nav-bar — to avoid
+     ;; racing the bundle's load.
+     (await-true "return !!document.getElementById('gjoa-omni-icon-button');" 5000)
+     (let [r (chrome-eval "
+        const btn = document.getElementById('gjoa-omni-icon-button');
+        const menu = document.getElementById('gjoa-omni-icon-menu');
+        const items = menu ? [...menu.querySelectorAll('menuitem')].map(m => m.getAttribute('label')) : [];
+        return {
+          btnPresent: !!btn,
+          btnInNavBar: btn ? !!btn.closest('#nav-bar') : false,
+          menuPresent: !!menu,
+          items,
+        };")]
+       (expect (.-btnPresent r) "omni-icon button #gjoa-omni-icon-button must exist")
+       (expect (.-btnInNavBar r) "omni-icon button must live in the nav-bar")
+       (expect (.-menuPresent r) "omni-icon menu must exist")
+       (expect (.includes (.-items r) "Back")
+         (str "omni menu must include Back; got " (JSON/stringify (.-items r))))
+       (expect (.includes (.-items r) "Reload")
+         (str "omni menu must include Reload; got " (JSON/stringify (.-items r))))
+       (expect (.includes (.-items r) "Toggle sidebar")
+         (str "omni menu must include the sidebar toggle; got " (JSON/stringify (.-items r))))))]))
+
+(js/export-default tests)

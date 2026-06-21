@@ -174,7 +174,7 @@
         (throw (Error. (str "branding pref file missing at " branding-pref-file " — Mozilla's unofficial "
                             "template no longer ships pref/firefox-branding.js, so gjoa default prefs "
                             "would not be packaged. Register a pref file explicitly before relying on this."))))
-      (let [gjoa-pref-files ["perf-prefs" "dark-mode-prefs" "adblock-prefs" "genai-prefs"]
+      (let [gjoa-pref-files ["perf-prefs" "dark-mode-prefs" "adblock-prefs" "genai-prefs" "layout-prefs"]
             tmp-dir (join REPO-ROOT ".beagle-tools" ".pref-build")
             _ (mkdirSync tmp-dir {:recursive true})
             pref-blocks (atom "\n\n// ===== gjoa default prefs (appended by tools/prep/branding.bjs) =====\n")]

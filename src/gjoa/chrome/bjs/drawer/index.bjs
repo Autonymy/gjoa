@@ -5,6 +5,7 @@
             [gjoa.drawer.compact :refer [make-compact!]]
             [gjoa.drawer.sidebar-button :refer [make-sidebar-button!]]
             [gjoa.drawer.banner :refer [make-banner!]]
+            [gjoa.drawer.omni-icon :refer [make-omni-icon!]]
             [gjoa.drawer.layout :refer [make-layout!]]))
 (define-mode strict)
 
@@ -46,6 +47,11 @@
         (let [sidebar-button (make-sidebar-button! {:sidebarMain sidebar-main
                                                     :compact compact})
               banner (make-banner!)]
+
+          ;; Defensive: never let the omni-icon's creation break the rest of the
+          ;; drawer (the unload teardown etc.). Logs the real error if it throws.
+          (try (make-omni-icon! {})
+            (catch Any e (.error console "gjoa-drawer: omni-icon failed" e)))
 
           (on1! window "unload"
             (fn []

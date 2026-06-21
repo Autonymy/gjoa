@@ -1,0 +1,26 @@
+#lang beagle/js
+;; gjoa layout prefs — default branch.
+;; Shipped as DEFAULTS by compiling this file and appending its pref() output
+;; onto the branding pref file (firefox-branding.js) in tools/prep/branding.bjs
+;; — the same channel as perf-prefs / adblock-prefs / dark-mode-prefs / genai.
+;; (`;;` comments don't survive the beagle→js emit; rationale lives here.)
+(ns gjoa.defaults.pref.layout)
+(define-mode strict)
+(declare-extern [pref] Any)
+
+;; Dynamic orientation: pick vertical tabs (sidebar) on a wide/full-width window
+;; and horizontal tabs on a narrow/half-width one, flipping live as the window
+;; resizes (e.g. niri tiling it to half a column). ON by default; toggle in
+;; about:gjoa. Honours a manual mode switch until the width next crosses the
+;; threshold.
+(pref "gjoa.layout.dynamicOrientation" true)
+;; Window inner-width (px) at or below which the layout switches to HORIZONTAL.
+;; ~half of a common 1920px display; tune for your display/tiling.
+(pref "gjoa.layout.narrowThreshold" 1000)
+
+;; Horizontal tab layout STYLE (#98): false = classic column-major grid (tabs in
+;; their own strip below the toolbar); true = single-row, where the toolbar icons
+;; collapse into the omni-icon dropdown, the urlbar grows, and tabs flow
+;; horizontally on the same row — [omni][url][tab1..tabN]. Default classic.
+;; Toggle in about:gjoa. Only affects horizontal mode.
+(pref "gjoa.layout.horizontalSingleRow" false)

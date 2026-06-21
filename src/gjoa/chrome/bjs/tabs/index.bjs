@@ -1,6 +1,6 @@
 #lang beagle/js
 (ns gjoa.tabs.index
-  (:require [gjoa.macros :refer [q by-id xul-new xul-id attr! pref-bool on! on1! has? bool rmattr! tabs! last-of]]
+  (:require [gjoa.macros :refer [q by-id xul-new xul-id attr! pref-bool pref-int set-pref-bool! on! on1! has? bool rmattr! tabs! last-of]]
             [gjoa.tabs.menu :refer [build-context-menu! build-group-context-menu! build-panel-context-menu!]]
             [gjoa.tabs.drag :refer [make-drag!]]
             [gjoa.tabs.events :refer [make-events!]]
@@ -118,6 +118,23 @@
 ;; off niri (NIRI_SOCKET unset) or when gjoa.niri.enabled is false. Must run
 ;; after window.Spaces exists.
 (make-niri-binding!)
+
+;; Dynamic orientation (#99): vertical tabs on a wide/full window, horizontal on
+;; a narrow/half-width one — flips live as the window resizes (e.g. niri tiling).
+;; matchMedia fires only when the width CROSSES the threshold, so a manual mode
+;; switch survives until the next crossing; honours the master pref each time.
+(when (pref-bool "gjoa.layout.dynamicOrientation" true)
+  (let [threshold (pref-int "gjoa.layout.narrowThreshold" 1000)
+        mq (.matchMedia window (str "(max-width: " threshold "px)"))
+        apply-orientation
+        (fn []
+          (when (pref-bool "gjoa.layout.dynamicOrientation" true)
+            (let [want-horizontal (.-matches mq)
+                  is-vertical (pref-bool "sidebar.verticalTabs" true)]
+              (when (= is-vertical want-horizontal)
+                (set-pref-bool! "sidebar.verticalTabs" (not want-horizontal))))))]
+    (.setTimeout window apply-orientation 0)
+    (.addEventListener mq "change" apply-orientation)))
 
 ;; Write-on-every-change saver
 (def schedule-save :- Any

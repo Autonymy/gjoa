@@ -1,0 +1,24 @@
+#lang beagle/js
+;; Fast chrome-init SMOKE — the anti-rot gate for a chrome-dead bake.
+;;
+;; A beagle value-semantics / packaging regression can leave GjoaLoader.sys.mjs
+;; throwing at load (e.g. an unresolvable $$bc import, or $$bc undefined in a
+;; userscript bundle), which silently kills ALL gjoa chrome in the bake — see
+;; project_beagle_value_semantics_chrome_break (cost a whole session, 2026-06-21).
+;; The full suite surfaces it only as a mass timeout; this catches it FIRST, in
+;; seconds, with a clear message. Default lane (no fixture server) so CI always runs it.
+(ns gjoa.tests.integration.smoke
+  (:require [gjoa.tests.dsl :refer [deftest expect await-true wait-for]]))
+(define-mode strict)
+(js/export (def tests :- Any
+  [(deftest "smoke: gjoa chrome initialized (GjoaLoader + bundles loaded, no $$bc death)" [mn ctx]
+     (js/await (.setContext mn "chrome"))
+     ;; window.gjoaTest + window.Spaces are set by the chrome layer ONLY after
+     ;; GjoaLoader runs the .uc.js bundles successfully. If GjoaLoader threw (bad
+     ;; $$bc import) or a bundle threw ($$bc undefined), they never appear.
+     (js/await (await-true
+                 (str "const w = Services.wm.getMostRecentWindow('navigator:browser');"
+                      " return !!(w && w.gjoaTest && w.Spaces);")
+                 8000))
+     (expect true "gjoa chrome init OK"))]))
+(js/export-default tests)

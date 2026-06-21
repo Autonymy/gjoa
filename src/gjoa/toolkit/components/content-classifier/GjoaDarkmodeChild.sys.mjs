@@ -51,6 +51,20 @@ export class GjoaDarkmodeChild extends JSWindowActorChild {
       return;
     }
     if (event.type === "DOMWindowCreated") {
+      // gjoa's OWN chrome UI pages (about:gjoa / about:knobs / about:sovereignty and
+      // the gjoa new-tab) are authored dark already. NEVER run them through the
+      // web-content inverter, in ANY mode: mark them 'inactive' synchronously at
+      // document-start. The engine reads this per-document override BEFORE the global
+      // gjoa.darkmode.invert.enabled flag, so it excludes them even in 'uniform' mode
+      // (where an already-dark page would otherwise be dark->light inverted — the
+      // washed-out "looks like light mode" settings page).
+      const gjoaUiURL = (this.document && this.document.documentURI) || "";
+      if (/^(about:(gjoa|knobs|sovereignty|newtab|home)\b|chrome:\/\/gjoa)/.test(gjoaUiURL)) {
+        try {
+          this.browsingContext.colorInversionOverride = "inactive";
+        } catch (e) {}
+        return;
+      }
       // Reset any override INHERITED from the previous same-tab page so this
       // fresh document starts from the engine's pre-paint default, then apply
       // the curated/user decision (if any) at document-start. Store the promise

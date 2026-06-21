@@ -41,13 +41,127 @@
 :root {
   color-scheme: light dark;
 
-  --gjoa-bg:           light-dark(#f9f9fb, #1c1b22);
-  --gjoa-bg-elevated:  light-dark(#ffffff, #2b2a33);
-  --gjoa-bg-popout:    light-dark(#f9f9fb, #1c1b22);
-  --gjoa-fg:           light-dark(#15141a, #fbfbfe);
-  --gjoa-fg-muted:     light-dark(#5b5b66, #b0b0bb);
-  --gjoa-border:       light-dark(rgba(0, 0, 0, 0.12), rgba(255, 255, 255, 0.12));
-  --gjoa-accent:       light-dark(#0061e0, #00ddff);
+  /* ── gjoa canonical theme · "Polar Night" (dark) / "Midnight Sun" (light) ──
+   * Derived from the Gjøa — Amundsen's Northwest-Passage ship: the polar-night
+   * sea, arctic ice, the aurora. Authored in OKLCH from THREE anchors; surfaces,
+   * text tiers and states are DERIVED, not hand-set. Theming-v2 M0 (anchors) +
+   * M1/M2 (base16 ingestion + variants) (private-docs/theming-v2-brief.md).
+   * Non-breaking: the legacy --gjoa-bg/-fg/... names below alias the new tokens so
+   * the shield (further down) keeps working unchanged. */
+
+  /* ── base16 → gjoa token mapping (Layer 3 — the unification) ────────────────
+   *
+   * THE single re-skin mechanism. A base16 palette is 16 slots: base00–07 are a
+   * monochromatic ramp authored DARK→LIGHT (base00 = darkest bg, base07 =
+   * lightest fg), base08–0F are named accents (08 red, 09 orange, 0A yellow,
+   * 0B green, 0C cyan, 0D blue, 0E magenta, 0F brown). Set those 16 vars and the
+   * 3 anchors + full ramp below derive from them — so ANY base16 scheme (a
+   * curated variant like Nord, OR the user's live stylix palette) becomes a gjoa
+   * theme with no bespoke per-widget CSS. The canonical "Polar Night" IS just the
+   * default base16 scheme, authored in OKLCH right here.
+   *
+   * base16 schemes are dark-first, so the slots feed the DARK side of every
+   * light-dark() pair; the light side keeps canonical "Midnight Sun" (the
+   * arctic-daylight cousin), since base16 palettes don't define a light variant.
+   * A variant overrides ONLY these 16 --gjoa-base* vars (see [gjoa-theme=…]
+   * blocks below) — everything downstream recomputes for free.
+   *
+   * gjoa→base16 slot table (the contract):
+   *   surface anchor (--gjoa-sea)    ← base00   (default bg)
+   *   surface-1 / -2 / -3 (elevation)← base01 / base02 / base03
+   *   text anchor (--gjoa-ink)       ← base05   (default fg)
+   *   text-muted / -faint             — DERIVED (ink↔sea mix), not a raw slot, so
+   *                                     they self-adapt to any scheme's contrast
+   *                                     (base16's base04/03 are surface-grade and
+   *                                     too dark for faint text). base04 stays
+   *                                     reserved for a future low-emphasis token.
+   *   accent anchor (--gjoa-aurora)  ← base0D   (blue/function — gjoa's aurora-cyan)
+   *   danger                          ← base08   (red)
+   *   success                         ← base0B   (green)
+   * Canonical values below ARE Polar Night in OKLCH. */
+  --gjoa-base00: oklch(17.5% 0.022 257); /* surface-0  — the polar-night sea   */
+  --gjoa-base01: oklch(22%   0.024 257); /* surface-1  — elevated              */
+  --gjoa-base02: oklch(26%   0.026 257); /* surface-2  — popout                */
+  --gjoa-base03: oklch(30%   0.028 257); /* surface-3  — overlay               */
+  --gjoa-base04: oklch(62%   0.020 250); /* low-emphasis (reserved)            */
+  --gjoa-base05: oklch(95.5% 0.010 235); /* text-normal — arctic ice           */
+  --gjoa-base06: oklch(97%   0.008 235); /* brighter fg (reserved)             */
+  --gjoa-base07: oklch(99%   0.006 235); /* brightest fg (reserved)            */
+  --gjoa-base08: oklch(68%   0.170 25);  /* red    — danger                     */
+  --gjoa-base09: oklch(74%   0.130 60);  /* orange (reserved)                   */
+  --gjoa-base0A: oklch(85%   0.120 95);  /* yellow (reserved)                   */
+  --gjoa-base0B: oklch(78%   0.150 158); /* green  — success / aurora-green     */
+  --gjoa-base0C: oklch(82%   0.110 195); /* cyan   (reserved)                   */
+  --gjoa-base0D: oklch(80%   0.150 200); /* blue   — accent / aurora-cyan       */
+  --gjoa-base0E: oklch(74%   0.130 320); /* magenta (reserved)                  */
+  --gjoa-base0F: oklch(70%   0.090 50);  /* brown  (reserved)                   */
+
+  /* anchors — derived from the base16 ramp (dark) + canonical Midnight Sun (light) */
+  --gjoa-sea:    light-dark(oklch(97.5% 0.008 235), var(--gjoa-base00)); /* base surface */
+  --gjoa-ink:    light-dark(oklch(25.5% 0.030 252), var(--gjoa-base05)); /* base text    */
+  --gjoa-aurora: light-dark(oklch(62%   0.150 208), var(--gjoa-base0D)); /* accent       */
+
+  /* surfaces — elevation climbs the base16 ramp (dark) / lightens the sea (light) */
+  --gjoa-surface-0: var(--gjoa-sea);
+  --gjoa-surface-1: light-dark(oklch(99.5% 0.006 235), var(--gjoa-base01));
+  --gjoa-surface-2: light-dark(oklch(98%   0.010 235), var(--gjoa-base02));
+  --gjoa-surface-3: light-dark(oklch(95.5% 0.013 235), var(--gjoa-base03));
+
+  /* text tiers — DERIVED from the anchors (ink↔sea), mode-agnostic. Because ink
+   * comes from base05 and sea from base00, these auto-adapt to any base16 scheme
+   * with correct contrast — no per-variant muted/faint tuning needed. */
+  --gjoa-text-normal: var(--gjoa-ink);
+  --gjoa-text-muted:  color-mix(in oklch, var(--gjoa-ink) 68%, var(--gjoa-sea));
+  --gjoa-text-faint:  color-mix(in oklch, var(--gjoa-ink) 44%, var(--gjoa-sea));
+
+  /* lines */
+  --gjoa-line-subtle: color-mix(in oklch, var(--gjoa-ink) 14%, transparent);
+  --gjoa-line-strong: color-mix(in oklch, var(--gjoa-ink) 26%, transparent);
+
+  /* accent + states — derived; danger/success take the base16 red/green (dark) */
+  --gjoa-accent-muted: color-mix(in oklch, var(--gjoa-aurora) 40%, var(--gjoa-surface-1));
+  --gjoa-hover:        color-mix(in oklch, var(--gjoa-surface-1) 88%, var(--gjoa-ink));
+  --gjoa-active:       color-mix(in oklch, var(--gjoa-surface-2) 82%, var(--gjoa-ink));
+  --gjoa-selected:     color-mix(in oklch, var(--gjoa-aurora) 22%, var(--gjoa-surface-1));
+  --gjoa-danger:       light-dark(oklch(58% 0.180 25),  var(--gjoa-base08));
+  --gjoa-success:      light-dark(oklch(58% 0.130 158), var(--gjoa-base0B)); /* aurora-green */
+
+  /* legacy aliases (M0 non-breaking; shield reads these) */
+  --gjoa-bg:           var(--gjoa-surface-0);
+  --gjoa-bg-elevated:  var(--gjoa-surface-1);
+  --gjoa-bg-popout:    var(--gjoa-surface-0);
+  --gjoa-fg:           var(--gjoa-text-normal);
+  --gjoa-fg-muted:     var(--gjoa-text-muted);
+  --gjoa-border:       var(--gjoa-line-subtle);
+  --gjoa-accent:       var(--gjoa-aurora);
+}
+
+/* ── Variant: Nord (the Arctic cousin) ──────────────────────────────────────
+ * base16 token-set ONLY — no bespoke per-widget CSS. Gated on the
+ * :root[gjoa-theme="nord"] attribute, which gjoa-theme.uc.js stamps from the
+ * gjoa.theme.variant pref. Nord's "Polar Night" greys (nord0–3) + "Snow Storm"
+ * whites (nord4–6) + "Frost" blues (nord7–10) + "Aurora" accents (nord11–15),
+ * re-expressed in OKLCH so elevation + contrast stay perceptually even. Nord is
+ * the literal Arctic kin of our canonical, so it slots straight in: base0D maps
+ * to Frost nord8 (#88c0d0), the same aurora-cyan role. Dark-only palette → it
+ * overrides the dark slots; light mode falls through to canonical Midnight Sun. */
+:root[gjoa-theme="nord"] {
+  --gjoa-base00: oklch(32.1% 0.022 264); /* nord0  #2e3440 — polar night base   */
+  --gjoa-base01: oklch(37.0% 0.022 264); /* nord1  #3b4252 — elevated           */
+  --gjoa-base02: oklch(41.6% 0.022 262); /* nord2  #434c5e — popout             */
+  --gjoa-base03: oklch(46.5% 0.022 260); /* nord3  #4c566a — overlay / faint    */
+  --gjoa-base04: oklch(77.5% 0.018 250); /* between nord3 + nord4 — muted text  */
+  --gjoa-base05: oklch(91.5% 0.012 250); /* nord4  #d8dee9 — snow storm fg      */
+  --gjoa-base06: oklch(94.8% 0.008 250); /* nord5  #e5e9f0                       */
+  --gjoa-base07: oklch(97.2% 0.006 250); /* nord6  #eceff4                       */
+  --gjoa-base08: oklch(62.0% 0.115 22);  /* nord11 #bf616a — aurora red         */
+  --gjoa-base09: oklch(70.5% 0.085 45);  /* nord12 #d08770 — aurora orange      */
+  --gjoa-base0A: oklch(86.0% 0.075 85);  /* nord13 #ebcb8b — aurora yellow      */
+  --gjoa-base0B: oklch(77.5% 0.080 145); /* nord14 #a3be8c — aurora green       */
+  --gjoa-base0C: oklch(84.5% 0.045 200); /* nord7  #8fbcbb — frost teal         */
+  --gjoa-base0D: oklch(80.0% 0.060 230); /* nord8  #88c0d0 — frost cyan (accent)*/
+  --gjoa-base0E: oklch(67.5% 0.075 295); /* nord15 #b48ead — aurora magenta     */
+  --gjoa-base0F: oklch(70.0% 0.075 230); /* nord10 #5e81ac — frost deep blue    */
 }
 
 /* Opt-in: route the gjoa palette through Firefox's theme variables

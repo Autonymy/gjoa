@@ -1,0 +1,33 @@
+#lang beagle/js
+;; gjoa theme prefs — chrome-theme variant selection (theming-v2 M1).
+;; Shipped as DEFAULTS by compiling this file and appending its pref() output
+;; onto the branding pref file (firefox-branding.js) in tools/prep/branding.bjs
+;; — the same channel as perf-prefs / dark-mode-prefs / adblock-prefs / genai /
+;; layout. (`;;` comments don't survive the beagle→js emit; rationale lives here.)
+(ns gjoa.defaults.pref.theme)
+(define-mode strict)
+(declare-extern [pref] Any)
+
+;; The active chrome-theme variant. gjoa's theme is one OKLCH token system fed by
+;; a base16 palette (src/gjoa/chrome/css/gjoa.uc.css); a variant is just a
+;; base16 token-set selected by the :root[gjoa-theme="…"] attribute that
+;; chrome/bjs/theme/index.bjs stamps from THIS pref. Values:
+;;   "polar-night" — DEFAULT. gjoa's canonical face: the polar-night sea, arctic
+;;                   ice, aurora-cyan accent. The shielded identity (no
+;;                   gjoa-theme attribute; the :root base16 defaults paint it).
+;;   "nord"        — the Arctic-cousin curated variant (Nord palette), normalized
+;;                   through the same base16 mapping. Sets gjoa-theme="nord".
+;;   "system"      — dissolve into the desktop: route the palette through
+;;                   Firefox's theme variables (stylix / installed theme / system
+;;                   colors) by enabling gjoa.theme.useSystem. The cohesion path.
+;; Must match the live default in chrome/bjs/theme/index.bjs (variant- /
+;; set-theme-defaults!).
+(pref "gjoa.theme.variant" "polar-night")
+
+;; Route the gjoa palette through Firefox's theme variables (stylix / system
+;; colors). Owned by the theme module: the "system" variant turns this ON, any
+;; other variant turns it OFF, so the single picker drives both the shield and
+;; the stylix passthrough. The gjoa.uc.css @media -moz-pref("gjoa.theme.useSystem")
+;; block and the SHIELD (gated on its negation) read this directly. Default off —
+;; gjoa ships its canonical face; system cohesion is one pick away.
+(pref "gjoa.theme.useSystem" false)

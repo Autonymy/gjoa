@@ -33,7 +33,8 @@
    "gjoa-drawer.uc.js"
    "gjoa-tabs.uc.js"
    "gjoa-dark-mode.uc.js"
-   "gjoa-blocking.uc.js"])
+   "gjoa-blocking.uc.js"
+   "gjoa-theme.uc.js"])
 (def STYLES :- Any
   ["gjoa.uc.css"
    "gjoa-tabs.uc.css"

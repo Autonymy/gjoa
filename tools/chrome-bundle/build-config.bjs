@@ -102,4 +102,12 @@
                     "// @description    Native ad/tracker blocking: engine enable/disable + per-site allow-list"
                     "// @include        main"
                     "// ==/UserScript=="]
+                   "\n"))
+   (->Entry "gjoa-theme.uc.js"
+            [(str B "/theme/index.js")]
+            (.join ["// ==UserScript=="
+                    "// @name           Gjoa Theme"
+                    "// @description    Chrome-theme variant selector: stamps :root[gjoa-theme] from gjoa.theme.variant (base16 token-set swap)"
+                    "// @include        main"
+                    "// ==/UserScript=="]
                    "\n"))]))

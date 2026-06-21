@@ -41,13 +41,50 @@
 :root {
   color-scheme: light dark;
 
-  --gjoa-bg:           light-dark(#f9f9fb, #1c1b22);
-  --gjoa-bg-elevated:  light-dark(#ffffff, #2b2a33);
-  --gjoa-bg-popout:    light-dark(#f9f9fb, #1c1b22);
-  --gjoa-fg:           light-dark(#15141a, #fbfbfe);
-  --gjoa-fg-muted:     light-dark(#5b5b66, #b0b0bb);
-  --gjoa-border:       light-dark(rgba(0, 0, 0, 0.12), rgba(255, 255, 255, 0.12));
-  --gjoa-accent:       light-dark(#0061e0, #00ddff);
+  /* ── gjoa canonical theme · "Polar Night" (dark) / "Midnight Sun" (light) ──
+   * Derived from the Gjøa — Amundsen's Northwest-Passage ship: the polar-night
+   * sea, arctic ice, the aurora. Authored in OKLCH from THREE anchors; surfaces,
+   * text tiers and states are DERIVED, not hand-set. Theming-v2 M0 — the full
+   * token rename + variants + base16 ingestion follow (private-docs/theming-v2-brief.md).
+   * Non-breaking: the legacy --gjoa-bg/-fg/... names below alias the new tokens so
+   * the shield (further down) keeps working unchanged. */
+
+  /* anchors — the only hand-set colours */
+  --gjoa-sea:    light-dark(oklch(97.5% 0.008 235), oklch(17.5% 0.022 257)); /* base surface */
+  --gjoa-ink:    light-dark(oklch(25.5% 0.030 252), oklch(95.5% 0.010 235)); /* base text    */
+  --gjoa-aurora: light-dark(oklch(62%   0.150 208), oklch(80%   0.150 200)); /* accent       */
+
+  /* surfaces — elevation climbs in lightness from the sea (per-mode for correctness) */
+  --gjoa-surface-0: var(--gjoa-sea);
+  --gjoa-surface-1: light-dark(oklch(99.5% 0.006 235), oklch(22% 0.024 257));
+  --gjoa-surface-2: light-dark(oklch(98%   0.010 235), oklch(26% 0.026 257));
+  --gjoa-surface-3: light-dark(oklch(95.5% 0.013 235), oklch(30% 0.028 257));
+
+  /* text tiers — fade toward the surface (mode-agnostic) */
+  --gjoa-text-normal: var(--gjoa-ink);
+  --gjoa-text-muted:  color-mix(in oklch, var(--gjoa-ink) 68%, var(--gjoa-sea));
+  --gjoa-text-faint:  color-mix(in oklch, var(--gjoa-ink) 44%, var(--gjoa-sea));
+
+  /* lines */
+  --gjoa-line-subtle: color-mix(in oklch, var(--gjoa-ink) 14%, transparent);
+  --gjoa-line-strong: color-mix(in oklch, var(--gjoa-ink) 26%, transparent);
+
+  /* accent + states — derived */
+  --gjoa-accent-muted: color-mix(in oklch, var(--gjoa-aurora) 40%, var(--gjoa-surface-1));
+  --gjoa-hover:        color-mix(in oklch, var(--gjoa-surface-1) 88%, var(--gjoa-ink));
+  --gjoa-active:       color-mix(in oklch, var(--gjoa-surface-2) 82%, var(--gjoa-ink));
+  --gjoa-selected:     color-mix(in oklch, var(--gjoa-aurora) 22%, var(--gjoa-surface-1));
+  --gjoa-danger:       light-dark(oklch(58% 0.180 25),  oklch(68% 0.170 25));
+  --gjoa-success:      light-dark(oklch(58% 0.130 158), oklch(78% 0.150 158)); /* aurora-green */
+
+  /* legacy aliases (M0 non-breaking; shield reads these) */
+  --gjoa-bg:           var(--gjoa-surface-0);
+  --gjoa-bg-elevated:  var(--gjoa-surface-1);
+  --gjoa-bg-popout:    var(--gjoa-surface-0);
+  --gjoa-fg:           var(--gjoa-text-normal);
+  --gjoa-fg-muted:     var(--gjoa-text-muted);
+  --gjoa-border:       var(--gjoa-line-subtle);
+  --gjoa-accent:       var(--gjoa-aurora);
 }
 
 /* Opt-in: route the gjoa palette through Firefox's theme variables

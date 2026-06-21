@@ -1,13 +1,902 @@
 {
+  "about.gitlab.com": {
+    "mode": "css",
+    "override": "active",
+    "_provenance": "darkreader@v4.9.127 MIT",
+    "css": ".progressbar { background: black; }",
+    "invertSelectors": [
+      "div.customer-logos__companies a"
+    ]
+  },
+  "aljazeera.com": {
+    "mode": "css",
+    "override": "active",
+    "_provenance": "darkreader@v4.9.127 MIT",
+    "invertSelectors": [
+      "#site-logo > img",
+      ".navbar-brand > img",
+      "#navbar-hamburger-mobile"
+    ]
+  },
+  "apnews.com": {
+    "mode": "css",
+    "override": "active",
+    "_provenance": "darkreader@v4.9.127 MIT",
+    "invertSelectors": [
+      ".hamburger-box",
+      ".sticky-part > div svg",
+      ".LeftRail > div svg",
+      ".Banner",
+      ".Banner-link"
+    ]
+  },
+  "apple.com": {
+    "mode": "css",
+    "override": "active",
+    "_provenance": "darkreader@v4.9.127 MIT",
+    "css": "* { --globalnav-background: #181a1b !important; --localnav-background: #181a1b !important; } option { background: #181a1b !important; }",
+    "invertSelectors": [
+      ".ac-slider-ax-track",
+      ".controls-progress-indicator",
+      ".rf-ccard-content-info"
+    ]
+  },
+  "archive.org": {
+    "mode": "css",
+    "override": "active",
+    "_provenance": "darkreader@v4.9.127 MIT",
+    "css": "#search-input { --input-background-color: #181a1b !important; --input-color: #e8e6e3 !important; } #about-container, .default-header { background-color: #181a1b !important; color: #e8e6e3 !important; } #right-column, #results { background-color: #181a1b !important; background-image: initial; } #sort-bar * { color: #181a1b !important; } #sort-bar svg path, .caret-down-svg, .collapser-icon svg, .expand-date-picker-btn svg { fill: #e8e6e3 !important; } #item-mediatype svg path { fill: black !important; } .review { color: #e8e6e3 !important; } .message { color: #e8e6e3 !important; }",
+    "invertSelectors": [
+      "p + fieldset a svg",
+      "#nav-search",
+      "#nav-search .search-field",
+      ".tabs-row",
+      ".tab",
+      ".activity-icon",
+      "#branding",
+      ".status-text",
+      ".review-star"
+    ]
+  },
+  "arstechnica.com": {
+    "mode": "css",
+    "override": "active",
+    "_provenance": "darkreader@v4.9.127 MIT",
+    "css": ".listing, .video-thumbnail { background-blend-mode: initial !important; } .article-single figure img { mix-blend-mode: initial !important; }",
+    "ignoreInlineStyle": [
+      "#site-header svg *"
+    ]
+  },
+  "arxiv.org": {
+    "mode": "css",
+    "override": "active",
+    "_provenance": "darkreader@v4.9.127 MIT",
+    "css": ".abstract { background-color: transparent !important; }",
+    "invertSelectors": [
+      "span.MathJax img"
+    ]
+  },
+  "bbc.com": {
+    "mode": "css",
+    "override": "active",
+    "_provenance": "darkreader@v4.9.127 MIT",
+    "css": ".wr-icon-weather-type__svg-background, .wr-icon-rain__svg-background, .wr-icon-wind-direction__svg-background, .wr-icon-gel__svg-background { opacity: 0% !important; } .wr-value--windspeed { color: #9b9995 !important; } .wr-c-environmental-data__icon-text { color: #989692 !important; } .haCQWq, .fFEZuA { filter: invert(90%) !important; }",
+    "invertSelectors": [
+      ".orb-nav-section .orb-nav-blocks",
+      ".orb-icon .orb-icon-arrow",
+      "[class*=\"NavigationLink-LogoLink\"] > span > svg",
+      "span[class*=\"LogoIconWrapper\"]"
+    ],
+    "ignoreImageAnalysis": true
+  },
+  "bestbuy.com": {
+    "mode": "css",
+    "override": "active",
+    "_provenance": "darkreader@v4.9.127 MIT",
+    "css": "input[type=\"radio\" i] { background-color: initial; }"
+  },
+  "blog.cloudflare.com": {
+    "mode": "css",
+    "override": "active",
+    "_provenance": "darkreader@v4.9.127 MIT",
+    "css": "body#main-body { background-color: #000000 !important; color: #ffffff !important; } .dn { color: #000000 !important; } #nav { background-color: #000000 !important; } main#post { background-color: #000000 !important; } article.post-full { background-color: #000000 !important; } article p { color: #d1e9ff !important; } code { color: #ffffff !important; } nav.pagination { background-color: #000000 !important; }",
+    "invertSelectors": [
+      "img[alt=\"The Cloudflare Blog\"]"
+    ]
+  },
+  "bloomberg.com": {
+    "mode": "css",
+    "override": "active",
+    "_provenance": "darkreader@v4.9.127 MIT",
+    "css": ".navi { border-color: #181a1b !important; }",
+    "invertSelectors": [
+      ".navi-bar__button-icon",
+      ".navi-sections__item--LiveNow::before",
+      ".navi-sections__link--current::after"
+    ]
+  },
+  "cdc.gov": {
+    "mode": "css",
+    "override": "active",
+    "_provenance": "darkreader@v4.9.127 MIT",
+    "invertSelectors": [
+      ".cdc-logo path[fill=\"#000\"]",
+      "img[src=\"/niosh/images/si-no-left-vp4.png\"]"
+    ],
+    "ignoreInlineStyle": [
+      ".map-container svg g",
+      ".legend-item"
+    ]
+  },
+  "cloudflare.com": {
+    "mode": "css",
+    "override": "active",
+    "_provenance": "darkreader@v4.9.127 MIT",
+    "css": ".cover { background-image: none !important; }",
+    "ignoreInlineStyle": [
+      ".footer-bottom-row-margin > div > a > svg > path"
+    ]
+  },
+  "cnn.com": {
+    "mode": "css",
+    "override": "active",
+    "_provenance": "darkreader@v4.9.127 MIT",
+    "css": "#header-nav-container::before { border-bottom-color: transparent !important; }",
+    "invertSelectors": [
+      "[data-test=\"section-link\"] > svg:not(.business-logo-icon)",
+      "img.metadata-header__logo"
+    ],
+    "ignoreInlineStyle": [
+      "svg.cnn-badge-icon",
+      "svg.cnn-badge-icon > rect",
+      "svg.politics-logo-icon",
+      "svg.business-logo-icon"
+    ]
+  },
+  "css-tricks.com": {
+    "mode": "css",
+    "override": "active",
+    "_provenance": "darkreader@v4.9.127 MIT",
+    "css": ".article-article { background: #000000 !important; }"
+  },
+  "developer.mozilla.org": {
+    "mode": "css",
+    "override": "active",
+    "_provenance": "darkreader@v4.9.127 MIT",
+    "css": ".logo-text, .search-results-list mark { color: #e8e6e3 !important; }",
+    "invertSelectors": [
+      ".copy-icon",
+      ".bc-browsers > th > span::before",
+      ".bc-platforms > th::before",
+      "a.external::after",
+      ".bc-has-history > .bc-history-link",
+      ".ic-footnote",
+      ".ic-non-standard",
+      ".breadcrumbs-container li .breadcrumb-penultimate::after",
+      ".breadcrumbs-container li .breadcrumb::after",
+      "ul.main-menu .top-level-entry::before",
+      "span.icon",
+      "#browser_compatibility + a + figure .icon",
+      ".bc-level",
+      ".legend-icons"
+    ],
+    "ignoreImageAnalysis": [
+      ".main-page-content .code-example .copy-icon"
+    ]
+  },
+  "doc.rust-lang.org": {
+    "mode": "css",
+    "override": "active",
+    "_provenance": "darkreader@v4.9.127 MIT",
+    "css": "mark { color: #e8e6e3 !important; }"
+  },
+  "docs.npmjs.com": {
+    "mode": "css",
+    "override": "active",
+    "_provenance": "darkreader@v4.9.127 MIT",
+    "css": "a title + g[data-darkreader-inline-fill] { fill: #e8e6e3 !important; }",
+    "invertSelectors": [
+      "header a[href=\"/\"] svg",
+      "#orgs_panel img.h2",
+      "#enterprise_detail_panel img.h2",
+      "#customers_panel img[src*=\"adobe.full.png\"]",
+      "#customers_panel img[src*=\"bbc.full.png\"]",
+      "#customers_panel img[src*=\"conde-nast.full.png\"]",
+      "#customers_panel img[src*=\"netflix.full.png\"]",
+      "#customers_panel img[src*=\"visa.full.png\"]",
+      "._5532dff2",
+      "._93bbf0b4"
+    ]
+  },
+  "docs.stripe.com": {
+    "mode": "css",
+    "override": "active",
+    "_provenance": "darkreader@v4.9.127 MIT",
+    "css": ".HomepageHeroHeader__title--overlay { text-shadow: #a39990 1px 1px 0px !important; }"
+  },
+  "economist.com": {
+    "mode": "css",
+    "override": "active",
+    "_provenance": "darkreader@v4.9.127 MIT",
+    "css": ".css-1xqo7ld { color: transparent; }",
+    "invertSelectors": [
+      "#ds-wordmark-1843 path:nth-child(5)"
+    ],
+    "ignoreInlineStyle": [
+      "#ds-economist-logo > path",
+      ".ds-share-link > svg > g > circle"
+    ]
+  },
+  "elastic.co": {
+    "mode": "css",
+    "override": "active",
+    "_provenance": "darkreader@v4.9.127 MIT",
+    "css": "code { mix-blend-mode: unset !important; }"
+  },
+  "etsy.com": {
+    "mode": "css",
+    "override": "active",
+    "_provenance": "darkreader@v4.9.127 MIT",
+    "invertSelectors": [
+      ".banner-container",
+      ".secondary-banner-title",
+      ".wt-radio label::before",
+      ".review-star.rating:not(.lit)",
+      "div.rating.nolit:not(:hover) > .ss-star"
+    ]
+  },
+  "gatsbyjs.com": {
+    "mode": "css",
+    "override": "active",
+    "_provenance": "darkreader@v4.9.127 MIT",
+    "css": ".gatsby-highlight, .language-text { background-color: #181a1b; }",
+    "invertSelectors": [
+      ".ais-InfiniteHits-item"
+    ]
+  },
+  "homedepot.com": {
+    "mode": "css",
+    "override": "active",
+    "_provenance": "darkreader@v4.9.127 MIT",
+    "css": "span[role=\"progressbar\"] > .sui-bg-inverse { background-color: #ffa438 !important; }"
+  },
+  "instagram.com": {
+    "mode": "css",
+    "override": "active",
+    "_provenance": "darkreader@v4.9.127 MIT",
+    "css": "div > a[tabindex], div > span > a[tabindex] { border-color: transparent !important; } ._ac3p { background-color: rgb(180, 180, 180) !important; } ._ac3o { background-color: rgb(68, 68, 68) !important; }",
+    "invertSelectors": [
+      ".s4Iyt",
+      ".coreSpriteActivityHeart",
+      ".coreSpriteAppStoreButton",
+      ".coreSpriteCall",
+      ".coreSpriteCheck",
+      ".coreSpriteCi",
+      ".coreSpriteClose",
+      ".coreSpriteDesktopNavDirect",
+      ".coreSpriteDesktopProfileSaveActive",
+      ".coreSpriteDesktopProfileTaggedActive",
+      ".coreSpriteDirectHeart",
+      ".coreSpriteDownload",
+      ".coreSpriteDropdownArrowGrey9",
+      ".coreSpriteGallery",
+      ".coreSpriteGooglePlayButton",
+      ".coreSpriteKeyhole",
+      ".coreSpriteLockSmall",
+      ".coreSpriteLoggedOutWordmark",
+      ".coreSpriteMobileNavDirect",
+      ".coreSpriteMobileNavTypeLogo",
+      ".coreSpriteNavBack",
+      ".coreSpriteNotificationLeftChevron",
+      ".coreSpriteNullProfile",
+      ".coreSpriteOptionsEllipsis",
+      ".coreSpritePagingChevron",
+      ".coreSpriteProfileCamera",
+      ".coreSpriteReload",
+      ".coreSpriteSaveNull",
+      ".coreSpriteSpinstaStory",
+      ".coreSpriteStoryCreation",
+      ".coreSpriteTaggedNull",
+      ".coreSpriteVideoNux",
+      ".coreSpriteWindowsStoreButton",
+      ".coreSpriteWordmark",
+      ".glyphsSpriteAdd__outline__24__grey_9",
+      ".glyphsSpriteAdd_friend__outline__96",
+      ".glyphsSpriteApp_instagram__outline__24__grey_9",
+      ".glyphsSpriteApp_messenger__outline__24__grey_9",
+      ".glyphsSpriteApp_twitter__outline__24__grey_9",
+      ".glyphsSpriteApp_whatsapp__outline__24__grey_9",
+      ".glyphsSpriteCall__outline__24__grey_9",
+      ".glyphsSpriteCamera__outline__24__grey_9",
+      ".glyphsSpriteChevron_down__outline__24__grey_9",
+      ".glyphsSpriteChevron_left__outline__24__grey_9",
+      ".glyphsSpriteChevron_up__outline__24__grey_9",
+      ".glyphsSpriteCircle_add__outline__24__grey_9",
+      ".glyphsSpriteComment__outline__24__grey_9",
+      ".glyphsSpriteContact_import",
+      ".glyphsSpriteContact_import_sm",
+      ".glyphsSpriteDirect__outline__24__grey_9",
+      ".glyphsSpriteDirect__outline__96",
+      ".glyphsSpriteDownload_2FAC",
+      ".glyphsSpriteError__outline__24__grey_9",
+      ".glyphsSpriteError__outline__96",
+      ".glyphsSpriteFacebook__outline__24__grey_9",
+      ".glyphsSpriteFb_brand_center_grey",
+      ".glyphsSpriteForward__outline__24__grey_9",
+      ".glyphsSpriteFriend_Follow",
+      ".glyphsSpriteGlyph_chevron_right",
+      ".glyphsSpriteHashtag__outline__24__grey_9",
+      ".glyphsSpriteHeart__filled__16__grey_9",
+      ".glyphsSpriteHeart__filled__24__grey_9",
+      ".glyphsSpriteHeart__outline__24__grey_9",
+      ".glyphsSpriteHome__filled__24__grey_9",
+      ".glyphsSpriteHome__outline__24__grey_9",
+      ".glyphsSpriteInfo__filled__16__grey_9",
+      ".glyphsSpriteLink__outline__24__grey_9",
+      ".glyphsSpriteLocation__outline__24__grey_9",
+      ".glyphsSpriteLock__outline__24__grey_9",
+      ".glyphsSpriteLock__outline__96",
+      ".glyphsSpriteMail__outline__24__grey_9",
+      ".glyphsSpriteMenu__outline__24__grey_9",
+      ".glyphsSpriteMore_horizontal__outline__24__grey_9",
+      ".glyphsSpriteNew_post__outline__24__grey_9",
+      ".glyphsSpritePaging_chevron",
+      ".glyphsSpritePlay__filled__16__grey_9",
+      ".glyphsSpriteSave__filled__24__grey_9",
+      ".glyphsSpriteSave__outline__24__grey_9",
+      ".glyphsSpriteSearch__filled__24__grey_9",
+      ".glyphsSpriteSearch__outline__24__grey_9",
+      ".glyphsSpriteSettings__outline__24__grey_9",
+      ".glyphsSpriteShare__outline__24__grey_9",
+      ".glyphsSpriteShopping__outline__16__grey_9",
+      ".glyphsSpriteStar_filled_24",
+      ".glyphsSpriteStar_half_filled_24",
+      ".glyphsSpriteStory__outline__24__grey_9",
+      ".glyphsSpriteUser__filled__24__grey_9",
+      ".glyphsSpriteUser__outline__24__grey_9",
+      ".glyphsSpriteUser_follow__filled__24__grey_9",
+      ".glyphsSpriteUser_follow__outline__24__grey_9",
+      ".glyphsSpriteUsers__outline__24__grey_9",
+      ".glyphsSpriteVideo_chat__outline__24__grey_9",
+      ".glyphsSpriteWhatsapp__outline__24__grey_9",
+      ".glyphsSpriteX__outline__24__grey_9",
+      "span.LikeSprite.embedSpriteHeartOpen",
+      "span.hideText.embedSpriteComment",
+      "span.hideText.embedSpriteShare",
+      "span.hideText.embedSpriteSaveOpen",
+      "span.Sprite.embedSpriteGlyph.hideText",
+      ".-Nmqg",
+      "svg[aria-label*=\"Facebook\"]",
+      "a[role=\"link\"][href=\"/\"] i[role=\"img\"]"
+    ]
+  },
+  "medium.com": {
+    "mode": "css",
+    "override": "active",
+    "_provenance": "darkreader@v4.9.127 MIT",
+    "invertSelectors": [
+      ".svgIcon",
+      ".svgIcon-use",
+      "a[href=\"/\"]>svg",
+      "div[role=\"separator\"]"
+    ]
+  },
+  "microsoft.com": {
+    "mode": "css",
+    "override": "active",
+    "_provenance": "darkreader@v4.9.127 MIT",
+    "css": "#announce picture + div h3, #announce picture + div p, .edgeconsumer.features .m-hero h1, .edgeconsumer.features .m-hero p { color: #181a1b !important; } div[aria-label=\"Download Microsoft Edge dialog\"] { background-color: #389fef !important; } .block-heading, .pill-bar__item { text-shadow: #000000 1px 1px 0px !important; }",
+    "invertSelectors": [
+      ".m-updated-quicklinks .c-carousel.f-single-slide ul > li > a.c-hyperlink > img.large-icon",
+      ".carousel-inner .card-background",
+      ".key-message .card-background",
+      ".animated-hero-media",
+      ".section-master .section-master__image .ocr-img img:not(#mainContent > div > div > div > div.secondary-sticky-nav.aem-GridColumn.aem-GridColumn--default--12 > div.scrollspy-container > div:nth-child(9) > div > div > div.section-master__image > div > img)"
+    ]
+  },
+  "mongodb.com": {
+    "mode": "css",
+    "override": "active",
+    "_provenance": "darkreader@v4.9.127 MIT",
+    "invertSelectors": [
+      "img[alt=\"MongoDB logo\"]"
+    ]
+  },
+  "nasa.gov": {
+    "mode": "css",
+    "override": "active",
+    "_provenance": "darkreader@v4.9.127 MIT",
+    "ignoreImageAnalysis": [
+      ".vjs-has-started .vjs-control-bar .vjs-control.vjs-logo-image"
+    ]
+  },
+  "nationalgeographic.com": {
+    "mode": "css",
+    "override": "active",
+    "_provenance": "darkreader@v4.9.127 MIT",
+    "invertSelectors": [
+      ".NavBar__Logo__Container"
+    ]
+  },
+  "nature.com": {
+    "mode": "css",
+    "override": "active",
+    "_provenance": "darkreader@v4.9.127 MIT",
+    "invertSelectors": [
+      ".c-header__item--dropdown-menu > a[aria-expanded=\"false\"] > svg",
+      ".c-header__link--search[aria-expanded=\"false\"] > svg",
+      ".c-header__logo",
+      "[href=\"#search-menu\"] > svg",
+      ".c-header__link--chevron > svg",
+      "img[alt=\"Nature Careers\"]"
+    ]
+  },
+  "news.mit.edu": {
+    "mode": "css",
+    "override": "active",
+    "_provenance": "darkreader@v4.9.127 MIT",
+    "invertSelectors": [
+      ".mit-logo"
+    ]
+  },
+  "news.ycombinator.com": {
+    "mode": "css",
+    "override": "inactive",
+    "css": ":root{color-scheme:dark}html,body{background:#1a1a1a!important}#hnmain{background:#1a1a1a!important}table,tr,td{background-color:transparent!important}td[bgcolor=\"#ff6600\"],.pagetop{background:#ff6600!important}.pagetop,.pagetop a,.pagetop a:link,.pagetop a:visited,.hnname a{color:#1a1a1a!important}td{color:#c9c6c1!important}.titleline a:link,.title a:link{color:#e8e6e3!important}.titleline a:visited,.title a:visited{color:#a39e97!important}.rank,.score,.age,.age a,.hnuser,.subtext,.subtext a:link,.subtext a:visited,.comhead,.sitebit,.sitestr,.yclinks,.yclinks a{color:#8f8b85!important}.titleline a:hover,.subtext a:hover{color:#fff!important}.comment,.commtext,.commtext a:link{color:#c9c6c1!important}.votearrow{filter:invert(0.8) hue-rotate(180deg)}input,textarea,select{background:#2a2c2e!important;color:#e8e6e3!important;border:1px solid #3a3d3f!important}.comhead a:hover{color:#bbb!important}"
+  },
+  "newyorker.com": {
+    "mode": "css",
+    "override": "active",
+    "_provenance": "darkreader@v4.9.127 MIT",
+    "invertSelectors": [
+      "[data-testid=\"Logo\"]",
+      "[class*=\"Logo__logo\"]"
+    ]
+  },
+  "nodejs.org": {
+    "mode": "css",
+    "override": "active",
+    "_provenance": "darkreader@v4.9.127 MIT",
+    "css": "[data-theme=\"dark\"] h1.special { background-image: linear-gradient(180deg, #fff, hsla(0, 0%, 100%, .8)) !important; } [data-theme=\"light\"] h1.special { background-image: linear-gradient(180deg, #f0feff, rgba(240, 254, 255, 0.8)) !important; }"
+  },
+  "notion.so": {
+    "mode": "css",
+    "override": "active",
+    "_provenance": "darkreader@v4.9.127 MIT",
+    "css": "body { background-color: #181a1b !important; } * { caret-color: #e5e5e5 !important; } .notion-divider-block div div { border-bottom: 1px solid rgba(254, 251, 241, 0.4) !important; }",
+    "invertSelectors": [
+      "img[alt=\"People using Notion\"]",
+      ".global-margin-s .logos",
+      ".persona-grid > .persona-grid-item > .persona-grid-image",
+      ".desktop-illustration",
+      ".illustration .next-image",
+      ".api-section-image .next-image",
+      ".visual .next-image",
+      ".logo svg > :first-child"
+    ]
+  },
+  "office.com": {
+    "mode": "css",
+    "override": "active",
+    "_provenance": "darkreader@v4.9.127 MIT",
+    "invertSelectors": [
+      ".ms-ohp-svg-Icon.ms-ohp-Icon--privacyLogo"
+    ],
+    "ignoreImageAnalysis": [
+      ".ms-ohp-svg-Icon.ms-ohp-Icon--privacyLogo",
+      ".ms-ohp-svg-Icon.ms-ohp-Icon--calendarLogo::before",
+      ".ms-ohp-svg-Icon.ms-ohp-Icon--flowLogo::before"
+    ]
+  },
+  "overreacted.io": {
+    "mode": "css",
+    "override": "active",
+    "_provenance": "darkreader@v4.9.127 MIT",
+    "css": ":root { --bg: #181a1b !important; }"
+  },
+  "paulgraham.com": {
+    "mode": "css",
+    "override": "active",
+    "_provenance": "darkreader@v4.9.127 MIT",
+    "css": "body { background-image: none !important; }"
+  },
+  "pinterest.com": {
+    "mode": "css",
+    "override": "active",
+    "_provenance": "darkreader@v4.9.127 MIT",
+    "invertSelectors": [
+      "[aria-label=\"Home\"][style*=\"data:image/svg+xml\"]",
+      "[style*=\"%23111111\"][style*=\"data:image/svg+xml\"]"
+    ]
+  },
+  "quora.com": {
+    "mode": "css",
+    "override": "active",
+    "_provenance": "darkreader@v4.9.127 MIT",
+    "css": ".logo_fill { fill: rgb(219, 87, 83) !important; } body { background-color: #181a1b !important; } div.q-box.qu-bg--white { background-color: #181a1b !important; background-image: none !important; } .rf162uw:hover { color: rgba( 128, 128, 128, 0.15) !important; }",
+    "ignoreInlineStyle": [
+      "#upvote",
+      "#downvote"
+    ]
+  },
+  "redis.io": {
+    "mode": "css",
+    "override": "active",
+    "_provenance": "darkreader@v4.9.127 MIT",
+    "css": ".bg-gradient-to-bl { background-image: none !important; }"
+  },
+  "render.com": {
+    "mode": "css",
+    "override": "active",
+    "_provenance": "darkreader@v4.9.127 MIT",
+    "invertSelectors": [
+      ".rm-section.rm-hero",
+      ".rm-section.rm-hero > *:not(.rm-back-bottom)",
+      ".rm-back-top",
+      ".rm-back-large"
+    ]
+  },
+  "reuters.com": {
+    "mode": "css",
+    "override": "active",
+    "_provenance": "darkreader@v4.9.127 MIT",
+    "invertSelectors": [
+      "path[d^=\"M121.865 50.29c0\"]",
+      "span[data-testid=\"ReutersLogo\"]:not([class^=\"mobile-menu-module__logo\"])",
+      "svg[data-testid=\"IconSearch\"]",
+      "svg[aria-labelledby=\"EmailIconId\"]",
+      "svg[data-testid=\"IconClose\"]"
+    ]
+  },
+  "serverfault.com": {
+    "mode": "css",
+    "override": "active",
+    "_provenance": "darkreader@v4.9.127 MIT",
+    "css": "body, #content { background-color: #181a1b !important; background-image: none !important; border-color: #181a1b !important; } .profile-cards--graph { background-image: repeating-linear-gradient(0deg, transparent, transparent 13px, #7d7f80 -13px, #7d7f80 21px) !important; } .c-pointer { color: grey; } .js-accepted-answer-indicator.fc-green-500 { color: var(--green) !important; } #newuser-box { background-color: #4c4837 !important; } .topbar .icon-site-switcher-bubble { background-repeat: no-repeat !important; } div.h100.bar-lg.p-bs-wrapper:has(a[href=\"/questions\"]) { background: linear-gradient(0deg, #502502 30%, #FFFFFF) !important; } div.h100.bar-lg.p-bs-wrapper:has(a[href=\"https://stackoverflow.co/teams\"]) { background: linear-gradient(0deg, hsl(209,100%,26%) 30%, #FFFFFF) !important; } button[class^=\"js-vote\"] { border-color: #181a1b !important; }",
+    "invertSelectors": [
+      "._glyph:not(.top-bar .-logo ._glyph)",
+      ".favicon-mathoverflow",
+      ".favicon-mathoverflowmeta",
+      ".favicon-stackoverflowmeta",
+      ".h-auto[alt=\"Academia\"]",
+      ".h-auto[alt=\"Anime & Manga\"]",
+      ".h-auto[alt=\"Ask Different\"]",
+      ".h-auto[alt=\"Aviation\"]",
+      ".h-auto[alt=\"Code Review\"]",
+      ".h-auto[alt=\"Electrical Engineering\"]",
+      ".h-auto[alt=\"English Language Learners\"]",
+      ".h-auto[alt=\"Japanese Language\"]",
+      ".h-auto[alt=\"MathOverflow\"]",
+      ".h-auto[alt=\"Mathematics\"]",
+      ".h-auto[alt=\"Server Fault\"]",
+      ".h-auto[alt=\"Skeptics\"]",
+      ".h-auto[alt=\"Software Engineering\"]",
+      ".h-auto[alt=\"Stack Apps\"]",
+      ".h-auto[alt=\"Super User\"]",
+      ".h-auto[alt=\"The Workplace\"]",
+      ".h-auto[alt=\"Theoretical Computer Science\"]",
+      ".h-auto[alt=\"Unix & Linux\"]",
+      ".h-auto[alt=\"Web Applications\"]",
+      ".h-auto[alt=\"Role-playing Games\"]",
+      "a.js-gps-track::before",
+      "img[alt=\"The Stack Exchange Network\"]",
+      "button[class^=\"js-vote\"]",
+      ".MathJax img"
+    ],
+    "ignoreInlineStyle": [
+      ".chess-replayer-board td"
+    ],
+    "ignoreImageAnalysis": [
+      ".hero-background"
+    ]
+  },
+  "shopify.com": {
+    "mode": "css",
+    "override": "active",
+    "_provenance": "darkreader@v4.9.127 MIT",
+    "invertSelectors": [
+      ".marketing-nav--skin-light > .marketing-nav__logo",
+      ".shopify-logo",
+      ".header-country-select__trigger",
+      ".lia-message-count::before",
+      ".DateTime::before",
+      "img[class^=\"_Logo_\"]"
+    ]
+  },
+  "slack.com": {
+    "mode": "css",
+    "override": "active",
+    "_provenance": "darkreader@v4.9.127 MIT",
+    "css": ".c-slacklogo svg path:first-child { fill: #ffffff !important; } .c-button:not(.v--primary, .v--secondary) { background: inherit !important; color: inherit !important; } .c-button:not(.v--primary, .v--secondary):hover { text-decoration: underline !important; }"
+  },
+  "smithsonianmag.com": {
+    "mode": "css",
+    "override": "active",
+    "_provenance": "darkreader@v4.9.127 MIT",
+    "invertSelectors": [
+      "#mobile-icon > span"
+    ]
+  },
+  "stackoverflow.com": {
+    "mode": "css",
+    "override": "active",
+    "_provenance": "darkreader@v4.9.127 MIT",
+    "css": "body, #content { background-color: #181a1b !important; background-image: none !important; border-color: #181a1b !important; } .profile-cards--graph { background-image: repeating-linear-gradient(0deg, transparent, transparent 13px, #7d7f80 -13px, #7d7f80 21px) !important; } .c-pointer { color: grey; } .js-accepted-answer-indicator.fc-green-500 { color: var(--green) !important; } #newuser-box { background-color: #4c4837 !important; } .topbar .icon-site-switcher-bubble { background-repeat: no-repeat !important; } div.h100.bar-lg.p-bs-wrapper:has(a[href=\"/questions\"]) { background: linear-gradient(0deg, #502502 30%, #FFFFFF) !important; } div.h100.bar-lg.p-bs-wrapper:has(a[href=\"https://stackoverflow.co/teams\"]) { background: linear-gradient(0deg, hsl(209,100%,26%) 30%, #FFFFFF) !important; } button[class^=\"js-vote\"] { border-color: #181a1b !important; }",
+    "invertSelectors": [
+      "._glyph:not(.top-bar .-logo ._glyph)",
+      ".favicon-mathoverflow",
+      ".favicon-mathoverflowmeta",
+      ".favicon-stackoverflowmeta",
+      ".h-auto[alt=\"Academia\"]",
+      ".h-auto[alt=\"Anime & Manga\"]",
+      ".h-auto[alt=\"Ask Different\"]",
+      ".h-auto[alt=\"Aviation\"]",
+      ".h-auto[alt=\"Code Review\"]",
+      ".h-auto[alt=\"Electrical Engineering\"]",
+      ".h-auto[alt=\"English Language Learners\"]",
+      ".h-auto[alt=\"Japanese Language\"]",
+      ".h-auto[alt=\"MathOverflow\"]",
+      ".h-auto[alt=\"Mathematics\"]",
+      ".h-auto[alt=\"Server Fault\"]",
+      ".h-auto[alt=\"Skeptics\"]",
+      ".h-auto[alt=\"Software Engineering\"]",
+      ".h-auto[alt=\"Stack Apps\"]",
+      ".h-auto[alt=\"Super User\"]",
+      ".h-auto[alt=\"The Workplace\"]",
+      ".h-auto[alt=\"Theoretical Computer Science\"]",
+      ".h-auto[alt=\"Unix & Linux\"]",
+      ".h-auto[alt=\"Web Applications\"]",
+      ".h-auto[alt=\"Role-playing Games\"]",
+      "a.js-gps-track::before",
+      "img[alt=\"The Stack Exchange Network\"]",
+      "button[class^=\"js-vote\"]",
+      ".MathJax img"
+    ],
+    "ignoreInlineStyle": [
+      ".chess-replayer-board td"
+    ],
+    "ignoreImageAnalysis": [
+      ".hero-background"
+    ]
+  },
+  "stripe.com": {
+    "mode": "css",
+    "override": "active",
+    "_provenance": "darkreader@v4.9.127 MIT",
+    "css": ".HomepageHeroHeader__title--overlay { text-shadow: #a39990 1px 1px 0px !important; }"
+  },
+  "superuser.com": {
+    "mode": "css",
+    "override": "active",
+    "_provenance": "darkreader@v4.9.127 MIT",
+    "css": "body, #content { background-color: #181a1b !important; background-image: none !important; border-color: #181a1b !important; } .profile-cards--graph { background-image: repeating-linear-gradient(0deg, transparent, transparent 13px, #7d7f80 -13px, #7d7f80 21px) !important; } .c-pointer { color: grey; } .js-accepted-answer-indicator.fc-green-500 { color: var(--green) !important; } #newuser-box { background-color: #4c4837 !important; } .topbar .icon-site-switcher-bubble { background-repeat: no-repeat !important; } div.h100.bar-lg.p-bs-wrapper:has(a[href=\"/questions\"]) { background: linear-gradient(0deg, #502502 30%, #FFFFFF) !important; } div.h100.bar-lg.p-bs-wrapper:has(a[href=\"https://stackoverflow.co/teams\"]) { background: linear-gradient(0deg, hsl(209,100%,26%) 30%, #FFFFFF) !important; } button[class^=\"js-vote\"] { border-color: #181a1b !important; }",
+    "invertSelectors": [
+      "._glyph:not(.top-bar .-logo ._glyph)",
+      ".favicon-mathoverflow",
+      ".favicon-mathoverflowmeta",
+      ".favicon-stackoverflowmeta",
+      ".h-auto[alt=\"Academia\"]",
+      ".h-auto[alt=\"Anime & Manga\"]",
+      ".h-auto[alt=\"Ask Different\"]",
+      ".h-auto[alt=\"Aviation\"]",
+      ".h-auto[alt=\"Code Review\"]",
+      ".h-auto[alt=\"Electrical Engineering\"]",
+      ".h-auto[alt=\"English Language Learners\"]",
+      ".h-auto[alt=\"Japanese Language\"]",
+      ".h-auto[alt=\"MathOverflow\"]",
+      ".h-auto[alt=\"Mathematics\"]",
+      ".h-auto[alt=\"Server Fault\"]",
+      ".h-auto[alt=\"Skeptics\"]",
+      ".h-auto[alt=\"Software Engineering\"]",
+      ".h-auto[alt=\"Stack Apps\"]",
+      ".h-auto[alt=\"Super User\"]",
+      ".h-auto[alt=\"The Workplace\"]",
+      ".h-auto[alt=\"Theoretical Computer Science\"]",
+      ".h-auto[alt=\"Unix & Linux\"]",
+      ".h-auto[alt=\"Web Applications\"]",
+      ".h-auto[alt=\"Role-playing Games\"]",
+      "a.js-gps-track::before",
+      "img[alt=\"The Stack Exchange Network\"]",
+      "button[class^=\"js-vote\"]",
+      ".MathJax img"
+    ],
+    "ignoreInlineStyle": [
+      ".chess-replayer-board td"
+    ],
+    "ignoreImageAnalysis": [
+      ".hero-background"
+    ]
+  },
+  "tailwindcss.com": {
+    "mode": "css",
+    "override": "active",
+    "_provenance": "darkreader@v4.9.127 MIT",
+    "css": ".bg-white:not(#docsearch), .bg-gray-100 { --bg-opacity: none !important; } .text-gray-900, .hover\\:text-gray-900:hover, h1, h2, h3, h4, h5, h6 { --text-opacity: none !important; } .bg-center { background: none !important; }"
+  },
+  "theatlantic.com": {
+    "mode": "css",
+    "override": "active",
+    "_provenance": "darkreader@v4.9.127 MIT",
+    "invertSelectors": [
+      "[class^=\"NavHamburgerButton_root\"]",
+      "[class^=\"NudgeShared_chevron\"]",
+      "[class^=\"NonMeteredNudge_desktopTextContainer\"]::after"
+    ]
+  },
+  "thereader.mitpress.mit.edu": {
+    "mode": "css",
+    "override": "active",
+    "_provenance": "darkreader@v4.9.127 MIT",
+    "invertSelectors": [
+      ".mit-logo"
+    ]
+  },
+  "theverge.com": {
+    "mode": "css",
+    "override": "active",
+    "_provenance": "darkreader@v4.9.127 MIT",
+    "css": ".duet--article--article-body-component p a { box-shadow: inset 0 -1px 0 0 #fefefe !important; } .duet--article--article-body-component p a:hover { box-shadow: inset 0 -0.5em 0 0 #009776 !important; }",
+    "invertSelectors": [
+      ".c-global-header__logo",
+      ".c-tab-bar__logo",
+      ".c-footer__logo-link"
+    ]
+  },
+  "tiktok.com": {
+    "mode": "css",
+    "override": "active",
+    "_provenance": "darkreader@v4.9.127 MIT",
+    "css": "[data-e2e=\"like-icon\"] svg, [data-e2e=\"comment-icon\"] svg, [data-e2e=\"share-icon\"] svg { fill: #e8e6e3 !important; }",
+    "invertSelectors": [
+      ".like-container .icon",
+      "div[class*=\"DivSeekBarContainer\"]",
+      "div[class*=\"DivVolumeControlCircle\"]",
+      "div[class*=\"DivVolumeControlBar\"]",
+      "div[class*=\"DivVolumeControlProgress\"]",
+      ".video-control-container-browser",
+      ".volume-control-container-browser",
+      ".seek-bar-container",
+      ".volume-control-container",
+      "svg[class*=\"StyledLinkLogo\"]",
+      "svg[class*=\"SvgPlayIcon\"]",
+      "#svg-music-note > path",
+      "img[alt=\"TikTok Logo\"]:not(#site-footer img, #footer img)",
+      "img[alt=\"TikTok Logo Icon\"]",
+      "img[alt=\"search icon\"]",
+      "svg[alt=\"TikTok\"] path",
+      "img[data-e2e=\"Header-index-img\"]",
+      "#app-header img",
+      "img[class^=\"background-icon-_\"]",
+      "img[alt=\"Application logo\"]",
+      "[id^=\"animal-welfare-flex-item\"] picture img",
+      "[id^=\"well-being-guide-flex-item\"] picture img",
+      "img[data-tt=\"Sidebar_Sidebar_TikTokLogo\"]",
+      "img[data-tt=\"Sidebar_Sidebar_TikTokStudioLogo\"]",
+      "img.cursor-pointer",
+      "span.hamburger-menu",
+      "img.logo-icon",
+      "img.logo-text",
+      "img.header-logo-icon",
+      "img.header-logo-text"
+    ],
+    "ignoreInlineStyle": [
+      "svg[alt=\"TikTok\"] path"
+    ]
+  },
+  "twitch.tv": {
+    "mode": "css",
+    "override": "active",
+    "_provenance": "darkreader@v4.9.127 MIT",
+    "css": ".seekbar-segment { background-color: rgb(169, 112, 255) !important; } html, iframe { color-scheme: unset !important; }",
+    "invertSelectors": [
+      ".volume-slider__slider-container",
+      ".seekbar-bar",
+      ".mention-fragment--recipient",
+      ".reply-line--mentioned",
+      ".claimable-bonus__icon"
+    ]
+  },
+  "un.org": {
+    "mode": "css",
+    "override": "active",
+    "_provenance": "darkreader@v4.9.127 MIT",
+    "invertSelectors": [
+      "a.logo[title=\"United Nations\"]",
+      "img[src*=\"UN-text-EN.svg\"]"
+    ]
+  },
+  "vercel.com": {
+    "mode": "css",
+    "override": "active",
+    "_provenance": "darkreader@v4.9.127 MIT",
+    "css": ":root { --geist-foreground: #e8e6e3 !important; } div[style=\"background:var(--accents-1);\"] { background-color: #181a1b !important; } .geist-text-center { color: #fbfbfb !important; }",
+    "invertSelectors": [
+      "[alt=\"optimized-frameworks\"]",
+      "[class^=\"features_logo\"]",
+      "button[class^=\"header_logo\"]"
+    ]
+  },
+  "vox.com": {
+    "mode": "css",
+    "override": "active",
+    "_provenance": "darkreader@v4.9.127 MIT",
+    "invertSelectors": [
+      ".c-app-nav__logo",
+      ".c-footer__logo-link"
+    ]
+  },
+  "w3.org": {
+    "mode": "css",
+    "override": "active",
+    "_provenance": "darkreader@v4.9.127 MIT",
+    "invertSelectors": [
+      "img[alt*=\"equation\" i]"
+    ]
+  },
+  "walmart.com": {
+    "mode": "css",
+    "override": "active",
+    "_provenance": "darkreader@v4.9.127 MIT",
+    "css": ".intro-banner__container { z-index: 0 !important; } label.w_cA4b[data-automation-id=\"pickup-store\"] > svg > circle { fill: #9ca9cd !important; } label[data-automation-id=\"pickup-store\"] > svg > circle { fill: #404658 !important; }"
+  },
+  "weather.com": {
+    "mode": "css",
+    "override": "active",
+    "_provenance": "darkreader@v4.9.127 MIT",
+    "invertSelectors": [
+      "div[class*=\"DynamicMap\"]",
+      "svg[name=\"arrow-up\"]",
+      "svg[name=\"arrow-down\"]",
+      "text[class*=\"DonutChart\"]"
+    ],
+    "ignoreInlineStyle": [
+      "[id^=\"svg-symbol\"] *",
+      "svg[class*=\"alerts--\"] *",
+      "#svg-symbol-sun"
+    ]
+  },
+  "web.dev": {
+    "mode": "css",
+    "override": "active",
+    "_provenance": "darkreader@v4.9.127 MIT",
+    "css": ".w-aside--gotchas, .w-aside--key-term { color: #b98fff; } .w-aside--gotchas::after, .w-aside--key-term::after { background-color: #b98fff; }"
+  },
+  "who.int": {
+    "mode": "css",
+    "override": "active",
+    "_provenance": "darkreader@v4.9.127 MIT",
+    "invertSelectors": [
+      ".background-url-holder > picture > img"
+    ]
+  },
+  "wired.com": {
+    "mode": "css",
+    "override": "active",
+    "_provenance": "darkreader@v4.9.127 MIT",
+    "invertSelectors": [
+      "body a svg",
+      "a[data-testid=\"Logo\"]",
+      ".c-nav__open-icon",
+      ".c-nav__close-icon",
+      ".standard-navigation__logo-image > img"
+    ]
+  },
+  "yahoo.com": {
+    "mode": "css",
+    "override": "active",
+    "_provenance": "darkreader@v4.9.127 MIT",
+    "css": "#atomic .Bg\\(\\$weatherCardBackground\\) { background: rgba(var(--rgb-black),.54); } body { background-color: transparent !important; }"
+  },
   "youtube.com": {
     "mode": "native",
     "override": "inactive",
     "css": "html,body{background-color:#0f0f0f!important}",
     "inject": "(function(){\"use strict\";var d=document,D=d.documentElement;function m(){try{if(D&&!D.hasAttribute(\"dark\"))D.setAttribute(\"dark\",\"\");}catch(e){}}m();try{new MutationObserver(m).observe(D,{attributes:true,attributeFilter:[\"dark\"]});}catch(e){}})();"
   },
-  "news.ycombinator.com": {
+  "zed.dev": {
     "mode": "css",
-    "override": "inactive",
-    "css": ":root{color-scheme:dark}html,body{background:#1a1a1a!important}#hnmain{background:#1a1a1a!important}table,tr,td{background-color:transparent!important}td[bgcolor=\"#ff6600\"],.pagetop{background:#ff6600!important}.pagetop,.pagetop a,.pagetop a:link,.pagetop a:visited,.hnname a{color:#1a1a1a!important}td{color:#c9c6c1!important}.titleline a:link,.title a:link{color:#e8e6e3!important}.titleline a:visited,.title a:visited{color:#a39e97!important}.rank,.score,.age,.age a,.hnuser,.subtext,.subtext a:link,.subtext a:visited,.comhead,.sitebit,.sitestr,.yclinks,.yclinks a{color:#8f8b85!important}.titleline a:hover,.subtext a:hover{color:#fff!important}.comment,.commtext,.commtext a:link{color:#c9c6c1!important}.votearrow{filter:invert(0.8) hue-rotate(180deg)}input,textarea,select{background:#2a2c2e!important;color:#e8e6e3!important;border:1px solid #3a3d3f!important}.comhead a:hover{color:#bbb!important}"
+    "override": "active",
+    "_provenance": "darkreader@v4.9.127 MIT",
+    "css": ".text-transparent { color: var(--tw-gradient-from) !important; }"
   }
 }

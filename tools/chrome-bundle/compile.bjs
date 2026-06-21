@@ -16,11 +16,18 @@
 ;; macros.bjs is inlined at compile time, so a change to it invalidates EVERY
 ;; compiled file's cache (any file may expand its macros).
 (def MACROS-PATH :- String (join BJS-ROOT "macros.bjs"))
+;; Pinned beagle worktree (default ~/code/beagle-pin; CI overrides BEAGLE_PIN_ROOT)
+;; — NOT live ../beagle: the build must compile against the configs/beagle.ref pin,
+;; and the cwd-relative ../beagle path breaks in agent worktrees (resolves to a
+;; nonexistent sibling). Same resolver as tools/build-tools.bjs + prep/overlay.bjs.
+(def BEAGLE-PIN-ROOT :- String
+  (or (.-BEAGLE_PIN_ROOT (.-env process))
+      (resolve (.-HOME (.-env process)) "code" "beagle-pin")))
 ;; beagle-build is a bash script (no shebang support on Windows) — launched via
 ;; `bash` at the :cmd site; forward-slash the path so bash accepts it on Windows.
 ;; (String/fromCharCode 92) is a backslash; no-op on *nix.
 (def BEAGLE-BUILD :- String
-  (.replaceAll (resolve REPO-ROOT ".." "beagle" "bin" "beagle-build") (String/fromCharCode 92) "/"))
+  (.replaceAll (resolve BEAGLE-PIN-ROOT "bin" "beagle-build") (String/fromCharCode 92) "/"))
 
 (defn find-bjs-files [dir :- String] :- (Promise Any)
   (let [results []

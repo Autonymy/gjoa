@@ -992,6 +992,27 @@ Preserve these (security warnings):
     margin: 0 !important;
   }
 
+  /* FILL vs RFP letterboxing: the "librewolf" privacy profile turns on
+   * privacy.resistFingerprinting.letterboxing, whose toolkit letterboxing.css
+   * pins the INNERMOST `browser` to RFP-rounded `--letterboxing-width/height`
+   * (e.g. 350x900) and centers it with `place-content: start center` on the
+   * .browserStack — so the page sits as a smaller rectangle inside the card with
+   * a visible gjoa-surface gap on the sides and bottom (the user's "content not
+   * filling the card"). Letterboxing's purpose (hiding the true window size from
+   * a fingerprinter) is fundamentally at odds with the floating-card design's
+   * "content fills the card", so inside this layout we let fill win: stretch the
+   * stack and force the browser back to 100%. (RFP's API-level innerWidth/Height
+   * rounding still applies; only the visual letterbox margin is reclaimed here.)
+   * Higher specificity + !important to beat letterboxing.css's own !important. */
+  #browser:has(> #sidebar-main:not([data-gjoa-compact]):not([hidden])) > #tabbrowser-tabbox .browserStack {
+    place-content: stretch !important;
+  }
+  #browser:has(> #sidebar-main:not([data-gjoa-compact]):not([hidden])) > #tabbrowser-tabbox .browserContainer > .browserStack > browser,
+  #browser:has(> #sidebar-main:not([data-gjoa-compact]):not([hidden])) > #tabbrowser-tabbox .browserStack > browser {
+    width: 100% !important;
+    height: 100% !important;
+  }
+
   /* FILL: DOM-fullscreen always takes the whole window — defeat any card inset
    * that an open sidebar would otherwise leave behind. (Compact + hidden
    * sidebars already fall through to fill because the static selector above

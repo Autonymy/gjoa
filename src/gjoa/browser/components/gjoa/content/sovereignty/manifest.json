@@ -1,7 +1,7 @@
 {
   "claim": "This build makes 1 unattended network call: the Firefox version check.",
   "gjoaVersion": "0.4.1",
-  "auditedCommit": "080ee85",
+  "auditedCommit": "817d0d8",
   "generated": "2026-06-21",
   "method": "static AST audit of all authored chrome (.sys.mjs + emitted .bjs + content .js), every source parsed",
   "ownCode": {

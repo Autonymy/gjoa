@@ -30,6 +30,17 @@
 ;; sites that authored their own dark theme.
 (def PREF-DEFAULT-INVERT :- String "gjoa.darkmode.hybrid.default-invert")
 
+;; resistFingerprinting (RFP) — enabled by the "librewolf" privacy profile — spoofs
+;; content `prefers-color-scheme: light` as an anti-fingerprinting defense, which
+;; DEFEATS our content-override (a native-dark site like YouTube reads light and
+;; stays light). Gecko's granular RFPTarget override lets us disable ONLY the
+;; color-scheme spoof while keeping every other RFP protection. Canonical value
+;; (RFPTargets.inc: "+AllTargets,-CSSPrefersColorScheme" — leading AllTargets is
+;; required, then the single exempted target). We manage it ONLY when its value is
+;; empty or our own token, so a user's hand-set overrides string is never stomped.
+(def PREF-RFP-OVERRIDES :- String "privacy.resistFingerprinting.overrides")
+(def RFP-COLORSCHEME-EXEMPT :- String "+AllTargets,-CSSPrefersColorScheme")
+
 (def FILTER-CSS-ID :- String "gjoa-darkmode-filter-style")
 (def FILTER-CSS :- String
   (str "#tabbrowser-tabpanels browser { filter: invert(0.9) hue-rotate(180deg) !important; } "
@@ -50,6 +61,18 @@
 ;; Toggle the engine pre-paint default-invert flag (hybrid mode only).
 (defn set-default-invert! [on :- Boolean] :- Any
   (set-pref-bool! PREF-DEFAULT-INVERT on))
+
+;; Exempt the `prefers-color-scheme` RFPTarget so RFP (librewolf profile) stops
+;; forcing content light and our content-override actually reaches the page. `on`
+;; sets the canonical override; `off` clears it — but ONLY when the pref is empty
+;; or already our token, so we never clobber a user's custom RFP-overrides value.
+(defn set-rfp-colorscheme-exempt! [on :- Boolean] :- Any
+  (let [cur (pref-str PREF-RFP-OVERRIDES "")]
+    (if on
+      (when (or (= cur "") (= cur RFP-COLORSCHEME-EXEMPT))
+        (set-pref-str! PREF-RFP-OVERRIDES RFP-COLORSCHEME-EXEMPT))
+      (when (= cur RFP-COLORSCHEME-EXEMPT)
+        (set-pref-str! PREF-RFP-OVERRIDES "")))))
 
 (defn apply-filter! [] :- Any
   (when (not (.-filter-el state))
@@ -86,30 +109,31 @@
         m (mode-)]
     (cond
       (or (not en) (= m "off"))
-        (do (set-chrome-scheme! false) (set-content-override! 2) (set-invert! false) (set-default-invert! false) (remove-filter!))
+        (do (set-chrome-scheme! false) (set-content-override! 2) (set-invert! false) (set-default-invert! false) (set-rfp-colorscheme-exempt! false) (remove-filter!))
       ;; "system" (default): follow the OS theme. Dark OS -> the no-flash hybrid
       ;; engine; light OS -> leave sites in their own (light) themes. The discrete
       ;; modes below are manual escape hatches. Re-applied live on OS theme change.
       (= m "system")
         (if (system-dark?)
-          (do (set-chrome-scheme! true) (set-content-override! 0) (set-invert! false) (set-default-invert! true) (remove-filter!))
-          (do (set-chrome-scheme! false) (set-content-override! 2) (set-invert! false) (set-default-invert! false) (remove-filter!)))
+          (do (set-chrome-scheme! true) (set-content-override! 0) (set-invert! false) (set-default-invert! true) (set-rfp-colorscheme-exempt! true) (remove-filter!))
+          (do (set-chrome-scheme! false) (set-content-override! 2) (set-invert! false) (set-default-invert! false) (set-rfp-colorscheme-exempt! false) (remove-filter!)))
       ;; "engine": force LIGHT so sites render their light theme, then the engine
       ;; inverts every absolute color to dark at style-resolution time — cached,
-      ;; raster-safe, no per-frame compositor filter.
+      ;; raster-safe, no per-frame compositor filter. (Content stays light by design,
+      ;; so RFP's color-scheme spoof is harmless here — clear our exemption.)
       (= m "engine")
-        (do (set-chrome-scheme! true) (set-content-override! 1) (set-invert! true) (set-default-invert! false) (remove-filter!))
+        (do (set-chrome-scheme! true) (set-content-override! 1) (set-invert! true) (set-default-invert! false) (set-rfp-colorscheme-exempt! false) (remove-filter!))
       ;; "filter": legacy compositor invert (Lane-1 fallback, superseded by engine).
       (= m "filter")
-        (do (set-chrome-scheme! true) (set-content-override! 0) (set-invert! false) (set-default-invert! false) (apply-filter!))
+        (do (set-chrome-scheme! true) (set-content-override! 0) (set-invert! false) (set-default-invert! false) (set-rfp-colorscheme-exempt! true) (apply-filter!))
       ;; "hybrid": force prefers-color-scheme: dark so native-dark sites activate;
       ;; the engine pre-paint default-inverts themeless pages (no flash) and the
       ;; GjoaDarkmode actor refines per-site (curated fixes + auto retraction).
       (= m "hybrid")
-        (do (set-chrome-scheme! true) (set-content-override! 0) (set-invert! false) (set-default-invert! true) (remove-filter!))
+        (do (set-chrome-scheme! true) (set-content-override! 0) (set-invert! false) (set-default-invert! true) (set-rfp-colorscheme-exempt! true) (remove-filter!))
       ;; "auto": native dark via prefers-color-scheme: dark only.
       :else
-        (do (set-chrome-scheme! true) (set-content-override! 0) (set-invert! false) (set-default-invert! false) (remove-filter!)))))
+        (do (set-chrome-scheme! true) (set-content-override! 0) (set-invert! false) (set-default-invert! false) (set-rfp-colorscheme-exempt! true) (remove-filter!)))))
 
 ;; Public toggle API (for a future toolbar button), exposed on window.
 (defn toggle [] :- Boolean

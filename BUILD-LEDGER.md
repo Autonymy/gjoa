@@ -594,3 +594,34 @@ tarball commit as engine/ HEAD (or assert they match), so gate A can't false-fai
 on a snapshot drift while the real tree is correctly patched.
 
 **Outcome:** <FINALIZE on build completion + full validation>
+
+---
+
+## 2026-06-21 — Lane-1 chrome re-bake: cross-project beagle value-semantics break
+
+**Trigger:** The coordinated import/ship build (full M1–M4 dark-mode stack) compiled gjoa chrome
+via the live ../beagle, which had advanced to the value-semantics emit (origin c6e4b80+). The new
+emit injects a `$$bc` value-equality runtime into gjoa chrome, breaking it TWO ways:
+1. `.sys.mjs` (GjoaLoader): `import * as $$bc from 'beagle/core.js'` — bare specifier unresolvable by
+   Firefox's chrome ES loader → GjoaLoader threw at load → ALL gjoa chrome dead.
+2. `.uc.js` userscript bundles (gjoa-tabs, 30× `$$bc.equiv`): USE `$$bc` but can't import → undefined
+   → bundle threw → browser exited on channel error → Marionette contexts discarded.
+
+**Why preflight missed it:** preflight Gate M only WARNS on ../beagle drift; the value-semantics
+change was a SILENT cross-project break (beagle's "gjoa unaffected" assessment missed both chrome host
+shapes — not-importing ≠ not-using). The break only surfaces at chrome RUNTIME, not compile.
+
+**Fix (NO full rebuild — Lane 1):** the runtime `.sys.mjs` in dist/bin/browser/modules/gjoa/ are
+SYMLINKS to engine/, so recompiling the engine `.sys.mjs` flips the binary live (sub-second).
+- `.sys.mjs`: vendored beagle/core.js → resource:///modules/gjoa/beagle/; set BEAGLE_JS_RUNTIME_PREFIX
+  (beagle-1's flag @4ffb26f) on the GjoaLoader compile in tools/prep/overlay.bjs.
+- `.uc.js`: GjoaLoader sets `window.$$bc = ChromeUtils.importESModule(core.js)` before loadSubScript.
+
+**Result:** full suite 5/75 (broken) → 14/67 (.sys.mjs fixed) → **79/2 (both fixed)**. #89 3/3 green,
+#102/#101/spaces/tabs/vim all green in the import binary. Dark-mode product validated: chrome-side
+drawSnapshot of a themeless-light page with the hybrid actor → center pixel white→black (inverted).
+
+**New gate to add:** a preflight runtime smoke that boots the baked binary headless + asserts
+window.gjoaTest initializes (catches a chrome-dead bake before ship). The 2 remaining suite fails are
+both known/expected (adblock M2 = #90's separate build; 1 darkmode content-nav = the Marionette
+content-context-vs-inversion limitation, product validated via drawSnapshot).

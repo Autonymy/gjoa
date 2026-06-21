@@ -29,7 +29,7 @@ const CEILING = arguments[4] || 90;   // halation ceiling (the band's upper edge
     const data = ctx.getImageData(0, 0, W, H).data;
     const px = (x, y) => { const i = (y * W + x) * 4; return [data[i], data[i + 1], data[i + 2]]; };
 
-    const fails = []; const correctives = []; let checked = 0;
+    const fails = []; const correctives = []; const halation = []; let checked = 0;
     for (const el of meta.els) {
       const x0 = Math.max(0, el.x), y0 = Math.max(0, el.y);
       const x1 = Math.min(W - 1, el.x + el.w), y1 = Math.min(H - 1, el.y + el.h);
@@ -41,6 +41,11 @@ const CEILING = arguments[4] || 90;   // halation ceiling (the band's upper edge
       samples.sort((a, c) => Ys(a) - Ys(c));
       const bg = samples[Math.floor(samples.length / 2)]; // median luminance ≈ backdrop
       const Lc = Math.abs(apca(el.fg, bg)); checked++;
+      // Two-sided band (docs/darkmode-v2.md): the HALATION ceiling. |Lc| above the
+      // ceiling (e.g. pure-white-on-near-black ~106) is over-contrast = a fail the
+      // floor-only metric is blind to. Reported separately so the floor gate/baseline
+      // stays comparable; this is what makes the band's upper edge falsifiable.
+      if (Lc > CEILING) halation.push({ lc: Math.round(Lc), fg: el.fg, bg, tag: el.tag, x: el.x, y: el.y });
       if (Lc < THRESHOLD) {
         fails.push({ lc: Math.round(Lc), fg: el.fg, bg, tag: el.tag, text: el.text, x: el.x, y: el.y, cn: el.cn });
         if (NORMALIZE && el.cn != null) {
@@ -54,6 +59,8 @@ const CEILING = arguments[4] || 90;   // halation ceiling (the band's upper edge
       }
     }
     fails.sort((a, c) => a.lc - c.lc);
-    done({ checked, total: fails.length, fails: fails.slice(0, 40), correctives });
+    halation.sort((a, c) => c.lc - a.lc);
+    done({ checked, total: fails.length, fails: fails.slice(0, 40), correctives,
+           halationCount: halation.length, halation: halation.slice(0, 40) });
   } catch (e) { done({ err: String(e && e.message || e) }); }
 })();

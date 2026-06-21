@@ -5,6 +5,7 @@
 #     - toolkit/components/content-classifier/ContentClassifierService.cpp
 #     - toolkit/components/content-classifier/ContentClassifierService.h
 #     - toolkit/components/content-classifier/nsIContentClassifierService.idl
+#     - toolkit/components/content-classifier/components.conf
 #     - toolkit/components/content-classifier/moz.build
 #     - toolkit/components/content-classifier/content_classifier_engine/ContentClassifierEngine.cpp
 #     - toolkit/components/content-classifier/content_classifier_engine/ContentClassifierEngine.h
@@ -17,10 +18,8 @@ element-hiding (the gjoa adblock M2 feature).
 - Rust FFI: url_cosmetic_resources + hidden_class_id_selectors (+ fill_cstr_thinvec)
 - IDL: getUrlCosmeticResources + getHiddenClassIdSelectors (new uuid)
 - C++ engine wrappers + cross-engine union in the service
-- GetSingleton() getter for the @mozilla.org/content-classifier-service;1 service.
-  Its components.conf contract REGISTRATION is deferred to the #90 build — that
-  entry tripped StaticComponents.cpp:12205, so the concrete-type fix ships in #90's
-  own patch and is kept out of the dark-mode/ship build (getter here is unused).
+- @mozilla.org/content-classifier-service;1 contract (GetSingleton) so JS can
+  reach the MAIN_PROCESS_ONLY service
 - moz.build: register GjoaCosmetic{Parent,Child}.sys.mjs as EXTRA_JS_MODULES
   (those NEW actor files ship as src/gjoa overlays, not in this patch)
 
@@ -53,14 +52,14 @@ index 8ea4179418..c69193e525 100644
  }
  
 +// static
-+already_AddRefed<nsIContentClassifierService>
++already_AddRefed<ContentClassifierService>
 +ContentClassifierService::GetSingleton() {
 +  if (!sInstance) {
 +    sInstance = new ContentClassifierService();
 +    ClearOnShutdown(&sInstance);
 +    sInstance->Init();
 +  }
-+  RefPtr<nsIContentClassifierService> service = sInstance.get();
++  RefPtr<ContentClassifierService> service = sInstance.get();
 +  return service.forget();
 +}
 +
@@ -227,7 +226,7 @@ index a1e5b9871a..52afe8d6ca 100644
 +  // Returns the singleton unconditionally (constructing it if needed), so JS
 +  // can query cosmetic resources. Unlike GetInstance() it does not gate on the
 +  // enabled pref; callers that need that gate check IsEnabled() themselves.
-+  static already_AddRefed<nsIContentClassifierService> GetSingleton();
++  static already_AddRefed<ContentClassifierService> GetSingleton();
 +
    static bool IsEnabled();
    static bool IsInitialized();
@@ -256,6 +255,24 @@ index a1e5b9871a..52afe8d6ca 100644
    // RemoteSettings client for fetching filter lists. All reads and
    // writes must happen on the main thread; each call site asserts.
    nsCOMPtr<nsIContentClassifierRemoteSettingsClient> mRSClient;
+diff --git a/toolkit/components/content-classifier/components.conf b/toolkit/components/content-classifier/components.conf
+index 522b94ffa0..b5bd5687a5 100644
+--- a/toolkit/components/content-classifier/components.conf
++++ b/toolkit/components/content-classifier/components.conf
+@@ -13,4 +13,13 @@ Classes = [
+         'singleton': True,
+         'processes': ProcessSelector.MAIN_PROCESS_ONLY,
+     },
++    {
++        'cid': '{cc5d6c7c-a415-4abb-a94d-73479b456b50}',
++        'contract_ids': ['@mozilla.org/content-classifier-service;1'],
++        'singleton': True,
++        'type': 'mozilla::ContentClassifierService',
++        'constructor': 'mozilla::ContentClassifierService::GetSingleton',
++        'headers': ['mozilla/ContentClassifierService.h'],
++        'processes': ProcessSelector.MAIN_PROCESS_ONLY,
++    },
+ ]
 diff --git a/toolkit/components/content-classifier/content_classifier_engine/Cargo.toml b/toolkit/components/content-classifier/content_classifier_engine/Cargo.toml
 index 2a56e9f630..6ef06d5c18 100644
 --- a/toolkit/components/content-classifier/content_classifier_engine/Cargo.toml

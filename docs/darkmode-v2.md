@@ -294,6 +294,15 @@ role — and these resolvers feed **both** the WebRender and the gfx-fallback/pr
 The non-negotiable discipline: **prove the math in JS on the 226-site harness before
 spending a single Lane-3 build on the C++ paint hook.**
 
+**Status (2026-06-21):** M0 ✅ (`colormath.js` + 11-test gate, wired into `bun run test`).
+M1 ✅ committed `patches/0012` (role choke-point, identity-gated). M2 ✅ committed `fb23599`
+(fixes DB 2→69, 6-agent quality-gated). M3 ✅ committed `patches/0013` (`GjoaDarkText.{h,cpp}`
+= the colormath port, hooked at `nsTextPaintStyle::GetTextColor`) — **first engine build in
+progress**. M4 (Tier-0 color-scheme bit) in progress. M5 pending (after M3/M4 verify). Note:
+the engine build runs `GjoaDarkText` directly at `nsTextPaintStyle::GetTextColor` — the draft
+found `mFrameBackgroundColor` already carries the opaque ancestor-composited backdrop, so the
+"hardest risk" (backdrop acquisition) was already solved by an existing primitive.
+
 | M | Title | Serves | Lane | Build? | Gate |
 |---|---|---|---|---|---|
 | **M0** | OKLCH retone + tone-space APCA band-solve proven in `snap.js`/`apply-correctives.js` (replace the RGB extreme-walk with hue-fixed/chroma-clamped tone bisection + ~Lc 90 ceiling) | P1+P2 instruments | 1 | no | corpus PASS beats the engine-mode baseline (109/65) with no new \|Lc\|<45 fails; correctives-per-site trend down |

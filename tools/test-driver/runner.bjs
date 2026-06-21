@@ -52,6 +52,44 @@
 (defn logErr [line :- String] :- Any
   (.write (.-stderr process) (str "[runner] " line "\n")))
 
+;; Per-test baseline reset (a de-facto beforeEach), run in chrome context before
+;; EVERY test so the suite stays order-independent (#102). Best-effort: every
+;; step is wrapped in try/catch and no-ops when its chrome API is absent (e.g.
+;; the sqlite probe test). This covers the cross-test leaks that made 5 tests
+;; fail in the full run yet pass in isolation:
+;;   - layout/orientation + vim-leader prefs (a test left in horizontal mode or
+;;     with useLeader on polluted the next) — restore deterministic defaults;
+;;   - a FOCUSED urlbar (e.g. _diag's gURLBar.focus()) that swallows the next
+;;     test's keydowns so Alt+h/Alt+l never reach the tab-panel fold handler;
+;;   - a stale vim cursor pointing at a removed/foreign row;
+;;   - leftover tabs AND group rows that inflate the tab tree (groups #11 saw a
+;;     "Project-A" group left by spaces-scope-groups — the old reset cleared
+;;     tabs but never groups), plus extra spaces.
+(def RESET-JS :- String
+  (str
+    "try {\n"
+    "  try { Services.prefs.setBoolPref('sidebar.verticalTabs', true); } catch (e) {}\n"
+    "  try { Services.prefs.clearUserPref('gjoa.layout.dynamicOrientation'); } catch (e) {}\n"
+    "  try { Services.prefs.clearUserPref('gjoa.layout.narrowThreshold'); } catch (e) {}\n"
+    "  try { Services.prefs.clearUserPref('gjoa.layout.horizontalSingleRow'); } catch (e) {}\n"
+    "  try { Services.prefs.clearUserPref('gjoa.keys.useLeader'); } catch (e) {}\n"
+    "  try { Services.prefs.clearUserPref('gjoa.tabs.newTabPosition'); } catch (e) {}\n"
+    ;; Dismiss any modal picker/ex-command UI a prior test left open (e.g.
+    ;; vim-hotkeys ends with the ex-command picker open) — an open picker
+    ;; swallows the next test's keydowns. Escape is the picker's own dismiss
+    ;; path (same synthetic event the suite's closePicker helper uses).
+    "  try { document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true })); } catch (e) {}\n"
+    "  try { if (window.Spaces && window.Spaces.list) { var L = window.Spaces.list(); var m = L.find(s => s.name === 'Main') || L[0]; if (m) { window.Spaces.setActive(m.id); L.forEach(s => { if (s.id !== m.id) { try { window.Spaces.delete(s.id); } catch (e) {} } }); } } } catch (e) {}\n"
+    "  var GT = window.gjoaTest;\n"
+    "  try { if (GT) { if (GT.vim && GT.vim.setCursor) GT.vim.setCursor(null); else if (GT.state) GT.state.cursor = null; } } catch (e) {}\n"
+    "  try { if (window.gBrowser) { var blank = gBrowser.addTab('about:blank', { triggeringPrincipal: Services.scriptSecurityManager.getSystemPrincipal() }); gBrowser.selectedTab = blank; Array.from(gBrowser.tabs).forEach(t => { if (t !== blank && !t.pinned) { try { gBrowser.removeTab(t); } catch (e) {} } }); } } catch (e) {}\n"
+    "  try { document.querySelectorAll('#gjoa-tab-panel .gjoa-group-row, #gjoa-tab-panel-pinned .gjoa-group-row').forEach(r => { try { r.remove(); } catch (e) {} }); } catch (e) {}\n"
+    "  try { if (GT && GT.treeOf && window.gBrowser) { var td = GT.treeOf.get(gBrowser.selectedTab); if (td) { td.parentId = null; td.collapsed = false; } } } catch (e) {}\n"
+    "  try { if (GT && GT.rows) { if (GT.rows.scheduleTreeResync) GT.rows.scheduleTreeResync(); if (GT.rows.updateVisibility) GT.rows.updateVisibility(); } } catch (e) {}\n"
+    "  try { if (typeof gURLBar !== 'undefined' && gURLBar) { gURLBar.value = ''; if (gURLBar.view && gURLBar.view.close) gURLBar.view.close(); gURLBar.blur(); } } catch (e) {}\n"
+    "  try { if (document.activeElement && document.activeElement.blur) document.activeElement.blur(); } catch (e) {}\n"
+    "} catch (e) {}"))
+
 ;; Dynamic `import(path)` — beagle's static `import` form can't express a
 ;; runtime module load, so build the dynamic importer via Function.
 (def dynImport :- Any (Function. "p" "return import(p)"))
@@ -273,12 +311,12 @@
                           ;; #gjoa-tab-panel, Services) rather than a stale page.
                           (try (js/await (.setContext (deref mn) "chrome"))
                                (catch Any _ nil))
-                          ;; Reset Spaces + tabs to a clean baseline before each
-                          ;; test so tests stay order-independent (earlier tests
-                          ;; leave extra spaces/tabs behind). Best-effort: no-op
-                          ;; when the chrome APIs aren't present (e.g. sqlite probe).
-                          (try (js/await (.executeScript (deref mn)
-                                 "try{if(window.Spaces&&window.Spaces.list){var L=window.Spaces.list();var m=L.find(s=>s.name===\"Main\")||L[0];if(m){window.Spaces.setActive(m.id);L.forEach(s=>{if(s.id!==m.id){try{window.Spaces.delete(s.id)}catch(e){}}})}}if(window.gBrowser){Array.from(gBrowser.tabs).forEach(t=>{if(t!==gBrowser.selectedTab&&!t.pinned){try{gBrowser.removeTab(t)}catch(e){}}})}}catch(e){}"))
+                          ;; Reset to a clean baseline before each test so tests
+                          ;; stay order-independent (#102). See RESET-JS above for
+                          ;; the full set of cross-test leaks this clears. Best-
+                          ;; effort: no-op when the chrome APIs aren't present
+                          ;; (e.g. the sqlite probe).
+                          (try (js/await (.executeScript (deref mn) RESET-JS))
                                (catch Any _ nil))
                           (js/await (.run t (deref mn) ctx))
                           (emit {:type "test:pass" :name (.-name t) :file file

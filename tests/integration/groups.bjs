@@ -282,8 +282,11 @@
         return true;
       ")]
        (expect spawned "New Tab Group menu click didn't fire")
-       ;; Wait for the LATEST group row (the test before may have spawned its own).
-       (await-true "return document.querySelectorAll(\"#gjoa-tab-panel .gjoa-group-row\").length >= 2;")
+       ;; Wait for THIS test's own group row. (Previously asserted >= 2, which
+       ;; silently relied on a leftover group from an earlier test — exactly the
+       ;; cross-test coupling #102 removes. The per-test reset now clears stray
+       ;; groups, so this test creates and targets its own single group.)
+       (await-true "return document.querySelectorAll(\"#gjoa-tab-panel .gjoa-group-row\").length >= 1;")
 
        ;; Seed: open a tab + a "dropper" tab.
        (chrome-eval "

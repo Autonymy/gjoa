@@ -5,7 +5,7 @@
     "intro": "Pick a profile, or tune the individual toggles below (which switches you to Custom). Profiles escalate — each is a superset of the one before it.",
     "selector": {
       "pref": "gjoa.privacy.profile",
-      "default": "minimal",
+      "default": "balanced",
       "profiles": [
         { "id": "minimal", "title": "Minimal",
           "summary": "gjoa's privacy defaults — telemetry and phone-home off, Do-Not-Track on. Zero site breakage.",

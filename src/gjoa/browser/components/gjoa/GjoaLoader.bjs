@@ -255,9 +255,11 @@
       (.setBoolPref d "gjoa.layout.floatingCards" true)
       ;; sovereignty: the maximal-egress-lockdown meta-pref, default OFF (see apply-lockdown!).
       (.setBoolPref d "gjoa.sovereignty.maximalLockdown" false)
-      ;; privacy: the curated-profile selector. Default "minimal" (gjoa defaults;
-      ;; zero site breakage). See PRIVACY-PRESETS / apply-privacy-profile!.
-      (.setCharPref d "gjoa.privacy.profile" "minimal"))
+      ;; privacy: the curated-profile selector. Default "balanced" — minimal's
+      ;; telemetry/phone-home-off baseline PLUS cross-site referer trimming and
+      ;; search/URL-bar suggestions off (no keystroke leak to the search engine),
+      ;; at negligible site breakage. See PRIVACY-PRESETS / apply-privacy-profile!.
+      (.setCharPref d "gjoa.privacy.profile" "balanced"))
     (catch Any e
       (console/error "gjoa-loader: setDefaults failed" e))))
 
@@ -370,7 +372,7 @@
 
 (defn apply-privacy-profile! [] :- Any
   (try
-    (let [id (.getCharPref (.-prefs Services) "gjoa.privacy.profile" "minimal")
+    (let [id (.getCharPref (.-prefs Services) "gjoa.privacy.profile" "balanced")
           ;; CHORE(pin-bump): revert when configs/beagle.ref passes the beagle ref
           ;; whose core.js exports a string-keyed `get` — restore bare
           ;; `(get PRIVACY-PRESETS id)`. (Same string-key workaround as STYLE-SHEET-SERVICE.)

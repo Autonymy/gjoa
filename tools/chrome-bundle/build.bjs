@@ -16,6 +16,33 @@
 (def REPO-ROOT :- String (.cwd process))
 (def OUT-DIR :- String (join REPO-ROOT "dist" "chrome" "JS"))
 
+;; A loadSubScript bundle (.uc.js) is NOT an ESM context — it can't run
+;; `import`. beagle emits the value-semantics runtime as
+;; `import { equivV as $$bc$equiv, … } from '…/beagle/core.js'`, and GjoaLoader
+;; puts that runtime's NAMESPACE on `window.$$bc`. So rewrite each beagle/core.js
+;; import clause `<export> as <local>` into `const <local> = $$bc.<export>;`,
+;; binding the bundle's named-import locals against the namespace. The mapping
+;; (`$$bc$equiv` ← `equivV`, NOT `equiv`) is read from beagle's OWN import line —
+;; never guessed. Without this rewrite the locals are undefined and every bundle
+;; using value-`=` throws `ReferenceError: $$bc$equiv is not defined` at load
+;; (the 2026-06-22 break). A plain `<export>` (no `as`) binds `<export>` itself.
+;; Preflight Gate Q asserts every bundle local has its prelude binding.
+(defn rewrite-core-import [clause :- String] :- String
+  (let [binds (.filter
+                (.map (.split clause ",")
+                      (fn [c :- String] :- String
+                        (let [t (.trim c)]
+                          (if (= (.-length t) 0)
+                            ""
+                            (let [parts (.split t (RegExp. "\\s+as\\s+"))
+                                  exp (.trim (aget parts 0))
+                                  loc (if (> (.-length parts) 1) (.trim (aget parts 1)) exp)]
+                              (str loc " = $$bc." exp))))))
+                (fn [s :- String] :- Bool (> (.-length s) 0)))]
+    (if (= (.-length binds) 0)
+      ""
+      (str "const " (.join binds ", ") ";"))))
+
 (defn process-file [code :- String] :- Any
   (let [exports []
         processed
@@ -25,22 +52,28 @@
               (.split code "\n")
               (fn [line]
                 (cond
+                  ;; KEEP beagle/core.js runtime imports — the map below rewrites
+                  ;; them to a `window.$$bc`-backed const prelude (see above).
+                  (.test (RegExp. "from\\s+['\"][^'\"]*beagle/core\\.js['\"]") line) true
                   (and (.test (RegExp. "^import\\s+") line)
                        (.test (RegExp. "from\\s+['\"]") line)) false
                   (.test (RegExp. "^import\\(") line) false
                   :else true)))
             (fn [line]
-              (let [fn-match (.match line (RegExp. "^export\\s+function\\s+(\\w+)"))]
-                (if fn-match
-                  (do
-                    (.push exports (aget fn-match 1))
-                    (.replace line (RegExp. "^export\\s+function\\s+(\\w+)") "$1 = function"))
-                  (let [decl-match (.match line (RegExp. "^export\\s+(?:const|let|var)\\s+(\\w+)"))]
-                    (if decl-match
+              (let [core-match (.match line (RegExp. "^import\\s*\\{([^}]*)\\}\\s*from\\s*['\"][^'\"]*beagle/core\\.js['\"]"))]
+                (if core-match
+                  (rewrite-core-import (aget core-match 1))
+                  (let [fn-match (.match line (RegExp. "^export\\s+function\\s+(\\w+)"))]
+                    (if fn-match
                       (do
-                        (.push exports (aget decl-match 1))
-                        (.replace line (RegExp. "^export\\s+(?:const|let|var)\\s+") ""))
-                      line)))))) "\n")]
+                        (.push exports (aget fn-match 1))
+                        (.replace line (RegExp. "^export\\s+function\\s+(\\w+)") "$1 = function"))
+                      (let [decl-match (.match line (RegExp. "^export\\s+(?:const|let|var)\\s+(\\w+)"))]
+                        (if decl-match
+                          (do
+                            (.push exports (aget decl-match 1))
+                            (.replace line (RegExp. "^export\\s+(?:const|let|var)\\s+") ""))
+                          line)))))))) "\n")]
     {:code processed :exports exports}))
 
 (defn build-one [entry :- Entry] :- Any

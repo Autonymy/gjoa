@@ -173,11 +173,20 @@
   (register-style-sheet-url (.-spec (.newFileURI (.-io Services) file)) (.-leafName file)))
 
 (defn load-into-chrome-window [window :- Any] :- Any
-  ;; gjoa-tabs.uc.js (a concatenated .uc.js bundle) references $$bc — beagle's
-  ;; value-semantics runtime ($$bc.equiv for =) — which a bundle can't import
-  ;; (loadSubScript isn't an ESM context). Expose the vendored runtime on the
-  ;; window the bundles load into so the free reference resolves. (.sys.mjs get it
-  ;; via the BEAGLE_JS_RUNTIME_PREFIX import instead; see tools/prep/overlay.bjs.)
+  ;; .uc.js bundles reference the beagle value-semantics runtime, which a
+  ;; loadSubScript bundle can't `import` (not an ESM context). Expose the
+  ;; vendored runtime NAMESPACE on the window the bundles load into as
+  ;; `window.$$bc`. beagle's emit references that runtime as named-import LOCALS
+  ;; (`$$bc$equiv`, bound to export `equivV`) — and the chrome bundler
+  ;; (tools/chrome-bundle/build.bjs) rewrites each stripped
+  ;; `import { equivV as $$bc$equiv } from 'beagle/core.js'` into a
+  ;; `const $$bc$equiv = $$bc.equivV;` prelude that resolves against this
+  ;; namespace (exact export→local mapping read from beagle's own import line —
+  ;; no guessing). A loader that set only the namespace, with no bundler
+  ;; rewrite, left `$$bc$equiv` undefined → every bundle using value-`=` threw
+  ;; `ReferenceError: $$bc$equiv is not defined` at load (broke 2026-06-22 on the
+  ;; 9d791ed pin-bump; preflight Gate Q now enforces both halves). (.sys.mjs
+  ;; files keep the real import via BEAGLE_JS_RUNTIME_PREFIX; see overlay.bjs.)
   (set! (.-$$bc window)
         (.importESModule ChromeUtils "resource:///modules/gjoa/beagle/core.js"))
   (let [dev (dev-mode-dir)]

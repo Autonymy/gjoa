@@ -595,10 +595,17 @@
   (join ENGINE-DIR "browser" "components" "gjoa" "beagle" "core.js"))
 (def GJOA-LOADER-MJS :- String
   (join ENGINE-DIR "browser" "components" "gjoa" "GjoaLoader.sys.mjs"))
+;; CANONICAL bundle output: `bun run chrome:dist` always (re)writes dist/chrome/JS.
+;; This is the single source of truth the dev loader AND chrome:install/bake both
+;; consume — and it's fresh after every Lane-1 cycle, unlike the obj-* deploy dir
+;; (a stale MACH-build artifact between builds). Scan this FIRST.
+(def GJOA-BUNDLE-DIST-DIR :- String
+  (join REPO-ROOT "dist" "chrome" "JS"))
+;; obj-* deploy dir — only fresh right after a mach build; a FALLBACK, never preferred
+;; (preferring it scanned last-build's stale bundles → false Gate-Q failures).
 (def GJOA-BUNDLE-DIR :- String
   (join ENGINE-DIR "obj-x86_64-pc-linux-gnu" "dist" "bin" "browser" "chrome" "browser" "content" "gjoa" "scripts"))
-;; Fallback bundle source (engine/ src copy), used when the obj-* deploy dir
-;; isn't populated yet (no mach build) — the bundles are identical .uc.js.
+;; engine/ src copy — final fallback when neither built output exists.
 (def GJOA-BUNDLE-SRC-DIR :- String
   (join ENGINE-DIR "browser" "components" "gjoa" "content" "scripts"))
 
@@ -619,17 +626,25 @@
               (.add surface (if asM (aget asM 1) (.trim (aget (.split t (RegExp. "\\s")) 0)))))))))
     surface))
 
-;; beagle-runtime symbols a chrome file REFERENCES, both forms:
-;;   (a) `$$bc.X` namespace access, and
-;;   (b) `import { X as … } from '<…>/beagle/core.js'` named-import list.
+;; beagle-runtime EXPORT symbols a chrome file references for CLOSURE checking
+;; (each must exist in core.js's export surface), two forms:
+;;   (a) `$$bc.X` namespace access — in .uc.js bundles (window.$$bc is the
+;;       namespace; the bundler's per-file `const $$bc$L = $$bc.X;` preludes also
+;;       land here, so the closure-relevant X is the real export), and
+;;   (b) `import { X as … } from '<…>/beagle/core.js'` named-import (.sys.mjs).
+;; NOTE: the bare named-import LOCAL `$$bc$L` (9d791ed .uc.js emit) is NOT a
+;; closure symbol — its suffix L is beagle's LOCAL name, not an export (e.g.
+;; `$$bc$equiv` ← export `equivV`, NOT `equiv`). Its real export reaches closure
+;; via the prelude's `$$bc.X` (form a); whether that prelude EXISTS at all is the
+;; separate binding-presence assertion in gateQ. (Scanning `$$bc$L` suffixes for
+;; closure would mis-check a local against the export set — the wrong invariant.)
 (defn referenced-runtime-symbols [src :- String] :- Any
   (let [refs (Set.)]
     ;; (a) namespace property access
     (doseq [m (Array/from (.matchAll src (RegExp. "\\$\\$bc\\.([A-Za-z_$][A-Za-z0-9_$]*)" "g")))]
       (.add refs (aget m 1)))
-    ;; (b) ESM named imports from any `…/beagle/core.js` specifier — the form
-    ;; that broke. Capture the brace clause, then each `X` / `X as Y` (the
-    ;; imported name X is what must exist in the export surface).
+    ;; (b) ESM named imports from any `…/beagle/core.js` specifier. Capture the
+    ;; brace clause, then each `X` / `X as Y` (imported name X must be exported).
     (doseq [m (Array/from (.matchAll src (RegExp. "import\\s*\\{([^}]*)\\}\\s*from\\s*['\"][^'\"]*beagle/core\\.js['\"]" "g")))]
       (doseq [clause (.split (aget m 1) ",")]
         (let [t (.trim clause)]
@@ -644,7 +659,10 @@
     (let [surface (core-export-surface (readFileSync VENDORED-CORE "utf8"))
           ;; Scan the loader + every deployed bundle (or its engine/ source
           ;; fallback when the obj-* deploy dir isn't populated).
-          bundle-dir (if (existsSync GJOA-BUNDLE-DIR) GJOA-BUNDLE-DIR GJOA-BUNDLE-SRC-DIR)
+          bundle-dir (cond
+                       (existsSync GJOA-BUNDLE-DIST-DIR) GJOA-BUNDLE-DIST-DIR
+                       (existsSync GJOA-BUNDLE-DIR) GJOA-BUNDLE-DIR
+                       :else GJOA-BUNDLE-SRC-DIR)
           bundle-files (if (existsSync bundle-dir)
                          (.map (.filter (readdirSync bundle-dir) (fn [f :- String] :- Bool (.endsWith f ".uc.js")))
                                (fn [f :- String] :- String (join bundle-dir f)))
@@ -668,6 +686,29 @@
           (doseq [sym (Array/from refs)]
             (when (not (.has surface sym))
               (.push offenders (str (basename f) ": " sym))))))
+      ;; binding-presence: in a .uc.js bundle the value-runtime locals `$$bc$L`
+      ;; are bare refs that resolve ONLY because the bundler (build.bjs
+      ;; rewrite-core-import) emits a per-file `const $$bc$L = $$bc.<export>;`
+      ;; prelude from beagle's stripped core.js import. Export-closure (above)
+      ;; cannot catch a MISSING prelude — a referenced `$$bc$L` with no decl just
+      ;; ReferenceErrors at load (the 2026-06-22 break). So assert every local a
+      ;; bundle references is also DECLARED in that same bundle.
+      (doseq [f bundle-files]
+        (when (existsSync f)
+          (let [src (readFileSync f "utf8")
+                declared (Set.)
+                referenced (Set.)]
+            ;; declared: LHS of each `const $$bc$L = $$bc.…` prelude binding.
+            (doseq [m (Array/from (.matchAll src (RegExp. "\\$\\$bc\\$([A-Za-z_$][A-Za-z0-9_$]*)\\s*=\\s*\\$\\$bc\\." "g")))]
+              (.add declared (aget m 1)))
+            ;; referenced: every `$$bc$L` occurrence (incl. the decl LHS, which is
+            ;; thus self-satisfied — only body-only refs can be orphans).
+            (doseq [m (Array/from (.matchAll src (RegExp. "\\$\\$bc\\$([A-Za-z_$][A-Za-z0-9_$]*)" "g")))]
+              (.add referenced (aget m 1)))
+            (doseq [sym (Array/from referenced)]
+              (when (not (.has declared sym))
+                (.push offenders
+                  (str (basename f) ": $$bc$" sym " referenced but unbound — no `const $$bc$" sym " = $$bc.<export>` prelude (bundler rewrite-core-import missing/regressed)")))))))
       (if (> (.-length offenders) 0)
         (fail "Q" "$$bc runtime export-closure (emit ↔ core.js)"
           (str (.-length offenders) " emitted runtime reference(s) not exported by the vendored core.js")

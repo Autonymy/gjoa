@@ -1,0 +1,253 @@
+# gjoa-patch:
+#   baseline-firefox: 152.0.1
+#   touches:
+#     - layout/generic/GjoaDarkText.h
+#     - layout/generic/GjoaDarkText.cpp
+#     - layout/generic/moz.build
+#     - layout/generic/nsTextPaintStyle.cpp
+#   depends-on:
+#     - cpp-method nsPresContext::ColorInversion
+#     - cpp-field nsTextPaintStyle::mFrameBackgroundColor
+#     - cpp-method nsTextPaintStyle::InitCommonColors
+#
+# gjoa dark-mode v2 (M3): paint-time text re-solve. Ports
+# tools/darkmode-regress/colormath.js correct() (OKLab + APCA SA98G) to C++ and
+# applies it at nsTextPaintStyle::GetTextColor against the frozen effective
+# backdrop, so every glyph clears an APCA floor + stays under the halation ceiling
+# holding hue -- which 0009's blind Y->1-lum cannot guarantee.
+diff --git a/layout/generic/GjoaDarkText.h b/layout/generic/GjoaDarkText.h
+new file mode 100644
+--- /dev/null
++++ b/layout/generic/GjoaDarkText.h
+@@ -0,0 +1,32 @@
++/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
++/* gjoa dark-mode v2 (M3): OKLab/APCA paint-time text re-solve.
++ *
++ * Mirrors tools/darkmode-regress/colormath.js correct() exactly — Ottosson OKLab
++ * + APCA SA98G, pure float math, C++-only (no crate, no Rust). The deterministic
++ * bun test (tools/darkmode-regress/colormath.test.js) is the spec; keep in sync.
++ *
++ * Patch 0009 already freezes every surface onto the dark ramp (Y->1-lum at Stylo),
++ * so by paint time both the text color AND the effective backdrop are dark. This
++ * RE-SOLVES each text mark against that frozen backdrop so it clears an APCA floor
++ * (and stays under the halation ceiling) holding hue — which 0009's blind invert
++ * does not guarantee (it can leave low-contrast dark-on-dark marks: the MIT bug). */
++#ifndef mozilla_GjoaDarkText_h
++#define mozilla_GjoaDarkText_h
++
++#include "nsColor.h"
++
++namespace mozilla {
++
++struct GjoaDarkText {
++  // Return a recolored aFg whose APCA |Lc| against the (opaque, already-frozen)
++  // aBgFrozen lands inside [aApcaFloor .. aCeiling], moving ONLY OKLCh lightness,
++  // holding hue exactly, never adding chroma. Preserves aFg's alpha. If the
++  // extreme cannot clear the floor (mid-gray backdrop caps contrast) it returns
++  // the best achievable. aBgFrozen MUST be opaque (caller gates on alpha == 255).
++  static nscolor Correct(nscolor aFg, nscolor aBgFrozen, float aApcaFloor,
++                         float aCeiling);
++};
++
++}  // namespace mozilla
++
++#endif  // mozilla_GjoaDarkText_h
+diff --git a/layout/generic/GjoaDarkText.cpp b/layout/generic/GjoaDarkText.cpp
+new file mode 100644
+--- /dev/null
++++ b/layout/generic/GjoaDarkText.cpp
+@@ -0,0 +1,152 @@
++/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
++/* gjoa dark-mode v2 (M3). Port of tools/darkmode-regress/colormath.js correct().
++ * Pure float math; no engine deps beyond nsColor. */
++
++#include "GjoaDarkText.h"
++
++#include <algorithm>
++#include <cmath>
++
++namespace mozilla {
++namespace {
++
++// ---- APCA (canonical SA98G; APCA's own simple 2.4 TRC, no sRGB toe) ----
++inline float LinApca(float c) { return std::pow(c / 255.0f, 2.4f); }
++inline float Ys(const float* p) {
++  return 0.2126729f * LinApca(p[0]) + 0.7151522f * LinApca(p[1]) +
++         0.0721750f * LinApca(p[2]);
++}
++float Apca(const float* t, const float* b) {
++  float yt = Ys(t), yb = Ys(b);
++  const float bt = 0.022f, bc = 1.414f;
++  if (yt <= bt) yt += std::pow(bt - yt, bc);
++  if (yb <= bt) yb += std::pow(bt - yb, bc);
++  if (std::fabs(yb - yt) < 0.0005f) return 0.0f;
++  float c;
++  if (yb > yt) {
++    float s = (std::pow(yb, 0.56f) - std::pow(yt, 0.57f)) * 1.14f;
++    c = s < 0.1f ? 0.0f : s - 0.027f;
++  } else {
++    float s = (std::pow(yb, 0.65f) - std::pow(yt, 0.62f)) * 1.14f;
++    c = s > -0.1f ? 0.0f : s + 0.027f;
++  }
++  return c * 100.0f;
++}
++
++// ---- sRGB <-> OKLab/OKLCh (Bjorn Ottosson; true sRGB transfer) ----
++inline float ToLinear(float c8) {
++  float c = c8 / 255.0f;
++  return c <= 0.04045f ? c / 12.92f : std::pow((c + 0.055f) / 1.055f, 2.4f);
++}
++inline float ToSrgb8(float x) {
++  x = std::clamp(x, 0.0f, 1.0f);
++  float s = x <= 0.0031308f ? x * 12.92f : 1.055f * std::pow(x, 1.0f / 2.4f) - 0.055f;
++  return std::round(std::clamp(s, 0.0f, 1.0f) * 255.0f);
++}
++void SrgbToOklch(const float* rgb, float& aL, float& aC, float& aH) {
++  float r = ToLinear(rgb[0]), g = ToLinear(rgb[1]), b = ToLinear(rgb[2]);
++  float l = 0.4122214708f * r + 0.5363325363f * g + 0.0514459929f * b;
++  float m = 0.2119034982f * r + 0.6806995451f * g + 0.1073969566f * b;
++  float s = 0.0883024619f * r + 0.2817188376f * g + 0.6299787005f * b;
++  float l_ = std::cbrt(l), m_ = std::cbrt(m), s_ = std::cbrt(s);
++  float ll = 0.2104542553f * l_ + 0.7936177850f * m_ - 0.0040720468f * s_;
++  float aa = 1.9779984951f * l_ - 2.4285922050f * m_ + 0.4505937099f * s_;
++  float bb = 0.0259040371f * l_ + 0.7827717662f * m_ - 0.8086757660f * s_;
++  aL = ll;
++  aC = std::hypot(aa, bb);
++  aH = std::atan2(bb, aa);
++}
++void OklabToLinear(float aL, float a, float b, float& r, float& g, float& bl) {
++  float l_ = aL + 0.3963377774f * a + 0.2158037573f * b;
++  float m_ = aL - 0.1055613458f * a - 0.0638541728f * b;
++  float s_ = aL - 0.0894841775f * a - 1.2914855480f * b;
++  float l = l_ * l_ * l_, m = m_ * m_ * m_, s = s_ * s_ * s_;
++  r = 4.0767416621f * l - 3.3077115913f * m + 0.2309699292f * s;
++  g = -1.2684380046f * l + 2.6097574011f * m - 0.3413193965f * s;
++  bl = -0.0041960863f * l - 0.7034186147f * m + 1.7076147010f * s;
++}
++bool InGamut(float r, float g, float b) {
++  const float e = 1e-4f;
++  return r >= -e && r <= 1 + e && g >= -e && g <= 1 + e && b >= -e && b <= 1 + e;
++}
++// OKLCh -> sRGB8, gamut-mapped by reducing CHROMA at fixed L,h (never a hue-shifting clip).
++void OklchToSrgb(float aL, float aC, float aH, float* aOut) {
++  float r, g, b;
++  OklabToLinear(aL, aC * std::cos(aH), aC * std::sin(aH), r, g, b);
++  if (!InGamut(r, g, b)) {
++    float lo = 0.0f, hi = aC;
++    for (int i = 0; i < 20; i++) {
++      float mid = (lo + hi) / 2.0f, rr, gg, bb;
++      OklabToLinear(aL, mid * std::cos(aH), mid * std::sin(aH), rr, gg, bb);
++      if (InGamut(rr, gg, bb)) lo = mid; else hi = mid;
++    }
++    OklabToLinear(aL, lo * std::cos(aH), lo * std::sin(aH), r, g, b);
++  }
++  aOut[0] = ToSrgb8(r);
++  aOut[1] = ToSrgb8(g);
++  aOut[2] = ToSrgb8(b);
++}
++
++}  // namespace
++
++nscolor GjoaDarkText::Correct(nscolor aFg, nscolor aBgFrozen, float aApcaFloor,
++                              float aCeiling) {
++  const float fg[3] = {(float)NS_GET_R(aFg), (float)NS_GET_G(aFg),
++                       (float)NS_GET_B(aFg)};
++  const float bg[3] = {(float)NS_GET_R(aBgFrozen), (float)NS_GET_G(aBgFrozen),
++                       (float)NS_GET_B(aBgFrozen)};
++  float l0, c0, h0;
++  SrgbToOklch(fg, l0, c0, h0);
++
++  const float white[3] = {255, 255, 255}, black[3] = {0, 0, 0};
++  const float lext = std::fabs(Apca(white, bg)) >= std::fabs(Apca(black, bg))
++                         ? 1.0f
++                         : 0.0f;
++  auto at = [&](float k, float* o) {
++    float l = l0 + k * (lext - l0);
++    OklchToSrgb(l, c0, h0, o);  // hold hue; chroma clamped to gamut, never added
++  };
++
++  float ext[3];
++  at(1.0f, ext);
++  // Backdrop caps achievable contrast: return the best extreme (residual is a bg problem).
++  if (std::fabs(Apca(ext, bg)) < aApcaFloor + 3.0f) {
++    return NS_RGBA((uint8_t)ext[0], (uint8_t)ext[1], (uint8_t)ext[2],
++                   NS_GET_A(aFg));
++  }
++  // Minimal-shift search: smallest lightness move that clears the floor (+3 hysteresis).
++  float lo = 0.0f, hi = 1.0f, best[3];
++  at(1.0f, best);
++  for (int i = 0; i < 24; i++) {
++    float k = (lo + hi) / 2.0f, c[3];
++    at(k, c);
++    if (std::fabs(Apca(c, bg)) >= aApcaFloor + 3.0f) {
++      best[0] = c[0]; best[1] = c[1]; best[2] = c[2];
++      hi = k;
++    } else {
++      lo = k;
++    }
++  }
++  // Halation ceiling backstop (the two-sided band's upper edge).
++  if (std::fabs(Apca(best, bg)) > aCeiling) {
++    float lo2 = 0.0f, hi2 = 1.0f;
++    for (int i = 0; i < 20; i++) {
++      float k = (lo2 + hi2) / 2.0f, c[3];
++      at(k, c);
++      float lc = std::fabs(Apca(c, bg));
++      if (lc > aCeiling) {
++        hi2 = k;
++      } else if (lc < aApcaFloor) {
++        lo2 = k;
++      } else {
++        best[0] = c[0]; best[1] = c[1]; best[2] = c[2];
++        break;
++      }
++      best[0] = c[0]; best[1] = c[1]; best[2] = c[2];
++    }
++  }
++  return NS_RGBA((uint8_t)best[0], (uint8_t)best[1], (uint8_t)best[2],
++                 NS_GET_A(aFg));
++}
++
++}  // namespace mozilla
+diff --git a/layout/generic/nsTextPaintStyle.cpp b/layout/generic/nsTextPaintStyle.cpp
+--- a/layout/generic/nsTextPaintStyle.cpp
++++ b/layout/generic/nsTextPaintStyle.cpp
+@@ -10,6 +10,7 @@
+ #include "nsCSSColorUtils.h"
+ #include "nsCSSRendering.h"
+ #include "nsFrameSelection.h"
++#include "GjoaDarkText.h"
+ #include "nsLayoutUtils.h"
+ #include "nsStyleConsts.h"
+ #include "nsTextFrame.h"
+@@ -104,8 +105,17 @@
+     }
+   }
+ 
+-  return nsLayoutUtils::GetTextColor(mFrame,
+-                                     &nsStyleText::mWebkitTextFillColor);
++  nscolor color = nsLayoutUtils::GetTextColor(mFrame,
++                                              &nsStyleText::mWebkitTextFillColor);
++  // gjoa dark-mode v2 (M3): re-solve the mark against the frozen effective
++  // backdrop for an APCA floor + halation ceiling, holding hue.
++  if (mResolveColors && mPresContext->ColorInversion()) {
++    InitCommonColors();
++    if (NS_GET_A(mFrameBackgroundColor) == 255) {
++      color = GjoaDarkText::Correct(color, mFrameBackgroundColor, 45.0f, 90.0f);
++    }
++  }
++  return color;
+ }
+ 
+ bool nsTextPaintStyle::GetSelectionColors(nscolor* aForeColor,
+diff --git a/layout/generic/moz.build b/layout/generic/moz.build
+--- a/layout/generic/moz.build
++++ b/layout/generic/moz.build
+@@ -173,6 +173,7 @@
+     "ColumnUtils.cpp",
+     "CSSAlignUtils.cpp",
+     "CSSOrderAwareFrameIterator.cpp",
++    "GjoaDarkText.cpp",
+     "MathMLTextRunFactory.cpp",
+     "MiddleCroppingBlockFrame.cpp",
+     "nsBlockFrame.cpp",

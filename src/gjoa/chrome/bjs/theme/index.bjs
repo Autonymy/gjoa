@@ -1,0 +1,91 @@
+#lang beagle/js
+;; Chrome-level theme variant selector — a Lane 1 module (no rebuild;
+;; hot-reloads via `gjoa sync`). gjoa's theme is ONE OKLCH token system fed by a
+;; base16 palette (src/gjoa/chrome/css/gjoa.uc.css). A "variant" is just a
+;; base16 token-set the CSS selects on the :root[gjoa-theme="…"] attribute. This
+;; module reads the gjoa.theme.variant pref and stamps that attribute on the
+;; documentElement (mirroring how dark-mode/index.bjs drives gjoa-darkmode), so
+;; switching themes is attribute-only — no per-widget CSS, no restart.
+;;
+;; Variants (pref gjoa.theme.variant):
+;;   "polar-night" — DEFAULT canonical. No attribute (the :root base16 defaults
+;;                   ARE Polar Night); gjoa.theme.useSystem OFF (shield on).
+;;   "nord"        — sets gjoa-theme="nord"; gjoa.theme.useSystem OFF.
+;;   "system"      — no gjoa-theme attribute; gjoa.theme.useSystem ON, so the
+;;                   palette flows from Firefox theme vars (stylix / system).
+(ns gjoa.theme.index
+  (:require [gjoa.macros :refer [attr! rmattr! pref-str
+                                 set-pref-str! set-pref-bool! on1!]]))
+(define-mode strict)
+
+(declare-extern [document window Services] Any)
+
+(def PREF-VARIANT :- String "gjoa.theme.variant")
+;; The shield/stylix toggle the CSS reads. The theme module OWNS it: "system"
+;; turns it on, every other variant turns it off — so the single picker drives
+;; both the shield and the stylix passthrough.
+(def PREF-USE-SYSTEM :- String "gjoa.theme.useSystem")
+
+(def DEFAULT-VARIANT :- String "polar-night")
+
+(def state :- Any {:unsub nil})
+
+(defn variant- [] :- String (pref-str PREF-VARIANT DEFAULT-VARIANT))
+
+;; Stamp the :root[gjoa-theme] attribute from the variant. The canonical
+;; "polar-night" and "system" leave the attribute OFF (the :root base16 defaults
+;; paint canonical; "system" routes through useSystem instead); a named variant
+;; like "nord" sets gjoa-theme to its id so the CSS [gjoa-theme="…"] block applies.
+(defn set-theme-attr! [variant :- String] :- Any
+  (let [root (.-documentElement document)]
+    (if (or (= variant "polar-night") (= variant "system"))
+      (rmattr! root "gjoa-theme")
+      (attr! root "gjoa-theme" variant))))
+
+;; "system" routes the existing useSystem path (shield off, FF theme vars flow
+;; in); every other variant keeps the shield on (useSystem off) so gjoa owns the
+;; palette and the base16 token-set is what re-skins.
+(defn set-use-system! [variant :- String] :- Any
+  (set-pref-bool! PREF-USE-SYSTEM (= variant "system")))
+
+(defn apply! [] :- Any
+  (let [v (variant-)]
+    (set-theme-attr! v)
+    (set-use-system! v)))
+
+;; Public API (for a future toolbar button / command), exposed on window.
+(defn set-variant [v :- String] :- Any
+  (set-pref-str! PREF-VARIANT v)
+  v)
+
+(defn get-variant [] :- String (variant-))
+
+;; Make the canonical default real on the default branch, so the CSS @media
+;; gates and the picker agree with the chrome. A user pref still overrides.
+(defn set-theme-defaults! [] :- Any
+  (try
+    (let [d (.getDefaultBranch (.-prefs Services) "")]
+      (.setCharPref d PREF-VARIANT DEFAULT-VARIANT))
+    (catch Any e
+      (console/error "gjoa-theme: set-theme-defaults! failed" e))))
+
+(defn destroy! [] :- Any
+  (let [u (.-unsub state)]
+    (when u (u)))
+  (set! (.-unsub state) nil)
+  (rmattr! (.-documentElement document) "gjoa-theme"))
+
+(defn init-! [] :- Any
+  (set-theme-defaults!)
+  (apply!)
+  (let [observer {:observe (fn [_s _t _d] (apply!))}]
+    (.addObserver (.-prefs Services) PREF-VARIANT observer)
+    (set! (.-unsub state)
+      (fn []
+        (.removeObserver (.-prefs Services) PREF-VARIANT observer))))
+  (set! (.-gjoaTheme window)
+    {:setVariant set-variant :getVariant get-variant})
+  (on1! window "unload" destroy!)
+  (console/log (str "gjoa-theme: initialized (variant=" (variant-) ")")))
+
+(init-!)

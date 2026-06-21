@@ -57,6 +57,7 @@
     "test:tabs": "bun run _itest -- --subsystem tabs | bun .beagle-tools/gjoa/tools/test-driver/record-metrics.js subsystem:tabs",
     "test:spaces": "bun run _itest -- --subsystem spaces | bun .beagle-tools/gjoa/tools/test-driver/record-metrics.js subsystem:spaces",
     "test:newtab": "bun run _itest -- --subsystem newtab | bun .beagle-tools/gjoa/tools/test-driver/record-metrics.js subsystem:newtab",
+    "test:urlbar": "bun run _itest -- --subsystem urlbar | bun .beagle-tools/gjoa/tools/test-driver/record-metrics.js subsystem:urlbar",
     "test:changed": "bun run test:chrome:ensure && bun .beagle-tools/gjoa/tools/test-driver/changed.js | bun .beagle-tools/gjoa/tools/test-driver/record-metrics.js changed",
     "test:report": "bun run tools:compile && bun .beagle-tools/gjoa/tools/test-driver/report.js",
     "test:report:json": "bun run tools:compile && bun .beagle-tools/gjoa/tools/test-driver/report.js --json",

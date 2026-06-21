@@ -1,0 +1,249 @@
+#lang beagle/js
+;; Urlbar-in-drawer regression lock (commit 264c94f, gjoa.uc.css).
+;;
+;; The in-sidebar urlbar is CHROME, not content, so a Marionette chrome-context
+;; executeScript can read its DOM rects directly — no content-context discard
+;; (that only bites content pages; see contrast.bjs / darkmode-render.bjs). All
+;; three assertions run against the live chrome document, no network, DEFAULT
+;; lane.
+;;
+;; Two regressions this guards (both from 264c94f reverting 5f57d8a / 29451f9):
+;;
+;;   #1 RESTING urlbar must be CONTAINED in the drawer, not full-width. The
+;;      native urlbar is `position: absolute` with #navigator-toolbox as its
+;;      containing block, so the bad `width: 100%` resolved against the toolbox
+;;      and spanned the whole window. The fix restores `width: var(--urlbar-width)`
+;;      (JS-pinned by drawer/layout.bjs sync-urlbar-width to sidebar inner width).
+;;      ASSERT: at rest, #urlbar rect width is well under #navigator-toolbox width
+;;      and ~= #sidebar-main inner width (minus 2·inset).
+;;
+;;   #2 EXPANDED dropdown panel must be OPAQUE (non-collapsed). On focus the
+;;      urlbar gets [breakout-extend]; the bad nova-only calc made
+;;      .urlbar-background's inset-block-start fall back to `auto`, collapsing the
+;;      panel to zero height -> the sidebar bled through. The fix uses
+;;      inset-block-start: calc(-1 * 8px), keeping inset-block-end:0 so the panel
+;;      stretches over input + results.
+;;      ASSERT: #urlbar[breakout-extend] > .urlbar-background rect height > 0
+;;      (tall enough to cover the input row), and its background-color is opaque.
+;;
+;;   #3 (29451f9 property) NO vertical jump: .urlbar-input-container's top (the
+;;      security icon + URL text row) is the same (within ~1px) at rest vs
+;;      [breakout-extend] — focusing the urlbar must not shift the text down.
+(ns gjoa.tests.integration.urlbar-drawer
+  (:require [gjoa.tests.dsl :refer [deftest chrome-eval await-true wait-for expect expect-eq]]))
+(define-mode strict)
+
+(declare-extern [Number] Any)
+
+;; Put the window into the EXPANDED vertical-tab layout that hosts the in-drawer
+;; urlbar (#gjoa-urlbar-toolbar inside #sidebar-main), then settle. The runner's
+;; per-test RESET already sets sidebar.verticalTabs=true and blurs the urlbar;
+;; this additionally expands the launcher so #sidebar-main has its full width
+;; (sync-urlbar-width needs a non-collapsed drawer to pin --urlbar-width).
+(def ENSURE-EXPANDED-DRAWER :- String "
+  Services.prefs.setBoolPref('sidebar.verticalTabs', true);
+  Services.prefs.setBoolPref('sidebar.revamp', true);
+  const sm = document.getElementById('sidebar-main');
+  if (sm && !sm.hasAttribute('sidebar-launcher-expanded')) {
+    sm.setAttribute('sidebar-launcher-expanded', '');
+  }
+  // gjoa forces nova OFF; assert the precondition the fix relies on so a future
+  // nova flip doesn't silently change which CSS path is exercised.
+  const nova = Services.prefs.getBoolPref('browser.nova.enabled', false);
+  return { hasToolbar: !!document.getElementById('gjoa-urlbar-toolbar'),
+           hasUrlbar: !!document.getElementById('urlbar'),
+           hasSidebarMain: !!sm, nova };
+")
+
+;; Measure the RESTING urlbar (not focused, no breakout-extend). Reports the
+;; #urlbar rect, the #navigator-toolbox rect, the #sidebar-main rect, and the
+;; --gjoa-sidebar-inset so the assertion can compute the expected inner width.
+(def MEASURE-RESTING :- String "
+  const urlbar = document.getElementById('urlbar');
+  const toolbox = document.getElementById('navigator-toolbox');
+  const sm = document.getElementById('sidebar-main');
+  if (!urlbar || !toolbox || !sm) return { error: 'missing element',
+    urlbar: !!urlbar, toolbox: !!toolbox, sm: !!sm };
+  const cs = getComputedStyle(document.documentElement);
+  const inset = parseFloat(cs.getPropertyValue('--gjoa-sidebar-inset')) || 10;
+  const ic = urlbar.querySelector('.urlbar-input-container');
+  const u = urlbar.getBoundingClientRect();
+  const t = toolbox.getBoundingClientRect();
+  const s = sm.getBoundingClientRect();
+  return {
+    urlbarWidth: u.width, urlbarLeft: u.left, urlbarRight: u.right,
+    toolboxWidth: t.width, toolboxLeft: t.left, toolboxRight: t.right,
+    sidebarWidth: s.width, sidebarLeft: s.left, sidebarRight: s.right,
+    inset,
+    breakoutExtend: urlbar.hasAttribute('breakout-extend'),
+    inputContainerTop: ic ? ic.getBoundingClientRect().top : null,
+  };
+")
+
+;; Drive the EXPANDED state the same way native Firefox does on focus, but
+;; deterministically (no network / suggestion providers): focus the urlbar, mark
+;; the view open (`view.isOpen` is just `input.hasAttribute('open')`,
+;; UrlbarView.sys.mjs), then call the real `startLayoutExtend()`. In non-nova
+;; that method early-returns unless the view is open — once it is, it toggles the
+;; native [breakout-extend] attribute, the exact attribute the CSS keys off.
+;; Then measure the .urlbar-background panel + the input row.
+(def MEASURE-EXTENDED :- String "
+  const urlbar = document.getElementById('urlbar');
+  if (!urlbar) return { error: 'no urlbar' };
+  try { if (window.gURLBar) {
+    window.gURLBar.focus();
+    urlbar.toggleAttribute('open', true);
+    if (window.gURLBar.startLayoutExtend) window.gURLBar.startLayoutExtend();
+    else urlbar.toggleAttribute('breakout-extend', true);
+  } else {
+    urlbar.toggleAttribute('open', true);
+    urlbar.toggleAttribute('breakout-extend', true);
+  } } catch (e) { return { error: 'extend failed: ' + (e && e.message || e) }; }
+  if (!urlbar.hasAttribute('breakout-extend')) return { error: 'breakout-extend not applied' };
+  const bg = urlbar.querySelector('.urlbar-background');
+  const ic = urlbar.querySelector('.urlbar-input-container');
+  const u = urlbar.getBoundingClientRect();
+  const bgRect = bg ? bg.getBoundingClientRect() : null;
+  const bgCS = bg ? getComputedStyle(bg) : null;
+  return {
+    hasBackground: !!bg,
+    bgHeight: bgRect ? bgRect.height : null,
+    bgTop: bgRect ? bgRect.top : null,
+    bgBottom: bgRect ? bgRect.bottom : null,
+    bgColor: bgCS ? bgCS.backgroundColor : null,
+    urlbarHeight: u.height,
+    inputContainerTop: ic ? ic.getBoundingClientRect().top : null,
+    breakoutExtend: urlbar.hasAttribute('breakout-extend'),
+  };
+")
+
+;; Restore the resting state (blur, drop the synthetic open/breakout-extend) so
+;; the per-test order-independence the runner relies on isn't disturbed.
+(def RESET-URLBAR :- String "
+  const urlbar = document.getElementById('urlbar');
+  try { if (window.gURLBar) { if (window.gURLBar.endLayoutExtend) window.gURLBar.endLayoutExtend(); window.gURLBar.blur(); } } catch (e) {}
+  if (urlbar) { urlbar.removeAttribute('open'); urlbar.removeAttribute('breakout-extend'); }
+  return true;
+")
+
+;; GUARD against a vacuous pass on a dead-chrome binary: if GjoaLoader threw
+;; (the $$bc-runtime mismatch class), NO gjoa stylesheet is registered and the
+;; urlbar shows native FF behavior — under which the panel-height / no-jump
+;; assertions could pass on Firefox defaults rather than on our CSS. `gjoa.uc.css`
+;; defines `:root { --gjoa-urlbar-breathing: 8px }`; native FF does not. If that
+;; var doesn't resolve, our CSS is NOT applied → fail loudly instead of green.
+(defn require-gjoa-css! [mn :- Any] :- Any
+  (let [applied (js/await (.executeScript mn
+                  (str "const v = getComputedStyle(document.documentElement)"
+                       ".getPropertyValue('--gjoa-urlbar-breathing').trim();"
+                       "return v === '8px';")))]
+    (when (not applied)
+      (throw (Error.
+        (str "gjoa.uc.css is NOT applied (--gjoa-urlbar-breathing unresolved) — "
+             "GjoaLoader did not register the gjoa stylesheet (e.g. $$bc-runtime "
+             "mismatch in a stale binary). This test would otherwise pass "
+             "vacuously on native Firefox defaults; rebuild the bundle/binary."))))))
+
+(js/export (def tests :- Any
+  [(deftest "urlbar — resting urlbar is CONTAINED in the drawer, not full window width (#1)" [mn]
+     (js/await (.executeScript mn ENSURE-EXPANDED-DRAWER))
+     (js/await (require-gjoa-css! mn))
+     ;; PRECONDITION: the gjoa drawer must have reparented #urlbar into
+     ;; #gjoa-urlbar-toolbar (drawer/layout.bjs `expand`). Without it, #urlbar is
+     ;; still in the native #nav-bar at full width — a width assertion there would
+     ;; mis-blame the CSS for a dead-chrome bundle. Fail loudly + specifically.
+     (let [in-drawer (js/await (.executeScript mn
+                       (str "const u = document.getElementById('urlbar');"
+                            "const tb = document.getElementById('gjoa-urlbar-toolbar');"
+                            "return !!(u && tb && tb.contains(u) && window.gjoaTest);")))]
+       (expect in-drawer
+         (str "#urlbar is not inside #gjoa-urlbar-toolbar — the gjoa drawer chrome "
+              "did not initialize (e.g. GjoaLoader $$bc-runtime mismatch in a stale "
+              "binary). Rebuild the bundle/binary; this test needs live gjoa chrome.")))
+     ;; Wait for sync-urlbar-width to pin --urlbar-width to the drawer inner
+     ;; width: the resting #urlbar must be meaningfully narrower than the toolbox.
+     (js/await (await-true
+                 (str "const u = document.getElementById('urlbar');"
+                      "const t = document.getElementById('navigator-toolbox');"
+                      "if (!u || !t) return false;"
+                      "const ur = u.getBoundingClientRect(), tr = t.getBoundingClientRect();"
+                      "return ur.width > 0 && tr.width > 0 && ur.width < tr.width * 0.85;")
+                 5000))
+     (let [r (chrome-eval MEASURE-RESTING)]
+       (expect (not (.-error r)) (str "MEASURE-RESTING error: " (JSON/stringify r)))
+       (expect (not (.-breakoutExtend r))
+         "resting urlbar unexpectedly has [breakout-extend] — measure ran in the wrong state")
+       ;; The bug spanned the urlbar to the full toolbox/window width. Containment:
+       ;; the urlbar must be well under the toolbox width.
+       (expect (< (.-urlbarWidth r) (* (.-toolboxWidth r) 0.85))
+         (str "resting urlbar not contained — width " (.toFixed (.-urlbarWidth r) 1)
+              "px is ~the toolbox width " (.toFixed (.-toolboxWidth r) 1) "px "
+              "(the width:100%-vs-#navigator-toolbox regression). " (JSON/stringify r)))
+       ;; And it must be ~ the drawer inner width (sidebar width − 2·inset), the
+       ;; value sync-urlbar-width pins. Allow generous slack for sub-pixel / icon
+       ;; reserve so this stays robust, not pixel-brittle.
+       (let [expected-inner (- (.-sidebarWidth r) (* (.-inset r) 2))
+             delta (Math/abs (- (.-urlbarWidth r) expected-inner))]
+         (expect (< delta 40)
+           (str "resting urlbar width " (.toFixed (.-urlbarWidth r) 1) "px not ~ drawer inner width "
+                (.toFixed expected-inner 1) "px (sidebar " (.toFixed (.-sidebarWidth r) 1)
+                " − 2·" (.-inset r) "); delta=" (.toFixed delta 1) "px. " (JSON/stringify r))))
+       ;; Belt-and-suspenders: the urlbar must sit inside the toolbox horizontally.
+       (expect (and (>= (.-urlbarLeft r) (- (.-toolboxLeft r) 2))
+                    (<= (.-urlbarRight r) (+ (.-toolboxRight r) 2)))
+         (str "resting urlbar overflows the toolbox horizontally. " (JSON/stringify r)))))
+
+   (deftest "urlbar — expanded [breakout-extend] dropdown panel is OPAQUE (non-collapsed) (#2)" [mn]
+     (js/await (.executeScript mn ENSURE-EXPANDED-DRAWER))
+     (js/await (require-gjoa-css! mn))
+     ;; Measure the expanded panel, then restore the resting state BEFORE
+     ;; asserting (a thrown assertion would otherwise leave the urlbar focused +
+     ;; [breakout-extend] for the next test; the captured `r` holds everything we
+     ;; need). The runner's per-test RESET also blurs the urlbar, this is belt+
+     ;; suspenders within the file.
+     (let [r (chrome-eval MEASURE-EXTENDED)
+           _ (js/await (.executeScript mn RESET-URLBAR))]
+       (expect (not (.-error r)) (str "MEASURE-EXTENDED error: " (JSON/stringify r)))
+       (expect (.-breakoutExtend r) "could not drive urlbar into [breakout-extend]")
+       (expect (.-hasBackground r) ".urlbar-background not found under [breakout-extend]")
+       ;; The collapse bug zeroed the panel height. It must be non-zero AND
+       ;; tall enough to cover the input row (≥ the urlbar box height, minus
+       ;; tolerance — the panel is raised 8px above the box top via the fix).
+       (expect (> (.-bgHeight r) 0)
+         (str ".urlbar-background collapsed to zero height (the nova-var fallback-to-auto "
+              "regression) — height=" (.toFixed (.-bgHeight r) 1) "px. " (JSON/stringify r)))
+       (expect (>= (.-bgHeight r) (- (.-urlbarHeight r) 2))
+         (str ".urlbar-background too short to cover the input row — height "
+              (.toFixed (.-bgHeight r) 1) "px vs urlbar box " (.toFixed (.-urlbarHeight r) 1)
+              "px. " (JSON/stringify r)))
+       ;; The panel must be opaque: a non-transparent background-color (the
+       ;; whole point — it's the only opaque surface behind the input + the
+       ;; transparent .urlbarView results in non-nova).
+       (let [bg (.-bgColor r)]
+         (expect (and bg (not= bg "transparent") (not= bg "rgba(0, 0, 0, 0)"))
+           (str ".urlbar-background is transparent — sidebar would bleed through. "
+                "background-color=" bg ". " (JSON/stringify r))))))
+
+   (deftest "urlbar — focusing the urlbar does NOT shift the input row down (no jump) (#3)" [mn]
+     (js/await (.executeScript mn ENSURE-EXPANDED-DRAWER))
+     (js/await (require-gjoa-css! mn))
+     (let [rest (chrome-eval MEASURE-RESTING)]
+       (expect (not (.-error rest)) (str "MEASURE-RESTING error: " (JSON/stringify rest)))
+       (expect (not= (.-inputContainerTop rest) nil) "no .urlbar-input-container at rest")
+       ;; Measure the extended row top, then restore resting BEFORE asserting
+       ;; (see #2 — keeps the test order-independent even on a thrown assertion).
+       (let [ext (chrome-eval MEASURE-EXTENDED)
+             _ (js/await (.executeScript mn RESET-URLBAR))]
+         (expect (not (.-error ext)) (str "MEASURE-EXTENDED error: " (JSON/stringify ext)))
+         (expect (not= (.-inputContainerTop ext) nil) "no .urlbar-input-container under [breakout-extend]")
+         ;; The 29451f9 no-jump property: the security-icon + URL text row top
+         ;; must be pixel-identical (≤1px) at rest vs expanded.
+         (let [jump (Math/abs (- (Number (.-inputContainerTop ext)) (Number (.-inputContainerTop rest))))]
+           (expect (<= jump 1.5)
+             (str "input row JUMPED on focus by " (.toFixed jump 2) "px "
+                  "(rest top=" (.toFixed (Number (.-inputContainerTop rest)) 2)
+                  ", extend top=" (.toFixed (Number (.-inputContainerTop ext)) 2)
+                  ") — breathing-room padding leaked onto the input again. "
+                  "rest=" (JSON/stringify rest) " ext=" (JSON/stringify ext)))))))]))
+
+(js/export-default tests)

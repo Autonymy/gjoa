@@ -524,3 +524,40 @@ YouTube player-prune still passes (works via the actor, not the contract).
 **New gate idea (M):** preflight should reject a `components.conf`
 `'constructor'`+`'singleton'` entry whose `'type'` is an XPCOM interface (not a
 concrete class), so it fails preflight, not a 26-min build.
+
+---
+
+## 2026-06-21 — dark-mode v2 M3 build (incremental mach) — FIRST ATTEMPT HUNG, restarted
+
+**Trigger:** verify M3 (patches/0013, `GjoaDarkText` paint-time OKLab/APCA text
+re-solve at `nsTextPaintStyle::GetTextColor`) compiles + runs, on top of M1
+(0012). Direct incremental mach build of `engine/` (objdir present), NOT an
+import build — so it bakes only `engine/` and does not perturb other agents'
+src-tree WIP (held under BUILD-LOCK-gjoa-2).
+
+**FAILURE (attempt 1): silent hang ~25 min, no error.** Launched via
+`nix develop .#mach -c bash -c 'cd engine && ./mach build' >> log 2>&1 &` inside
+a `run_in_background` Bash call — i.e. DOUBLE-backgrounded. The trailing `&`
+orphaned mach from the run_in_background wrapper (which then exited "0"); mach
+lost its environment/process-group and stalled. It compiled through ~8 min
+(GjoaDarkText.o + the layout-generic unified chunk built clean — so M3 COMPILES),
+then hung entering the link: `make` procs alive but sleeping, zero compiler/linker
+children, no objdir writes for 16 min, a zombie `python` child, mach's own clock
+frozen.
+
+**Recovery:** killed the mach/make tree (objdir survived intact, 15G → incremental
+resume), restarted WITHOUT the inner `&` (let `run_in_background` own the process,
+harness-tracked). Attempt 2 healthy (rustc at 99% CPU through the rust crates).
+
+**Lessons (the load-bearing bits):**
+1. NEVER put a trailing `&` inside a `run_in_background` Bash call — it
+   double-detaches and orphans long children. Let the tool background it.
+2. LIVENESS SIGNAL = CPU%, not log-freshness or objdir mtimes. A single `rustc`
+   compiling a big crate (style/servo, webrender) runs 99% CPU for 5-10 min while
+   the mach log and objdir look frozen (rustc writes the .rlib only at crate end).
+   I twice mis-read a healthy slow build as hung. A stall is: no compiler proc
+   (clang/rustc/ld/lld) AND no objdir writes for >3 min — not just a quiet log.
+3. The stall-aware monitor must grep for a live compiler proc before declaring a
+   hang, else it false-trips on slow rust crates.
+
+**Outcome:** <FINALIZE on attempt-2 completion: success/fail + M3 dm-shoot verify>

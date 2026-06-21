@@ -16,6 +16,7 @@
 (ns gjoa.tests.integration.darkmode-hybrid
   (:require [gjoa.tests.dsl :refer [deftest chrome-eval await-true wait-for expect expect-eq NAV-JS]]))
 (define-mode strict)
+(declare-extern [Number] Any)
 
 (def TOP :- String "http://127.0.0.1:8975/") ;; no-bg page (UA-dark under hybrid)
 (def LIGHT-TOP :- String "http://127.0.0.1:8975/light") ;; hardcoded-light themeless site
@@ -57,58 +58,54 @@
 (def SETTLE-JS :- String
   "const r=arguments[arguments.length-1]; setTimeout(()=>r(1), 700);")
 
+;; Chrome-side drawSnapshot luminance at pixel (px,py) of `url` (0=black..255=white).
+;; No content executeScript -> survives engine inversion (which discards the content BC).
+(defn render-lum-js [url :- String px :- Int py :- Int] :- String
+  (str "const done = arguments[arguments.length-1];"
+       "(async () => { try {"
+       "  const win = Services.wm.getMostRecentWindow('navigator:browser');"
+       "  const b = win.gBrowser.selectedBrowser;"
+       "  b.loadURI(Services.io.newURI('" url "'), {triggeringPrincipal: Services.scriptSecurityManager.getSystemPrincipal()});"
+       "  await new Promise(r => win.setTimeout(r, 3500));"
+       "  const wg = b.browsingContext.currentWindowGlobal;"
+       "  const bm = await wg.drawSnapshot(new win.DOMRect(0,0,300,200), 1, 'rgb(128,128,128)');"
+       "  const c = new win.OffscreenCanvas(300,200); const x = c.getContext('2d'); x.drawImage(bm,0,0);"
+       "  const d = x.getImageData(" px "," py ",1,1).data;"
+       "  done(String(Math.round(0.2126*d[0] + 0.7152*d[1] + 0.0722*d[2])));"
+       "} catch(e){ done('ERR:'+(e&&e.message||e)); } })();"))
+
 (js/export (def tests :- Any
-  [(deftest "darkmode hybrid: actor inverts a themeless (light) page per-document" [mn ctx]
+  [(deftest "darkmode hybrid: actor inverts a themeless (light) page (painted, chrome-side)" [mn ctx]
      (js/await (.setContext mn "chrome"))
      (chrome-eval HYBRID-JS)
-     (let [navOk (js/await (.executeAsyncScript mn NAV-JS [LIGHT-TOP]))]
-       (expect navOk "light fixture loaded")
-       ;; The actor measures light -> decides 'active'; poll until the engine has
-       ;; inverted an explicit white box in that document (covers the full chain:
-       ;; measure -> decide -> set override -> recascade).
-       (js/await (.setContext mn "content"))
-       (chrome-eval INJECT-BOX)
-       (js/await (await-true
-                   (str "const d=document.getElementById('dm-hy'); const cs=d&&getComputedStyle(d);"
-                        " return !!(cs && cs.backgroundColor==='rgb(0, 0, 0)' && cs.color==='rgb(255, 255, 255)');")
-                   6000))))
+     ;; actor measures /light -> 'active' -> sets colorInversionOverride -> recascade.
+     ;; Read the PAINTED page chrome-side (content getComputedStyle discards under invert).
+     (let [lum (js/await (.executeAsyncScript mn (render-lum-js LIGHT-TOP 150 100) []))]
+       (console/log (str "[dm-hybrid] actor /light center-lum=" lum))
+       (expect (< (Number lum) 80) (str "themeless-light should invert to DARK under the hybrid actor; lum=" lum))))
    ;; Tier b: the ENGINE default-invert darkens a themeless page at cascade time,
    ;; without any actor round-trip. Inject a white box and assert it computes
    ;; black — proving (A) sets mColorInversion at construction.
-   (deftest "darkmode tier-b: engine default-invert darkens a themeless page" [mn ctx]
+   (deftest "darkmode tier-b: engine default-invert darkens a themeless page (painted)" [mn ctx]
      (js/await (.setContext mn "chrome"))
      (chrome-eval HYBRID-B-JS)
-     (let [navOk (js/await (.executeAsyncScript mn NAV-JS [LIGHT-TOP]))]
-       (expect navOk "light fixture loaded")
-       (js/await (.setContext mn "content"))
-       (chrome-eval INJECT-WHITE)
-       (js/await (await-true
-                   (str "const d=document.getElementById('dm-w'); const cs=d&&getComputedStyle(d);"
-                        " return !!(cs && cs.backgroundColor==='rgb(0, 0, 0)');")
-                   4000))))
+     (let [lum (js/await (.executeAsyncScript mn (render-lum-js LIGHT-TOP 150 100) []))]
+       (console/log (str "[dm-hybrid] tier-b /light center-lum=" lum))
+       (expect (< (Number lum) 80) (str "themeless-light should invert to DARK under tier-b default-invert; lum=" lum))))
    ;; Tier b: a native-dark page (authored #111) is left un-inverted pre-paint by
    ;; PresShell::Initialize -> ApplyHybridDefaultInvertIfThemeless (it only flips
    ;; themeless pages), so it keeps its theme. After a settle (refiner could
    ;; otherwise re-invert), the root stays dark AND an injected white box stays
    ;; white (inversion is off for this doc).
-   (deftest "darkmode tier-b: native-dark page keeps its theme (no invert)" [mn ctx]
+   (deftest "darkmode tier-b: native-dark page keeps its theme — white probe stays white (painted)" [mn ctx]
      (js/await (.setContext mn "chrome"))
      (chrome-eval HYBRID-B-JS)
-     (let [navOk (js/await (.executeAsyncScript mn NAV-JS [DARK-TOP]))]
-       (expect navOk "dark fixture loaded")
-       (js/await (.executeAsyncScript mn SETTLE-JS []))
-       (js/await (.setContext mn "content"))
-       ;; root background did NOT invert: #111 (sum 51) stays dark, not ~light.
-       (js/await (await-true
-                   (str "const m=getComputedStyle(document.documentElement).backgroundColor.match(/[0-9]+/g);"
-                        " return !!(m && (+m[0] + +m[1] + +m[2]) < 180);")
-                   4000))
-       (chrome-eval INJECT-WHITE)
-       ;; a freshly-injected white box stays white -> mColorInversion was retracted.
-       (js/await (await-true
-                   (str "const d=document.getElementById('dm-w'); const cs=d&&getComputedStyle(d);"
-                        " return !!(cs && cs.backgroundColor==='rgb(255, 255, 255)');")
-                   4000))))
+     ;; /dark bakes a white probe top-left (0,0,80,80). Native-dark is NOT inverted
+     ;; pre-paint (PresShell::Initialize only flips themeless pages), so the white
+     ;; probe STAYS WHITE; if inversion wrongly fired it would go black. Painted read.
+     (let [lum (js/await (.executeAsyncScript mn (render-lum-js DARK-TOP 40 40) []))]
+       (console/log (str "[dm-hybrid] tier-b /dark white-probe-lum=" lum))
+       (expect (> (Number lum) 150) (str "native-dark must NOT invert: the white probe should stay WHITE; lum=" lum))))
    ;; #48: in "system" mode the engine's pre-paint default-invert tracks the OS
    ;; theme live. Spoof the OS via ui.systemUsesDarkTheme; the chrome matchMedia
    ;; change drives apply!, which sets/clears gjoa.darkmode.hybrid.default-invert.

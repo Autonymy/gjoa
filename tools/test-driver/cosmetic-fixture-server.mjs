@@ -25,7 +25,9 @@ const HTML_LIGHT = `<!doctype html>
 const HTML_DARK = `<!doctype html>
 <html style="background:#111"><head><meta charset="utf-8"><title>gjoa dark fixture</title>
 <style>html,body{background:#111;color:#eee}</style></head>
-<body><div id="content">NATIVE DARK</div></body></html>`;
+<body><div id="content">NATIVE DARK</div>
+<div id="dm-probe" style="position:fixed;top:0;left:0;width:80px;height:80px;background:#fff;z-index:99999"></div>
+</body></html>`;
 
 const server = createServer((req, res) => {
   const url = req.url || "";

@@ -492,10 +492,11 @@
 #gjoa-urlbar-toolbar {
   flex: none !important;
   overflow: hidden !important;
-  /* Y-margin owns the urlbar↔first-tab gap so it stays constant whether
-   * the pinned container is rendered or hidden. X-inset lives on the
-   * urlbar element itself (see `#gjoa-urlbar-toolbar #urlbar` rules below). */
-  margin: 12px 0 16px !important;
+  /* Y-margin owns the urlbar↔first-tab gap so it stays constant whether the
+   * pinned container is rendered or hidden. X-margin insets the urlbar wrapper
+   * symmetrically (equal --gjoa-sidebar-inset left + right) so the urlbar
+   * centers horizontally within the drawer regardless of sidebar position. */
+  margin: 12px var(--gjoa-sidebar-inset) 16px !important;
 }
 
 #gjoa-urlbar-toolbar #urlbar-container {
@@ -503,12 +504,17 @@
   padding: 0 !important;
 }
 
-@media -moz-pref("sidebar.position_start") {
-  #sidebar-main #gjoa-urlbar-toolbar #urlbar { left: var(--gjoa-sidebar-inset) !important; }
-}
-
-@media not -moz-pref("sidebar.position_start") {
-  #sidebar-main #gjoa-urlbar-toolbar #urlbar { right: var(--gjoa-sidebar-inset) !important; }
+/* Fill the inset wrapper so the resting urlbar spans the centered width
+ * (wrapper's symmetric X-margin already supplies the equal left/right gap).
+ * Drop any positioned offset that would push it to one side. Scoped to the
+ * NON-extended urlbar so the breakout-extend width override below still wins
+ * when the urlbar is focused/expanded. */
+#sidebar-main #gjoa-urlbar-toolbar #urlbar:not([breakout-extend]) {
+  width: 100% !important;
+  min-width: 0 !important;
+  left: auto !important;
+  right: auto !important;
+  margin-inline: auto !important;
 }
 
 /* breakout: let the urlbar expand past the sidebar when focused.
@@ -882,7 +888,13 @@ Preserve these (security warnings):
    * #browser's own background goes TRANSPARENT so the inter-card gap + the
    * outer inset reveal the backdrop behind the chrome (the desktop through a
    * translucent window, or the window root) — that's what makes the two cards
-   * read as floating instead of a same-colour seam you can't see. */
+   * read as floating instead of a same-colour seam you can't see.
+   *
+   * The padding is symmetric on ALL FOUR sides (one `padding` shorthand) and
+   * `gap` matches it, so the visible inset is uniform: card↔window edge and
+   * card↔card are both exactly --gjoa-card-gap. FF's own content-area.css
+   * `padding-block-start: 0` (nova) does NOT apply — nova is forced off and
+   * gjoa owns this region — so the TOP inset is preserved like the others. */
   #browser:has(> #sidebar-main:not([data-gjoa-compact]):not([hidden])) {
     gap: var(--gjoa-card-gap) !important;
     padding: var(--gjoa-card-gap) !important;
@@ -890,20 +902,56 @@ Preserve these (security warnings):
     background-image: none !important;
   }
 
-  /* Round the SIDEBAR card (chrome — safe to clip). The CONTENT card is left
-   * UN-rounded + UN-clipped: clipping a remote <browser> to a rounded corner
-   * leaves a triangular compositor artifact at the top-left, and the rounding
-   * would be hidden behind the opaque page anyway. The gap + shadow already
-   * make it read as a floating card. */
-  #browser:has(> #sidebar-main:not([data-gjoa-compact]):not([hidden])) > #sidebar-main {
-    border-radius: var(--gjoa-card-radius) !important;
-  }
+  /* Round BOTH cards on all four corners (radius = --gjoa-card-radius). The
+   * card's own --gjoa-bg background paints the rounded corners. */
   #browser:has(> #sidebar-main:not([data-gjoa-compact]):not([hidden])) > #sidebar-main,
   #browser:has(> #sidebar-main:not([data-gjoa-compact]):not([hidden])) > #tabbrowser-tabbox {
+    border-radius: var(--gjoa-card-radius) !important;
     box-shadow: var(--gjoa-card-shadow) !important;
   }
+  /* Drawer card: KEEP overflow:visible (the native urlbar `breakout-extend`
+   * expansion must spill past the card on click). So we can't clip the card to
+   * round its top corners. Instead, make the topmost painted children — the
+   * moved-in navigator-toolbox and its nav-bar — TRANSPARENT inside the card so
+   * the drawer card's own rounded --gjoa-bg background shows at the corners
+   * instead of a square opaque toolbar rect. (Same colour, so it only changes
+   * the corner; the toolbar still reads as gjoa-bg.) */
+  #browser:has(> #sidebar-main:not([data-gjoa-compact]):not([hidden])) > #sidebar-main {
+    background-color: var(--gjoa-bg) !important;
+  }
+  #browser:has(> #sidebar-main:not([data-gjoa-compact]):not([hidden])) > #sidebar-main #navigator-toolbox,
+  #browser:has(> #sidebar-main:not([data-gjoa-compact]):not([hidden])) > #sidebar-main #nav-bar {
+    background-color: transparent !important;
+  }
+  /* Content card: paint the gjoa surface behind the (briefly blank) page and
+   * clip the remote browser to the card radius. The content card has no
+   * breakout child, so clipping is safe and is what actually rounds the page's
+   * corners. */
   #browser:has(> #sidebar-main:not([data-gjoa-compact]):not([hidden])) > #tabbrowser-tabbox {
     background-color: var(--gjoa-bg) !important;
+    overflow: clip !important;
+  }
+
+  /* FILL the content card: the web content must reach all four inner edges of
+   * the content card. FF152's sidebar-revamp content-area.css insets the page
+   * with its OWN outline + box-shadow + a partial (start-corner-only) radius on
+   * .browserContainer, which both squares the card's top corners and leaves
+   * left/right slack inside the card. Neutralize all of it and let every nested
+   * content container fill 100% — OUR #tabbrowser-tabbox owns the rounding now. */
+  #browser:has(> #sidebar-main:not([data-gjoa-compact]):not([hidden])) > #tabbrowser-tabbox,
+  #browser:has(> #sidebar-main:not([data-gjoa-compact]):not([hidden])) > #tabbrowser-tabbox #tabbrowser-tabpanels {
+    width: 100% !important;
+    margin: 0 !important;
+    padding: 0 !important;
+  }
+  #browser:has(> #sidebar-main:not([data-gjoa-compact]):not([hidden])) > #tabbrowser-tabbox #tabbrowser-tabpanels > :not(.split-view-panel) .browserContainer,
+  #browser:has(> #sidebar-main:not([data-gjoa-compact]):not([hidden])) > #tabbrowser-tabbox .browserStack,
+  #browser:has(> #sidebar-main:not([data-gjoa-compact]):not([hidden])) > #tabbrowser-tabbox .browserSidebarContainer {
+    border: none !important;
+    outline: none !important;
+    box-shadow: none !important;
+    border-radius: 0 !important;
+    margin: 0 !important;
   }
 
   /* FILL: DOM-fullscreen always takes the whole window — defeat any card inset

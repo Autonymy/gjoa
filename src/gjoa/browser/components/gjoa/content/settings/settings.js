@@ -43,29 +43,74 @@
     return label;
   }
 
+  // Normalize an enum option into { value, label }. An option may be a bare
+  // string ("nord") — value == label — or an object { value, label } so the UI
+  // can show a friendly, verbose label while still writing the raw pref value
+  // (e.g. label "Always dark — force every site (most consistent)" -> "engine").
+  function optionVL(opt) {
+    if (opt && typeof opt === "object") {
+      return { value: String(opt.value), label: String(opt.label != null ? opt.label : opt.value) };
+    }
+    return { value: String(opt), label: String(opt) };
+  }
+
   function control(s, rerender) {
     const cur = getPref(s.pref, s.type, s.default);
     if (s.type === "bool") return toggle(!!cur, (on) => { setBool(s.pref, on); rerender(); });
     if (s.type === "enum") {
       const sel = el("select", "control-select");
+      let matched = false;
       for (const opt of s.options || []) {
+        const { value, label } = optionVL(opt);
         const o = document.createElement("option");
-        o.value = opt; o.textContent = opt; if (opt === cur) o.selected = true;
+        o.value = value; o.textContent = label;
+        if (value === String(cur)) { o.selected = true; matched = true; }
+        sel.appendChild(o);
+      }
+      // If the live pref holds a value not in the friendly list (a power user
+      // set a raw value in about:config), surface it rather than silently
+      // snapping to the first option — keeps the picker honest.
+      if (!matched && cur != null && String(cur) !== "") {
+        const o = document.createElement("option");
+        o.value = String(cur); o.textContent = String(cur) + " (current — set in about:config)";
+        o.selected = true;
         sel.appendChild(o);
       }
       sel.addEventListener("change", () => { setStr(s.pref, sel.value); rerender(); });
       return sel;
     }
     if (s.type === "int") {
+      const clamp = (v) => {
+        if (Number.isNaN(v)) v = (typeof s.min === "number") ? s.min : 0;
+        if (typeof s.min === "number" && v < s.min) v = s.min;
+        if (typeof s.max === "number" && v > s.max) v = s.max;
+        return v;
+      };
+      // A bounded int with `slider: true` renders a range slider + a live value
+      // readout (better feel for Darkness / Scrim than a bare number box). The
+      // pref is only written on release (change), not on every drag tick.
+      if (s.slider && typeof s.min === "number" && typeof s.max === "number") {
+        const wrap = el("div", "control-slider");
+        const range = document.createElement("input");
+        range.type = "range"; range.className = "slider-range";
+        range.min = String(s.min); range.max = String(s.max); range.value = String(cur);
+        const out = el("span", "slider-val", String(cur));
+        range.addEventListener("input", () => { out.textContent = String(range.value); });
+        range.addEventListener("change", () => {
+          const v = clamp(parseInt(range.value, 10));
+          range.value = String(v); out.textContent = String(v);
+          setInt(s.pref, v); rerender();
+        });
+        wrap.appendChild(range);
+        wrap.appendChild(out);
+        return wrap;
+      }
       const inp = document.createElement("input");
       inp.type = "number"; inp.className = "control-num"; inp.value = String(cur);
       if (typeof s.min === "number") inp.min = String(s.min);
       if (typeof s.max === "number") inp.max = String(s.max);
       inp.addEventListener("change", () => {
-        let v = parseInt(inp.value, 10);
-        if (Number.isNaN(v)) v = (typeof s.min === "number") ? s.min : 0;
-        if (typeof s.min === "number" && v < s.min) v = s.min;
-        if (typeof s.max === "number" && v > s.max) v = s.max;
+        const v = clamp(parseInt(inp.value, 10));
         inp.value = String(v);
         setInt(s.pref, v); rerender();
       });
@@ -96,6 +141,20 @@
     const main = el("div", "row-main");
     main.appendChild(el("div", "row-title", s.title));
     if (s.help) main.appendChild(el("div", "row-help", s.help));
+    // `examples` is an array of { label, detail } "what you'll see" callouts —
+    // concrete site outcomes (Reddit / YouTube) under this setting. Over-explain.
+    if (Array.isArray(s.examples) && s.examples.length) {
+      const ex = el("ul", "row-examples");
+      for (const e of s.examples) {
+        const li = el("li", "row-example");
+        if (e.label) li.appendChild(el("span", "ex-label", e.label));
+        if (e.detail) li.appendChild(el("span", "ex-detail", e.detail));
+        ex.appendChild(li);
+      }
+      main.appendChild(ex);
+    }
+    // `note` is a single plain caveat/tip line under the row.
+    if (s.note) main.appendChild(el("div", "row-note", s.note));
     if (s.measurement) {
       const cost = el("div", "row-cost", costText(s.measurement));
       if (s.measurement.basis) cost.title = s.measurement.basis;
@@ -144,7 +203,9 @@
     const activeId = active ? active.id : "custom";
 
     const block = el("section", "block");
-    block.appendChild(el("h2", "h2", pv.title || "Privacy"));
+    block.id = "sec-privacy";
+    const h = el("h2", "h2", pv.title || "Privacy");
+    block.appendChild(h);
     if (pv.intro) block.appendChild(el("p", "sub", pv.intro));
 
     const picker = el("div", "picker");
@@ -187,16 +248,78 @@
     root.appendChild(block);
   }
 
+  function renderSettingList(parent, list, rerender) {
+    for (const s of list || []) parent.appendChild(settingRow(s, rerender));
+  }
+
   function renderSections(reg, rerender) {
     const root = $("sections");
     root.textContent = "";
     for (const sec of reg.sections || []) {
       const block = el("section", "block");
+      block.id = "sec-" + sec.id;
       block.appendChild(el("h2", "h2", sec.title));
       if (sec.intro) block.appendChild(el("p", "sub", sec.intro));
-      for (const s of sec.settings || []) block.appendChild(settingRow(s, rerender));
+      // Flat settings list…
+      renderSettingList(block, sec.settings, rerender);
+      // …or named subsections (e.g. "Dark mode & color" groups Theme + Dark
+      // mode under one nav entry, each with its own subheading + intro).
+      for (const sub of sec.subsections || []) {
+        const subBlock = el("div", "subsection");
+        if (sub.id) subBlock.id = "sub-" + sub.id;
+        subBlock.appendChild(el("h3", "h3", sub.title));
+        if (sub.intro) subBlock.appendChild(el("p", "sub", sub.intro));
+        renderSettingList(subBlock, sub.settings, rerender);
+        block.appendChild(subBlock);
+      }
       root.appendChild(block);
     }
+  }
+
+  // Build the sticky category rail from the live registry order: Privacy first,
+  // then each section, then More. Clicking an entry scrolls to that section;
+  // the active entry is kept in sync with scroll position via IntersectionObserver.
+  function renderNav(reg) {
+    const root = $("nav");
+    if (!root) return;
+    root.textContent = "";
+    const items = [];
+    if (reg.privacy) items.push({ id: "sec-privacy", label: reg.privacy.title || "Privacy" });
+    for (const sec of reg.sections || []) items.push({ id: "sec-" + sec.id, label: sec.title });
+    items.push({ id: "sec-more", label: "More" });
+
+    const list = el("nav", "nav-list");
+    const byTarget = new Map();
+    for (const it of items) {
+      const a = el("a", "nav-item", it.label);
+      a.href = "#" + it.id;
+      a.dataset.target = it.id;
+      a.addEventListener("click", (ev) => {
+        ev.preventDefault();
+        const t = document.getElementById(it.id);
+        if (t) t.scrollIntoView({ behavior: "smooth", block: "start" });
+      });
+      byTarget.set(it.id, a);
+      list.appendChild(a);
+    }
+    root.appendChild(list);
+
+    // Highlight the section currently in view.
+    try {
+      const obs = new IntersectionObserver((entries) => {
+        for (const e of entries) {
+          if (e.isIntersecting) {
+            for (const a of byTarget.values()) a.classList.remove("nav-on");
+            const a = byTarget.get(e.target.id);
+            if (a) a.classList.add("nav-on");
+          }
+        }
+      }, { rootMargin: "-10% 0px -80% 0px", threshold: 0 });
+      for (const it of items) {
+        const t = document.getElementById(it.id);
+        if (t) obs.observe(t);
+      }
+    } catch (_) {}
   }
 
   function renderLinks(reg) {
@@ -212,10 +335,14 @@
   }
 
   let REG = null;
+  let navBuilt = false;
   function render() {
     renderPrivacy(REG, render);
     renderSections(REG, render);
     renderLinks(REG);
+    // The nav is structural (registry order) — build it once, not on every
+    // pref-flip rerender (which would re-run the IntersectionObserver wiring).
+    if (!navBuilt) { renderNav(REG); navBuilt = true; }
     $("foot").textContent =
       "gjoa settings live here. Firefox's own settings are in Firefox Settings (about:preferences). " +
       "Costs are measured against a real gjoa binary, or honestly unmeasured — never invented.";

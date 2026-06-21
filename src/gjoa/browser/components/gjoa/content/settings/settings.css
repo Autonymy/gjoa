@@ -22,19 +22,60 @@ html, body {
   -moz-osx-font-smoothing: grayscale;
 }
 
-#panel { max-width: 700px; margin: 0 auto; padding: 8vh 28px 64px; }
+/* two-column shell: sticky category rail + scrolling content */
+#layout {
+  display: grid;
+  grid-template-columns: 232px minmax(0, 760px);
+  gap: 40px;
+  max-width: 1040px;
+  margin: 0 auto;
+  padding: 6vh 28px 64px;
+  align-items: start;
+}
+
+#sidebar { position: sticky; top: 6vh; }
+#panel { min-width: 0; }
 
 .brand {
   font-size: 12px; letter-spacing: 0.18em; text-transform: uppercase;
-  color: var(--faint); margin-bottom: 16px;
+  color: var(--faint); margin-bottom: 18px;
 }
 .intro { color: var(--muted); font-size: 14px; margin: 0 0 28px; }
 .intro a, .link-card { color: var(--accent); text-decoration: none; }
 .intro a:hover { text-decoration: underline; }
 
-.h2 { font-size: 17px; margin: 30px 0 4px; }
+.h2 { font-size: 17px; margin: 30px 0 4px; scroll-margin-top: 6vh; }
+.h3 { font-size: 14.5px; margin: 22px 0 4px; color: var(--ink); }
 .sub { color: var(--faint); font-size: 12.5px; margin: 0 0 12px; }
-.block { margin-top: 4px; }
+.block { margin-top: 4px; scroll-margin-top: 6vh; }
+.block:first-of-type .h2 { margin-top: 0; }
+.subsection { scroll-margin-top: 6vh; }
+
+/* category rail */
+.nav-list { display: flex; flex-direction: column; gap: 2px; }
+.nav-item {
+  display: block; padding: 7px 12px; border-radius: 8px;
+  color: var(--muted); font-size: 13.5px; text-decoration: none;
+  border-left: 2px solid transparent; transition: background 0.12s ease, color 0.12s ease;
+}
+.nav-item:hover { color: var(--ink); background: rgba(122,162,247,0.07); }
+.nav-on {
+  color: var(--ink); background: rgba(122,162,247,0.1);
+  border-left-color: var(--accent);
+}
+
+@media (max-width: 760px) {
+  #layout { grid-template-columns: minmax(0, 1fr); gap: 0; padding-top: 24px; }
+  #sidebar {
+    position: sticky; top: 0; z-index: 5;
+    background: var(--bg); padding: 10px 0; margin-bottom: 8px;
+    border-bottom: 1px solid var(--line);
+  }
+  #sidebar .brand { display: none; }
+  .nav-list { flex-direction: row; flex-wrap: wrap; gap: 6px; }
+  .nav-item { border-left: none; border-bottom: 2px solid transparent; padding: 6px 10px; }
+  .nav-on { border-left: none; border-bottom-color: var(--accent); }
+}
 
 /* setting rows */
 .row {
@@ -45,6 +86,19 @@ html, body {
 .row-title { font-weight: 500; }
 .row-help { color: var(--muted); font-size: 12.5px; margin-top: 2px; }
 .row-cost { color: var(--faint); font-size: 12px; margin-top: 4px; }
+
+/* "what you'll see" example callouts under a setting */
+.row-examples {
+  list-style: none; margin: 8px 0 2px; padding: 8px 0 8px 12px;
+  border-left: 2px solid var(--line);
+}
+.row-example { font-size: 12.5px; padding: 2px 0; line-height: 1.45; }
+.ex-label { color: var(--ink); font-weight: 500; }
+.ex-label::after { content: " — "; color: var(--faint); font-weight: 400; }
+.ex-detail { color: var(--muted); }
+.row-note {
+  color: var(--warn); font-size: 12px; margin-top: 6px; line-height: 1.45;
+}
 .row-pref {
   display: inline-block; margin-top: 5px;
   font-family: ui-monospace, "SF Mono", monospace; font-size: 11px;
@@ -60,6 +114,15 @@ html, body {
 }
 .control-num { width: 84px; }
 .control-ro { flex: none; color: var(--muted); font-family: ui-monospace, monospace; font-size: 13px; }
+
+/* range slider (Darkness, Scrim, Text brightness) + live value readout */
+.control-slider { flex: none; display: inline-flex; align-items: center; gap: 10px; }
+.slider-range { width: 140px; accent-color: var(--accent); }
+.slider-val {
+  min-width: 2.5ch; text-align: right; font-variant-numeric: tabular-nums;
+  font-size: 13px; color: var(--ink);
+  font-family: ui-monospace, "SF Mono", monospace;
+}
 
 /* toggle switch (shared with about:sovereignty) */
 .toggle { flex: none; cursor: pointer; user-select: none; display: inline-flex; }

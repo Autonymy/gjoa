@@ -66,17 +66,88 @@
     ]
   },
   "sections": [
-    { "id": "theme", "title": "Theme", "intro": "gjoa's chrome theme — one OKLCH token system, fed by a base16 palette. Pick the canonical identity, a curated variant, or follow your desktop.",
-      "settings": [
-        { "pref": "gjoa.theme.variant", "type": "enum", "title": "Theme", "default": "polar-night", "options": ["polar-night", "nord", "system"], "help": "polar-night = gjoa's canonical face (the polar-night sea, arctic ice, aurora-cyan accent); nord = the Arctic-cousin variant; system = dissolve into your desktop (route the palette through Firefox / stylix / system colors). No restart." }
-      ] },
-    { "id": "dark-mode", "title": "Dark mode", "intro": "Engine-level dark mode — sites with their own dark theme render it; the rest are inverted at style-resolution time (cached, no per-frame filter). Escape hatches, broadest to narrowest: pick a Mode below (system / hybrid / auto) → per-site overrides (gjoa.darkmode.user.force-native / force-invert / off in about:config) → the built-in curated per-site fixes DB → the engine layers (Darkness, Scrim). Each layer overrides the one before it.",
-      "settings": [
-        { "pref": "gjoa.darkmode.enabled", "type": "bool", "title": "Dark mode", "default": true, "help": "Master on/off for gjoa's dark mode. Off renders every site in its own (usually light) colors." },
-        { "pref": "gjoa.darkmode.mode", "type": "enum", "title": "Mode", "default": "system", "options": ["system", "hybrid", "auto"], "help": "How pages are darkened. system = match the OS theme (default; dark OS → always-dark, light OS → sites as-authored); hybrid = always dark regardless of OS (sites with a native dark theme use it, the rest are engine-inverted); auto = only sites with their own dark theme go dark, nothing is inverted. The legacy filter / engine modes stay reachable via gjoa.darkmode.mode in about:config." },
-        { "pref": "gjoa.darkmode.invert.bgLightness", "type": "int", "title": "Darkness", "default": 20, "min": 0, "max": 100, "help": "How dark inverted (un-themed) pages get. 0-100; lower = darker. The default (20) lands a comfortable dark grey (~#161616), not pure black. (Its companion, the light-text ceiling gjoa.darkmode.invert.fgLightness, lives in about:config.)" },
-        { "pref": "gjoa.darkmode.scrim.alpha", "type": "int", "title": "Scrim strength", "default": 140, "min": 0, "max": 255, "help": "Darkening laid over full-bleed background photos on inverted pages so preserved (un-inverted) text stays legible against them. 0-255; higher = darker scrim. 0 disables it." },
-        { "pref": "gjoa.darkmode.image-analysis.enabled", "type": "bool", "title": "Image-analysis refinement", "default": false, "help": "Optional async pass that classifies background images and refines them per-image. Off by default — unverified polish on top of the correctness floor; the engine scrim already handles the common case." }
+    { "id": "dark-mode-color", "title": "Dark mode & color",
+      "intro": "Everything about how gjoa colors the web and dresses its own chrome — the dark-mode engine plus the gjoa theme — in one place. gjoa is dark-first: by default a bright white site (think YouTube) is darkened for you. Two groups below: Dark mode (how web pages are darkened) and Theme (gjoa's own window colors).",
+      "subsections": [
+        { "id": "darkmode", "title": "Dark mode",
+          "intro": "Engine-level dark mode. Sites that ship their own dark theme can render it; the rest are inverted at style-resolution time (cached in the engine, no per-frame compositor filter). The layers stack, broadest to narrowest: the master toggle → the Mode picker → per-site overrides (the gjoa.darkmode.user.* host-lists in about:config) → gjoa's built-in curated per-site fixes → the engine knobs below (Darkness, Text brightness, Scrim). Each layer overrides the one before it.",
+          "settings": [
+            { "pref": "gjoa.darkmode.enabled", "type": "bool", "title": "Dark mode (master switch)", "default": true,
+              "help": "The on/off for gjoa's whole dark-mode engine. When ON, the Mode below decides how each page is darkened. When OFF, gjoa does nothing to page colors — every site renders in its own authored colors (usually light), exactly like vanilla Firefox.",
+              "examples": [
+                { "label": "ON", "detail": "Reddit, YouTube, and a plain white blog are all darkened according to the Mode you pick below." },
+                { "label": "OFF", "detail": "YouTube is bright white, Reddit is its normal light theme — gjoa stays out of the way." }
+              ] },
+            { "pref": "gjoa.darkmode.mode", "type": "enum", "title": "Mode — how pages are darkened", "default": "system",
+              "options": [
+                { "value": "off", "label": "Off — leave every site in its own colors" },
+                { "value": "system", "label": "Match my OS theme (default)" },
+                { "value": "hybrid", "label": "Always dark — prefer each site's own dark theme" },
+                { "value": "auto", "label": "Only sites that already have a dark theme" },
+                { "value": "engine", "label": "Always dark — force every site (most consistent)" },
+                { "value": "filter", "label": "Always dark — legacy whole-page invert (advanced)" }
+              ],
+              "help": "The core choice. The raw pref value is shown above each label below so about:config power users can map them. Only matters while the master switch is ON.",
+              "examples": [
+                { "value": "off", "label": "off", "detail": "Identical to turning the master switch off: every site in its own (usually light) colors. Exists so the Mode can be parked without losing your other settings." },
+                { "label": "system", "detail": "Follow your operating system. Dark OS ⇒ pages go dark; light OS ⇒ sites render as-authored. Caveat: sites that ignore the OS signal (e.g. YouTube) stay light, and sites with a very dark native theme (e.g. Reddit) stay near-black — the Darkness slider does NOT move these two cases." },
+                { "label": "hybrid", "detail": "Always dark regardless of your OS. A site that ships its own dark theme uses that theme; every other site is engine-inverted. Best blend of fidelity and coverage." },
+                { "label": "auto", "detail": "Only sites that already have their own dark theme go dark; nothing else is inverted. A plain white blog stays white. The gentlest option." },
+                { "label": "engine", "detail": "Forces EVERY site to its light theme first, then the engine inverts all colors into your Darkness band. This is the consistent, Dark-Reader-style mode: Reddit, YouTube, anything — all become dark at exactly your Darkness setting. Pick this if you want uniform dark everywhere." },
+                { "label": "filter", "detail": "Legacy whole-page compositor invert. Superseded by engine; kept as an advanced fallback. Inverts the entire page (re-inverting images so photos look right), but heavier than engine. Use only if engine misbehaves on a specific page." }
+              ] },
+            { "pref": "gjoa.darkmode.invert.bgLightness", "type": "int", "title": "Darkness", "default": 20, "min": 0, "max": 100, "slider": true,
+              "help": "How dark inverted (engine-darkened) pages get — the page-background lightness floor every darkened site lands on. 0–100; LOWER = darker. The default ~20 is a comfortable dark grey (about #161616), deliberately not pure black.",
+              "examples": [
+                { "label": "20 (default)", "detail": "Page backgrounds settle on a soft #161616 charcoal — easy on the eyes for long reading." },
+                { "label": "0", "detail": "Pushes backgrounds toward true black (#000) — maximum contrast, can feel harsh." },
+                { "label": "40", "detail": "A lighter, dim-grey page — gentler if pure-dark feels too stark." }
+              ],
+              "note": "Only affects pages the engine actually inverts. A site keeping its OWN dark theme (Reddit, or any native-dark site under system/hybrid) ignores this slider — its darkness comes from the site, not gjoa." },
+            { "pref": "gjoa.darkmode.invert.fgLightness", "type": "int", "title": "Text brightness ceiling", "default": 92, "min": 0, "max": 100, "slider": true,
+              "help": "The companion to Darkness: the brightest result the inverter will produce, i.e. how light the text and light surfaces get on a darkened page. 0–100; HIGHER = brighter text. The default ~92 is a soft off-white (about #e4e4e4), deliberately not pure #fff (full white glares on a dark backdrop).",
+              "examples": [
+                { "label": "92 (default)", "detail": "Body text renders as a comfortable off-white — high legibility without glare." },
+                { "label": "100", "detail": "Pure-white text — maximum contrast, sharper but harsher on a dark page." },
+                { "label": "80", "detail": "Dimmer, grey-ish text — softer, lower-contrast; good in a very dark room." }
+              ],
+              "note": "Most people only ever touch Darkness; this is the advanced ceiling for the same OKLCH lightness band. Only applies to engine-inverted pages." },
+            { "pref": "gjoa.darkmode.scrim.alpha", "type": "int", "title": "Photo scrim strength", "default": 140, "min": 0, "max": 255, "slider": true,
+              "help": "On an inverted page, full-bleed background photos (a hero banner) can't be inverted without looking wrong, so gjoa lays a translucent black scrim over them — this keeps any preserved (un-inverted) text readable against the still-bright photo. 0–255; HIGHER = darker scrim. 0 turns the scrim off entirely.",
+              "examples": [
+                { "label": "140 (default)", "detail": "A site with a bright hero image gets a moderate dark wash so white caption text over it stays readable." },
+                { "label": "0", "detail": "No scrim — hero photos render at full brightness; text over them may wash out." },
+                { "label": "230", "detail": "Heavy near-opaque wash — photos are strongly dimmed, text maximally legible." }
+              ] },
+            { "pref": "gjoa.darkmode.image-analysis.enabled", "type": "bool", "title": "Per-image refinement (experimental)", "default": false,
+              "help": "An optional second pass that rasterizes each visible background image, classifies its brightness, and refines it individually (hides large light backdrops, inverts small dark icons, etc.). OFF by default — it is unverified polish layered on top of the scrim, which already handles the common case.",
+              "examples": [
+                { "label": "OFF (default)", "detail": "The engine scrim handles background images — correct for nearly every page, zero extra work." },
+                { "label": "ON", "detail": "gjoa additionally inspects each image; may improve odd icon/logo edge cases, but can occasionally misjudge an image. Turn on only if a specific site's images look wrong." }
+              ] }
+          ] },
+        { "id": "theme", "title": "Theme",
+          "intro": "gjoa's OWN window chrome — the toolbar, tabs, and menus — not web-page colors. One OKLCH token system, fed by a base16 palette. Pick gjoa's canonical look, a curated variant, or dissolve into your desktop. No restart needed.",
+          "settings": [
+            { "pref": "gjoa.theme.variant", "type": "enum", "title": "gjoa theme", "default": "polar-night",
+              "options": [
+                { "value": "polar-night", "label": "Polar Night — gjoa's canonical face (default)" },
+                { "value": "nord", "label": "Nord — the Arctic-cousin variant" },
+                { "value": "system", "label": "System — match my desktop theme" }
+              ],
+              "help": "Which palette paints gjoa's chrome. Changes apply live.",
+              "examples": [
+                { "label": "Polar Night", "detail": "gjoa's signature: the deep polar-night sea, arctic-ice surfaces, aurora-cyan accent. The default identity." },
+                { "label": "Nord", "detail": "The well-known Nord palette, normalized through gjoa's same token system — a cooler, softer cousin." },
+                { "label": "System", "detail": "Routes gjoa's chrome colors through your desktop / Firefox theme (stylix, an installed theme, or OS colors) so the browser dissolves into your setup. This also flips the gjoa.theme.useSystem switch below." }
+              ] },
+            { "pref": "gjoa.theme.useSystem", "type": "bool", "title": "Use system / desktop colors", "default": false,
+              "help": "Routes the gjoa palette through Firefox's theme variables (stylix, an installed theme, OS colors) instead of gjoa's own. The 'System' theme above turns this ON; any other variant turns it OFF — so normally you just pick the theme above and leave this alone. Exposed here for transparency and manual control.",
+              "examples": [
+                { "label": "OFF (default)", "detail": "gjoa paints its own canonical chrome colors (Polar Night or Nord)." },
+                { "label": "ON", "detail": "gjoa borrows your system/Firefox theme colors — equivalent to choosing the 'System' theme above." }
+              ] }
+          ] }
       ] },
     { "id": "content-blocking", "title": "Content blocking", "intro": "Native (adblock-rust) ad + tracker blocking.",
       "settings": [

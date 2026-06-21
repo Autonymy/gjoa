@@ -492,7 +492,12 @@
           _g (doseq [g (or (and pv (.-granular pv)) [])] (.push knob-prefs (.-pref g)))
           _ps (doseq [p profiles] (doseq [k (Object/keys (.-sets p))] (.push knob-prefs k)))
           _s (doseq [sec (or (.-sections reg) [])]
-               (doseq [s (or (.-settings sec) [])] (.push knob-prefs (.-pref s))))
+               (doseq [s (or (.-settings sec) [])] (.push knob-prefs (.-pref s)))
+               ;; sections may group settings under named subsections (e.g.
+               ;; "Dark mode & color" -> Dark mode / Theme); walk those too so
+               ;; every nested knob is still backing-checked.
+               (doseq [sub (or (.-subsections sec) [])]
+                 (doseq [s (or (.-settings sub) [])] (.push knob-prefs (.-pref s)))))
           dangling (.filter knob-prefs (fn [pf :- String] :- Bool (not (.includes src (str "\"" pf "\"")))))
           reg-prefs (.sort (Array/from (Set. (.flatMap profiles (fn [p :- Any] :- Any (Object/keys (.-sets p)))))))
           preset-prefs (.sort (Array/from (Set. (preset-pref-names loader))))

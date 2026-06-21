@@ -13,27 +13,36 @@
     <link rel="stylesheet" href="chrome://gjoa/content/settings/settings.css" />
   </head>
   <body>
-    <main id="panel" aria-live="polite">
-      <header class="brand">gjoa · settings</header>
-      <p class="intro">
-        gjoa's settings live here. Firefox's own settings stay in
-        <a href="about:preferences">Firefox Settings</a>; raw prefs are in
-        <a href="about:config">about:config</a>. Every gjoa feature stays present and
-        reversible — flip it back any time.
-      </p>
+    <div id="layout">
+      <!-- Sticky category rail (about:preferences style); built from the live
+           registry order by renderNav(). Collapses to top tabs on narrow widths. -->
+      <aside id="sidebar">
+        <div class="brand">gjoa · settings</div>
+        <div id="nav" aria-label="Settings sections"></div>
+      </aside>
 
-      <!-- Privacy section (profile picker + granular toggles) is rendered into #profiles. -->
-      <div id="profiles"></div>
+      <main id="panel" aria-live="polite">
+        <p class="intro">
+          Every gjoa setting lives here — no hunting through about:config. Firefox's own
+          settings stay in <a href="about:preferences">Firefox Settings</a>; the raw pref
+          store is <a href="about:config">about:config</a> (each setting below shows its
+          pref name so you can find it there). Every gjoa feature stays present and
+          reversible — flip it back any time.
+        </p>
 
-      <div id="sections"></div>
+        <!-- Privacy section (profile picker + granular toggles) is rendered into #profiles. -->
+        <div id="profiles"></div>
 
-      <section>
-        <h2 class="h2">More</h2>
-        <div id="links"></div>
-      </section>
+        <div id="sections"></div>
 
-      <footer class="foot" id="foot"></footer>
-    </main>
+        <section id="sec-more">
+          <h2 class="h2">More</h2>
+          <div id="links"></div>
+        </section>
+
+        <footer class="foot" id="foot"></footer>
+      </main>
+    </div>
     <script src="chrome://gjoa/content/settings/settings.js"></script>
   </body>
 </html>

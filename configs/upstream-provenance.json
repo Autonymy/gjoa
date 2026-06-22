@@ -1,0 +1,66 @@
+{
+  "note": "Upstream provenance lock (churn anti-rot). Per patch, the git blob OID of every file it touches, at the baseline Firefox tag. `check` diffs these vs any ref: identical OID => that patch's context PROVABLY can't have rotted (skip it); differing => potential conflict; \"absent\" => a file gjoa creates (collision-checked). Regenerate after any patch/baseline change: provenance lock.",
+  "baseline": "152.0.1",
+  "tag": "FIREFOX_152_0_1_RELEASE",
+  "patches": {
+    "0001-browser-components-mozbuild-include-gjoa.patch": {
+      "browser/components/moz.build": "799e5246e6d11a3725129975154f524b8fe00a16"
+    },
+    "0002-browser-glue-import-gjoa-loader.patch": {
+      "browser/components/BrowserGlue.sys.mjs": "d07aaa3fbb8ccb02ae00d845649dc9c1d623cba5"
+    },
+    "0007-enable-sqlite-fts5.patch": {
+      "third_party/sqlite3/src/moz.build": "da931832e0c142c7a03c5e60e589b13f3f2073fe"
+    },
+    "0008-content-classifier-cosmetic-filtering.patch": {
+      "Cargo.lock": "ae3d1519dfa7f76b37adfa2375d16a3fd4fc24e9",
+      "toolkit/components/content-classifier/ContentClassifierService.cpp": "8ea41794189df7508a2456d4c1ba96527e891e85",
+      "toolkit/components/content-classifier/ContentClassifierService.h": "a1e5b9871a41b594da05f11f267df5c06829f01a",
+      "toolkit/components/content-classifier/components.conf": "522b94ffa01139d2998086967322fec497676fd2",
+      "toolkit/components/content-classifier/content_classifier_engine/Cargo.toml": "2a56e9f630199789c63ff153123793416ffe31c7",
+      "toolkit/components/content-classifier/content_classifier_engine/ContentClassifierEngine.cpp": "ae6ba60e720375d279779f628b110ae7d9d6d677",
+      "toolkit/components/content-classifier/content_classifier_engine/ContentClassifierEngine.h": "b9c414cce48d91197c1f27e066dd866bad148367",
+      "toolkit/components/content-classifier/content_classifier_engine/src/lib.rs": "295b3bfd8ba77f388ec80d22f93d2a87a8b43908",
+      "toolkit/components/content-classifier/moz.build": "e65d3eebce26a8d866f65bc62d2f046037cfd663",
+      "toolkit/components/content-classifier/nsIContentClassifierService.idl": "8f408b3f0daf303e9e90b2f41c67e3d6f992a4d5"
+    },
+    "0009-dark-mode-engine-color-inversion.patch": {
+      "docshell/base/BrowsingContext.cpp": "e8b50c654849f00d968a43cffd99ef88116bd0c9",
+      "docshell/base/BrowsingContext.h": "02abb6ab9562a7b41f4a95a6289c80da8d1176e8",
+      "dom/chrome-webidl/BrowsingContext.webidl": "d0508a8c29e5bd008213f781beb8eb1fcb458fb8",
+      "layout/base/PresShell.cpp": "9d651a17a91d2975017f5e21f1f533c13cc17659",
+      "layout/base/nsPresContext.cpp": "b2394c61069797a5ca8831c6ce5a37cdf425ec93",
+      "layout/base/nsPresContext.h": "13aa7141c8e5297d0dd6aa9bd78fd32f050e8123",
+      "servo/components/style/device/gecko.rs": "7ed8c2c7a10da302ed2bbeeb3b8c75d5f5f37c08",
+      "servo/components/style/values/specified/color.rs": "9c55023eb0ad182dcd4490d66bafc4b4a98cf083"
+    },
+    "0010-dark-mode-island-scrim.patch": {
+      "layout/painting/nsDisplayList.cpp": "0243566311058462dc6dfc7dbe3774de94e3b194",
+      "servo/components/style/properties/computed_value_flags.rs": "d13a344e231fa12b9ce803769f41a553d1601517",
+      "servo/components/style/style_adjuster.rs": "1756b77b9be0deb7dc562b142aa2d6553a258af1"
+    },
+    "0011-newtab-redirector-gjoa.patch": {
+      "browser/components/newtab/AboutNewTabRedirector.sys.mjs": "328842c18aa6895273b68de01fda4d60c217e634"
+    },
+    "0012-dark-mode-role-resolver.patch": {
+      "layout/base/nsLayoutUtils.cpp": "46967151f9d91dd99b9ae4d026098abe05619537",
+      "layout/base/nsLayoutUtils.h": "b453efb3c78e4ef426a72dd2c7e0f608a0f0ebde",
+      "layout/generic/nsTextFrame.cpp": "6c3615f90cdb1e5a42e15a0618cc4649cd0d0a15",
+      "layout/generic/nsTextPaintStyle.cpp": "5d1bf44687e925aff67f44c8e0629f7f06e84e98",
+      "layout/painting/nsDisplayList.cpp": "0243566311058462dc6dfc7dbe3774de94e3b194",
+      "layout/svg/SVGGeometryFrame.cpp": "a06d081f3dcd2fde342893ebed9609d4d3f656a5"
+    },
+    "0013-dark-mode-text-solve.patch": {
+      "layout/generic/GjoaDarkText.cpp": "absent",
+      "layout/generic/GjoaDarkText.h": "absent",
+      "layout/generic/moz.build": "a0b95f0470cc661ad5316768cb637dadc9c8e449",
+      "layout/generic/nsTextPaintStyle.cpp": "5d1bf44687e925aff67f44c8e0629f7f06e84e98"
+    },
+    "0014-dark-mode-tier0.patch": {
+      "layout/base/nsPresContext.cpp": "b2394c61069797a5ca8831c6ce5a37cdf425ec93",
+      "layout/style/GeckoBindings.cpp": "ee784cef626a12da58ac1f6c6c8538c454f82f4f",
+      "layout/style/GeckoBindings.h": "b8317e006298c1345a6f13d26ca20980875e5bd1",
+      "servo/components/style/device/gecko.rs": "7ed8c2c7a10da302ed2bbeeb3b8c75d5f5f37c08"
+    }
+  }
+}

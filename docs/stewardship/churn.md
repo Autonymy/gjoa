@@ -59,6 +59,31 @@ The patch *numbers* carry a latent theory: they ascend by **engine depth** — c
 
 **Gate U** (`preflight.bjs`, WARN) runs `patch-order check` and warns on a split domain — advisory, because numbering is batching, not correctness. `renumber --apply` executes the move (rename + rekey `configs/patch-hashes.json`, content-preserving); deferred when a build is in flight or the shared worktree is hot.
 
+## Content-addressing the seam — `tools/prep/upstream-provenance.bjs` (Gate V)
+
+`baseline-firefox: 152.0.1` is a *version label*. The sharper question is: has the upstream file this patch cuts into changed **byte-for-byte** since we validated it? Git already content-addresses every file by blob OID, so we don't hash anything — we **record which content we validated against** and let git's object DB do the differential.
+
+`provenance lock` writes `configs/upstream-provenance.json`: for each patch, the blob OID of every file it touches, at the baseline FF tag (`FIREFOX_152_0_1_RELEASE`). `provenance check [ref]` recomputes against any ref:
+
+- **OID identical** → that patch's context *provably cannot* have rotted → skip it with certainty.
+- **OID differs** → surface it, ranked native-first (potential conflict).
+- **OID vanished** → the file moved/deleted upstream → the patch *will* fail (highest alert).
+- **`"absent"`** → a file gjoa *creates* (no upstream context); checked for the inverse — did Mozilla start shipping a colliding file at our path?
+
+This is strictly finer than the release-tag forecast: baseline-anchored, works against **any** commit (nightly / arbitrary SHA, not just tags), and a per-file mathematical guarantee. **Gate V** runs integrity mode (lock vs its own baseline tag) — asserting the lock still describes the current patch surface at the declared baseline; skip-aware (FF clone is dev-only) and WARN-level.
+
+### The galaxy-brain play — the blob OID is a coordinate in Mozilla's history
+
+Once a patch's baseline is a content OID instead of a version string, each layer reuses git's existing machinery for a compounding win:
+
+1. **Provable skip-set** (shipped) — most patches are untouched on any given bump; prove it and shrink the audit to the truly-affected set.
+2. **Hunk-anchor precision** (next) — hash only the lines a hunk's context depends on, not the whole file: a file edited *elsewhere* than where we cut stays provably-safe (kills false positives).
+3. **Blame-locator** — when an anchor *did* move, `git log -L`/`blame` the FF clone names the exact upstream commit (author, date, bug, message). A conflict stops being "this file changed" and becomes "Mozilla commit abc123 touched your anchor — here's why."
+4. **3-way at the anchor** — the lock hands you the baseline blob for free (`git cat-file <oid>`); with baseline + new-upstream + our-patched, an anchor-local 3-way merge is mechanical, escalating to human only on real conflict.
+5. **Baked provenance identity + security cross-check** — fold the lock's aggregate hash into the binary (supply-chain: built against *unmodified* Mozilla blobs); and cross-reference the `# security:` manifest — if upstream's blob at a mitigation's anchor changed, Mozilla may have fixed it themselves (drop the patch) or refactored around it (re-verify). That's the rebase-survivability question from the resilience audit, answered by lookup.
+
+We are not building a hashing system — we are harvesting the one Mozilla already maintains. "Is this patch still valid?" becomes a lookup; "what changed and why?" becomes a graph walk.
+
 ## Anchoring against churn, not line numbers
 
 Two layers protect the surface from *silent* loss when upstream moves:
@@ -98,5 +123,6 @@ The thesis throughout: **minimize the surface we own, and make every remaining p
 - `docs/why-beagle.md` — code-as-claims, the projector, the call graph
 - `tools/prep/patch-cost.bjs` (`bun run cost`), `tools/prep/conflict-forecast.bjs` (`bun run forecast`)
 - `tools/prep/patch-order.bjs` (ordering/batching analyzer + minimal renumber)
+- `tools/prep/upstream-provenance.bjs` + `configs/upstream-provenance.json` (per-file upstream blob-OID lock)
 - `tools/scripts/preflight.bjs` Gate L (surface contracts), Gate M (beagle-currency), Gate S (security-critical patches persist), Gate U (patch numbering coherence)
 - `BUILD-LEDGER.md` — the postmortems that motivated each gate

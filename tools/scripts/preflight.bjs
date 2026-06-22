@@ -878,6 +878,19 @@
       (warn "U" "patch numbering coherent (domains contiguous)"
             (.trim (if (.-stdout e) (.toString (.-stdout e)) (or (.-message e) "split domain — see `patch-order renumber`")))))))
 
+;; Gate V — upstream provenance lock currency (churn). The lock records the git
+;; blob OID of every patched file at the baseline FF tag; integrity mode asserts
+;; the lock still describes the current patch surface at the declared baseline.
+;; Skip-aware (the FF clone is dev-only, absent on CI) + WARN (stale lock is
+;; hygiene, not a build stop).
+(defn gateV [] :- Any
+  (try
+    (let [out (.toString (execSync "bun .beagle-tools/gjoa/tools/prep/upstream-provenance.js check --strict 2>&1"))]
+      (pass "V" "upstream provenance lock current" (.trim out)))
+    (catch Any e
+      (warn "V" "upstream provenance lock current"
+            (.trim (if (.-stdout e) (.toString (.-stdout e)) (or (.-message e) "stale lock — re-run `provenance lock`")))))))
+
 ;; ── Run + render ──────────────────────────────────────────────────────────
 (defn main! [] :- Any
   (console/log (bold "gjoa preflight"))
@@ -888,7 +901,7 @@
                ["E" gateE] ["F" gateF] ["G" gateG] ["H" gateH]
                ["I" gateI] ["J" gateJ] ["K" gateK] ["L" gateL] ["M" gateM]
                ["N" gateN] ["O" gateO] ["P" gateP] ["Q" gateQ]
-               ["R" gateR] ["S" gateS] ["T" gateT] ["U" gateU]]]
+               ["R" gateR] ["S" gateS] ["T" gateT] ["U" gateU] ["V" gateV]]]
     (doseq [gate gates]
       (let [fn (aget gate 1)]
         (try (fn)

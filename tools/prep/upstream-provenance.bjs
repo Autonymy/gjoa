@@ -1,0 +1,188 @@
+#lang beagle/js
+;; Upstream provenance lock (#128-adjacent / churn). Records the EXACT upstream
+;; content each patch was validated against — the git blob OID of every file the
+;; patch touches, at the baseline Firefox tag — so rebase risk becomes a content
+;; diff, not a version guess or an apply gamble.
+;;
+;;   bun .beagle-tools/gjoa/tools/prep/upstream-provenance.js lock          # write configs/upstream-provenance.json @ gjoa.json baseline
+;;   bun .beagle-tools/gjoa/tools/prep/upstream-provenance.js check [ref]   # diff lock vs <ref> (default: baseline tag = integrity); --strict => exit 2
+;;
+;; Why blob OIDs: git already content-addresses every file. If a touched file's
+;; upstream OID is byte-identical at <ref>, that patch's context PROVABLY cannot
+;; have rotted — skip it with certainty. If it differs, surface it ranked by seam
+;; tier. This is strictly finer than conflict-forecast's release-tag diff:
+;; baseline-anchored, works against ANY commit (nightly / arbitrary SHA), and a
+;; per-file mathematical guarantee instead of a heuristic. "absent" = a file gjoa
+;; CREATES (no upstream context) — checked for the inverse: did Mozilla start
+;; shipping a colliding file at our path?
+(ns gjoa.tools.prep.upstream-provenance
+  (:require [fs :refer [readdirSync readFileSync writeFileSync existsSync]]
+            [path :refer [join]]
+            [gjoa.tools.prep.sh :refer [sh]]))
+(define-mode strict)
+(declare-extern [process Object] Any)
+
+(def REPO :- String (.cwd process))
+(def PATCHES-DIR :- String (join REPO "patches"))
+(def LOCK :- String (join REPO "configs" "upstream-provenance.json"))
+(def FF :- String (join (.-HOME (.-env process)) "code" "reference" "firefox"))
+
+(defn gjoa-version [] :- String
+  (.-version (.-firefox (JSON/parse (readFileSync (join REPO "gjoa.json") "utf8")))))
+
+;; "152.0.1" -> "FIREFOX_152_0_1_RELEASE", rejecting anything that isn't a plain
+;; Firefox version before it can reach the shell (command-injection guard).
+(defn version->tag [v :- String] :- String
+  (if (not (.match v (RegExp. "^[0-9]+(\\.[0-9]+){1,3}(esr)?$")))
+    (throw (Error. (str "refusing unsafe version string: " v)))
+    (str "FIREFOX_" (.replaceAll v "." "_") "_RELEASE")))
+
+;; git refs reaching the shell (a user-passed <ref>) must be word/dot/slash/dash.
+(defn safe-ref [r :- String] :- String
+  (if (not (.match r (RegExp. "^[\\w./-]+$")))
+    (throw (Error. (str "refusing unsafe ref: " r)))
+    r))
+
+;; Files a patch edits, from the unified diff (git format, plain fallback).
+(defn diff-touches [text :- String] :- Any
+  (let [out (Set.)]
+    (doseq [m (.matchAll text (RegExp. "^diff --git a/(\\S+)\\s+b/\\S+$" "gm"))]
+      (.add out (aget m 1)))
+    (when (= (.-size out) 0)
+      (doseq [m (.matchAll text (RegExp. "^\\+\\+\\+ b/(\\S+)$" "gm"))]
+        (.add out (aget m 1))))
+    (.sort (Array.from out))))
+
+(defn list-patches [] :- Any
+  (.sort (.filter (readdirSync PATCHES-DIR) (fn [p :- String] :- Bool (.endsWith p ".patch")))))
+
+;; blob OID of <ref>:<path> in the FF clone, or "absent" (path not in that tree
+;; / bad path). path comes from our own diffs but is guarded anyway.
+(defn blob-oid [ref :- String pth :- String] :- String
+  (if (not (.match pth (RegExp. "^[\\w./-]+$")))
+    "absent"
+    (let [out (.trim (sh (str "git -C " FF " rev-parse " ref ":" pth) {:quiet true}))]
+      (if (.match out (RegExp. "^[0-9a-f]{40}$")) out "absent"))))
+
+(defn ff-present? [] :- Bool (existsSync (join FF ".git")))
+
+(defn tier-of [pth :- String] :- String
+  (cond
+    (.match pth (RegExp. "\\.(rs|cpp|cc|h|webidl)$")) "native"
+    (.match pth (RegExp. "\\.(mjs|js)$")) "sys.mjs"
+    :else "build"))
+
+;; ── lock ────────────────────────────────────────────────────────────────────
+
+(defn lock! [] :- Any
+  (when (not (ff-present?))
+    (console/error (str "provenance: no Firefox clone at " FF " — cannot lock.")) (.exit process 1))
+  (let [version (gjoa-version)
+        tag (version->tag version)
+        names (list-patches)
+        patches {}]
+    (doseq [n names]
+      (let [files (diff-touches (readFileSync (join PATCHES-DIR n) "utf8"))
+            fobj {}]
+        (doseq [f files] (aset fobj f (blob-oid tag f)))
+        (aset patches n fobj)))
+    (let [doc {:note (str "Upstream provenance lock (churn anti-rot). Per patch, the git blob OID of "
+                              "every file it touches, at the baseline Firefox tag. `check` diffs these vs any "
+                              "ref: identical OID => that patch's context PROVABLY can't have rotted (skip it); "
+                              "differing => potential conflict; \"absent\" => a file gjoa creates (collision-checked). "
+                              "Regenerate after any patch/baseline change: provenance lock.")
+               :baseline version
+               :tag tag
+               :patches patches}]
+      (writeFileSync LOCK (str (JSON/stringify doc nil 2) "\n"))
+      (let [nf (.reduce names (fn [a :- Int n :- String] :- Int (+ a (.-length (.keys Object (aget patches n))))) 0)]
+        (console/log (str "wrote configs/upstream-provenance.json — " (.-length names) " patches, " nf " files locked @ " tag))))))
+
+;; ── check ───────────────────────────────────────────────────────────────────
+
+(defn check! [ref-arg :- String strict :- Bool] :- Any
+  (when (not (ff-present?))
+    (console/log (str "provenance: Firefox clone absent (" FF ") — check skipped")) (.exit process 0))
+  (when (not (existsSync LOCK))
+    (console/error "provenance: no lock — run `provenance lock` first") (.exit process (if strict 2 0)))
+  (let [lock (JSON/parse (readFileSync LOCK "utf8"))
+        version (gjoa-version)
+        ref (safe-ref (or ref-arg (.-tag lock)))
+        integrity (= ref (.-tag lock))
+        changed [] vanished [] collision [] drift []
+        unsafe-patches (Set.)]
+    ;; baseline drift: lock no longer describes the current gjoa.json baseline.
+    (when (not= (.-baseline lock) version)
+      (.push drift (str "lock baseline " (.-baseline lock) " ≠ gjoa.json " version " — re-lock")))
+    (let [names (list-patches)
+          lockPatches (.-patches lock)]
+      ;; surface drift: a patch's touched-file set diverged from the lock.
+      (doseq [n names]
+        (let [cur (diff-touches (readFileSync (join PATCHES-DIR n) "utf8"))
+              locked (if (aget lockPatches n) (.keys Object (aget lockPatches n)) [])]
+          (when (not (aget lockPatches n))
+            (.push drift (str n " not in lock — re-lock")))
+          (doseq [f cur]
+            (when (and (aget lockPatches n) (not (.includes locked f)))
+              (.push drift (str n " touches " f " (not locked) — re-lock"))))))
+      ;; the content diff, per locked (patch,file).
+      (let [pnames (.sort (.keys Object lockPatches))]
+        (doseq [n pnames]
+          (let [fobj (aget lockPatches n)
+                files (.sort (.keys Object fobj))]
+            (doseq [f files]
+              (let [was (aget fobj f)
+                    now (blob-oid ref f)]
+                (cond
+                  (= was now) nil
+                  (and (not= was "absent") (= now "absent"))
+                  (do (.push vanished {:patch n :file f :tier (tier-of f)}) (.add unsafe-patches n))
+                  (and (= was "absent") (not= now "absent"))
+                  (do (.push collision {:patch n :file f :tier (tier-of f)}) (.add unsafe-patches n))
+                  :else
+                  (do (.push changed {:patch n :file f :tier (tier-of f)}) (.add unsafe-patches n)))))))
+        ;; ── render ──
+        (console/log (str "upstream provenance — lock @ " (.-tag lock) " vs " ref
+                          (if integrity "  (integrity check)" "")))
+        (console/log (str "  " (.-length pnames) " patches · "
+                          (- (.reduce pnames (fn [a :- Int n :- String] :- Int (+ a (.-length (.keys Object (aget lockPatches n))))) 0)
+                             (.-length changed) (.-length vanished) (.-length collision))
+                          " file(s) unchanged (provably apply-safe)"))
+        (let [native-first (fn [arr :- Any] :- Any
+                             (.sort (.slice arr) (fn [a :- Any b :- Any] :- Int
+                                                    (- (if (= (.-tier a) "native") 0 1) (if (= (.-tier b) "native") 0 1)))))]
+          (when (> (.-length changed) 0)
+            (console/log "  changed upstream (potential conflict, native first):")
+            (doseq [c (native-first changed)] (console/log (str "    [" (.-tier c) "] " (.-patch c) ": " (.-file c)))))
+          (when (> (.-length vanished) 0)
+            (console/log "  VANISHED upstream (file moved/deleted — patch WILL fail):")
+            (doseq [c (native-first vanished)] (console/log (str "    [" (.-tier c) "] " (.-patch c) ": " (.-file c)))))
+          (when (> (.-length collision) 0)
+            (console/log "  upstream now ships a file we CREATE (collision):")
+            (doseq [c collision] (console/log (str "    " (.-patch c) ": " (.-file c))))))
+        (when (> (.-length drift) 0)
+          (console/log "  STALE LOCK:")
+          (doseq [d drift] (console/log (str "    " d))))
+        (let [safe-patches (.filter pnames (fn [n :- String] :- Bool (not (.has unsafe-patches n))))]
+          (when (and (not integrity) (> (.-length safe-patches) 0))
+            (console/log (str "  provably-safe patches (skip on this bump): " (.join safe-patches ", ")))))
+        (let [problems (+ (.-length changed) (.-length vanished) (.-length collision) (.-length drift))]
+          (cond
+            (= problems 0) (console/log "  ✓ clean")
+            integrity (console/log (str "  " (.-length drift) " stale-lock issue(s)")))
+          ;; gate semantics: integrity mode fails only on STALE LOCK (drift); a
+          ;; forward diff (explicit ref) is advisory — changed files are expected.
+          (when (and strict (if integrity (> (.-length drift) 0) (> problems 0)))
+            (.exit process 2)))))))
+
+(defn main! [] :- Any
+  (let [argv (.slice (.-argv process) 2)
+        cmd (or (aget argv 0) "check")
+        strict (.includes argv "--strict")
+        ref (.find argv (fn [a :- String] :- Bool (and (not (.startsWith a "--")) (not= a cmd))))]
+    (cond
+      (= cmd "lock") (lock!)
+      (= cmd "check") (check! (or ref nil) strict)
+      :else (do (console/error "usage: upstream-provenance <lock|check [ref] [--strict]>") (.exit process 1)))))
+
+(when (.-main (js/import-meta)) (main!))

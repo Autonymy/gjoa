@@ -40,7 +40,7 @@ Each is a capability in the build today. The table is a nav aid — the durable 
 
 - **Engine-level dark mode** — respects each site rather than inverting blindly: pages with native dark CSS keep it, themeless pages are darkened by the engine pre-paint (no white flash), with a curated registry + per-site overrides for the rest. Driven by Gecko-native levers (a content `prefers-color-scheme` override pref and an engine luminance-inversion flag read by `nsPresContext`), plus a chrome-CSS invert fallback — no content-script darkening on the core path. — [`dark-mode/`](src/gjoa/chrome/bjs/dark-mode/) + the `dark-mode-*` engine patches in [`patches/`](patches/).
 
-- **Tree-style tabs + a vim keymap** — a vertical, keyboard-driven tab tree (nesting, folder groups, collapse, multi-select) driven by a modal vim layer: motion, indent/swap, leader chords, `/` filter, and a `:` ex-command set with picker + help overlay. A chrome bundle over `gBrowser`; tree structure is per-tab metadata. The authoritative ex-command and leader-binding tables are data in [`tabs/vim.bjs`](src/gjoa/chrome/bjs/tabs/vim.bjs); the subsystem is [`tabs/`](src/gjoa/chrome/bjs/tabs/).
+- **Tree-style tabs + a vim keymap** — a vertical, keyboard-driven tab tree (nesting, folder groups, collapse, multi-select) driven by a modal vim layer: motion, indent/swap, leader chords, `/` filter, and a `:` ex-command set with picker + help overlay. Every binding is remappable in **`about:vim`** or with qutebrowser-style `:bind` / `:unbind` commands. A chrome bundle over `gBrowser`; tree structure is per-tab metadata. The keymap is a single command registry (`about:vim` and `:bind` are projections of it), data in [`tabs/vim.bjs`](src/gjoa/chrome/bjs/tabs/vim.bjs); the subsystem is [`tabs/`](src/gjoa/chrome/bjs/tabs/).
 
 - **Workspaces** — tabs partitioned into named spaces; switching shows only that space's tabs, and the selected tab stays inside it (survives session restore). On the niri compositor, focusing an OS workspace switches gjoa to the same-named space (one-way OS→gjoa). — [`spaces/`](src/gjoa/chrome/bjs/spaces/).
 
@@ -89,7 +89,7 @@ nix build .#gjoa-dev --impure   # dev variant — fast, no LTO, CPU-portable
 - **Personal native build → `.#gjoa`.** Compiled `-march=native` for the CPU it's built on — fastest, but it can crash (SIGILL) on hardware that lacks those instructions, so it's a *local* build, not for arbitrary machines.
 - **Portable / dev build → `.#gjoa-dev`.** Fast, no LTO, CPU-portable; or `nix bundle .#gjoa-dev --impure` for a single relocatable Linux executable that runs on any glibc distro with no Nix on the target.
 
-The build variants and their exact flags are defined in [`flake.nix`](flake.nix); CI clones the [Beagle](https://github.com/Autonymy/beagle) compiler as a sibling checkout before building.
+The build variants and their exact flags are defined in [`flake.nix`](flake.nix); CI clones the **pinned** [Beagle](https://github.com/Autonymy/beagle) compiler — the SHA in [`configs/beagle.ref`](configs/beagle.ref) — as a sibling checkout, so every build is deterministic against a frozen compiler instead of a moving `HEAD`.
 
 ## Development
 
@@ -111,7 +111,7 @@ bun run test:integration  # headless Marionette tests against a gjoa binary
 bun run preflight         # pre-build gates (patches, chrome alignment, beagle pin, nix eval)
 ```
 
-`bun run preflight` runs the lettered gate set that catches patch / jar / eval / surface-contract breakage before a multi-hour compile; the gates and their jurisdiction are documented in [`CLAUDE.md`](CLAUDE.md) and implemented in `tools/scripts/preflight.bjs`. `package.json` scripts are the live index of every subsystem-scoped test target (`test:adblock`, `test:darkmode`, `test:tabs`, …).
+`bun run preflight` runs the lettered gate set that catches patch / jar / eval / surface-contract breakage before a multi-hour compile; the gates and their jurisdiction are the **generated** registry in [`docs/stewardship/topology.md`](docs/stewardship/topology.md) (a preflight gate itself fails on any docs↔code drift), implemented in `tools/scripts/preflight.bjs`. `package.json` scripts are the live index of every subsystem-scoped test target (`test:adblock`, `test:darkmode`, `test:tabs`, …).
 
 ```
 gjoa.json            project config — version of record, branding, URLs

@@ -5,7 +5,7 @@
 ;; Pre-fix: group rows were intentionally space-agnostic ("future iteration"
 ;; in rows.ts:updateVisibility). User reported groups bleeding across spaces.
 (ns gjoa.tests.integration.spaces-scope-groups
-  (:require [gjoa.tests.dsl :refer [deftest chrome-eval await-true expect expect-eq sleep wait-for]]))
+  (:require [gjoa.tests.dsl :refer [deftest chrome-eval await-true expect expect-eq wait-for]]))
 (define-mode strict)
 
 (defn clean-spaces [mn :- Any] :- Any
@@ -59,8 +59,8 @@
         window.Spaces.setActive(main.id);
       ")
      ;; Spaces.setActive triggers onChange which schedules a tree resync;
-     ;; give the scheduler a tick.
-     (js/await (sleep 100))
+     ;; wait until the active space reflects Main before re-checking visibility.
+     (await-true "return window.Spaces.active().name === \"Main\";" 1500)
      (chrome-eval "window.gjoaTest.rows.updateVisibility();")
 
      (let [in-main (chrome-eval "
@@ -75,7 +75,8 @@
         const ws = window.Spaces.list().find(s => s.name === \"Workspace\");
         window.Spaces.setActive(ws.id);
       ")
-     (js/await (sleep 100))
+     ;; Same resync tick — wait until the active space reflects Workspace.
+     (await-true "return window.Spaces.active().name === \"Workspace\";" 1500)
      (chrome-eval "window.gjoaTest.rows.updateVisibility();")
 
      (let [back-in-ws (chrome-eval "

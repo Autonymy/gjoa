@@ -4,7 +4,7 @@
 ;; globe placeholder. Opens each, lets the <link rel=icon> + the immediate
 ;; setIcon belt resolve, and asserts the tab's image is the sailboat.
 (ns gjoa.tests.integration.gjoa-favicons
-  (:require [gjoa.tests.dsl :refer [deftest chrome-eval await-true wait-for expect sleep]]))
+  (:require [gjoa.tests.dsl :refer [deftest chrome-eval await-true wait-for expect]]))
 (define-mode strict)
 
 (defn open-js [url :- String marker :- String] :- String
@@ -26,7 +26,7 @@
   [(deftest "about:gjoa shows the gjoa sailboat favicon" [mn]
      (await-true "return !!gBrowser;" 5000)
      (chrome-eval (open-js "about:gjoa" "fav-gjoa"))
-     (js/await (sleep 1500))
+     (await-true "const t = [...gBrowser.tabs].find(x => x.getAttribute('gjoa-test-marker') === 'fav-gjoa'); return !!(t && t.image && t.image.includes('gjoa.svg'));" 5000)
      (let [img (chrome-eval (icon-js "fav-gjoa"))]
        (expect (.includes img "gjoa.svg")
          (str "about:gjoa tab icon should be chrome://gjoa/content/gjoa.svg, got: " img))))
@@ -34,7 +34,7 @@
    (deftest "the gjoa new-tab page shows the sailboat favicon" [mn]
      (await-true "return !!gBrowser;" 5000)
      (chrome-eval (open-js "about:newtab" "fav-newtab"))
-     (js/await (sleep 1500))
+     (await-true "const t = [...gBrowser.tabs].find(x => x.getAttribute('gjoa-test-marker') === 'fav-newtab'); return !!(t && t.image && t.image.includes('gjoa.svg'));" 5000)
      (let [img (chrome-eval (icon-js "fav-newtab"))]
        (expect (.includes img "gjoa.svg")
          (str "new-tab tab icon should be chrome://gjoa/content/gjoa.svg, got: " img))))]))

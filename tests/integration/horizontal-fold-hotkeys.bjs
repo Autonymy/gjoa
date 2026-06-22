@@ -4,7 +4,7 @@
 ;; and asserts the parentId actually changed — the data-model tab-tree tests do
 ;; NOT exercise the keydown path, which is how the cursor-not-set no-op shipped.
 (ns gjoa.tests.integration.horizontal-fold-hotkeys
-  (:require [gjoa.tests.dsl :refer [deftest chrome-eval await-true wait-for expect expect-eq sleep]]))
+  (:require [gjoa.tests.dsl :refer [deftest chrome-eval await-true wait-for expect expect-eq]]))
 (define-mode strict)
 
 (defn reset! [mn :- Any] :- Any
@@ -52,6 +52,25 @@
     window.gjoaTest.vim.activateVim(row);
     return true;"))
 
+;; 'true' once marker `key` is the selected tab AND its row carries the vim
+;; cursor (gjoa-cursor attr set by activate-vim → set-cursor).
+(defn cursor-on-js [stamp :- String key :- String] :- String
+  (str "
+    const t = [...gBrowser.tabs].find(x => x.getAttribute('gjoa-test-marker') === '" stamp "-" key "');
+    if (!t) return false;
+    const row = window.gjoaTest.rowOf.get(t);
+    return !!row && row.getAttribute('gjoa-cursor') === 'true'
+      && gBrowser.selectedTab === t;"))
+
+;; 'true' once marker `key`'s row exists in the horizontal panel (layout
+;; re-rendered after the verticalTabs flip).
+(defn row-ready-js [stamp :- String key :- String] :- String
+  (str "
+    const panel = document.getElementById('gjoa-tab-panel');
+    if (!panel || !panel.hasAttribute('gjoa-horizontal')) return false;
+    const rows = [...panel.querySelectorAll('.gjoa-tab-row')];
+    return rows.some(r => r._tab && r._tab.getAttribute('gjoa-test-marker') === '" stamp "-" key "');"))
+
 ;; parentId of marker tab `key` as a string (or 'null').
 (defn parent-of-js [stamp :- String key :- String] :- String
   (str "
@@ -92,11 +111,13 @@
        (chrome-eval (build-roots-js stamp 2))
        (await-true (str "return [...gBrowser.tabs].some(t => t.getAttribute('gjoa-test-marker') === '" stamp "-r1');") 3000)
        (js/await (to-horizontal! mn))
-       (js/await (sleep 200))
+       (await-true (row-ready-js stamp "r1") 3000)
        (chrome-eval (place-cursor-js stamp "r1"))
-       (js/await (sleep 150))
+       (await-true (cursor-on-js stamp "r1"))
        (js/await (.performActions mn (key-alt "h")))
-       (js/await (sleep 350))
+       (await-true (str "const t = [...gBrowser.tabs].find(x => x.getAttribute('gjoa-test-marker') === '" stamp "-r1');"
+                        " const a = [...gBrowser.tabs].find(x => x.getAttribute('gjoa-test-marker') === '" stamp "-r0');"
+                        " return String(window.gjoaTest.treeOf.get(t).parentId) === String(window.gjoaTest.treeOf.get(a).id);"))
        (let [parent-b (chrome-eval (parent-of-js stamp "r1"))
              id-a (chrome-eval (id-of-js stamp "r0"))]
          (expect-eq parent-b id-a
@@ -109,11 +130,13 @@
        (chrome-eval (build-roots-js stamp 3))
        (await-true (str "return [...gBrowser.tabs].some(t => t.getAttribute('gjoa-test-marker') === '" stamp "-r2');") 3000)
        (js/await (to-horizontal! mn))
-       (js/await (sleep 200))
+       (await-true (row-ready-js stamp "r1") 3000)
        (chrome-eval (place-cursor-js stamp "r1"))
-       (js/await (sleep 150))
+       (await-true (cursor-on-js stamp "r1"))
        (js/await (.performActions mn (key-alt "l")))
-       (js/await (sleep 350))
+       (await-true (str "const t = [...gBrowser.tabs].find(x => x.getAttribute('gjoa-test-marker') === '" stamp "-r1');"
+                        " const c = [...gBrowser.tabs].find(x => x.getAttribute('gjoa-test-marker') === '" stamp "-r2');"
+                        " return String(window.gjoaTest.treeOf.get(t).parentId) === String(window.gjoaTest.treeOf.get(c).id);"))
        (let [parent-b (chrome-eval (parent-of-js stamp "r1"))
              id-c (chrome-eval (id-of-js stamp "r2"))]
          (expect-eq parent-b id-c
@@ -126,13 +149,16 @@
        (chrome-eval (build-roots-js stamp 3))
        (await-true (str "return [...gBrowser.tabs].some(t => t.getAttribute('gjoa-test-marker') === '" stamp "-r2');") 3000)
        (chrome-eval (nest-js stamp "r1" "r0"))
-       (js/await (sleep 200))
+       (await-true (str "const c = [...gBrowser.tabs].find(x => x.getAttribute('gjoa-test-marker') === '" stamp "-r1');"
+                        " const p = [...gBrowser.tabs].find(x => x.getAttribute('gjoa-test-marker') === '" stamp "-r0');"
+                        " return String(window.gjoaTest.treeOf.get(c).parentId) === String(window.gjoaTest.treeOf.get(p).id);"))
        (js/await (to-horizontal! mn))
-       (js/await (sleep 200))
+       (await-true (row-ready-js stamp "r1") 3000)
        (chrome-eval (place-cursor-js stamp "r1"))
-       (js/await (sleep 150))
+       (await-true (cursor-on-js stamp "r1"))
        (js/await (.performActions mn (key-alt "l")))
-       (js/await (sleep 350))
+       (await-true (str "const t = [...gBrowser.tabs].find(x => x.getAttribute('gjoa-test-marker') === '" stamp "-r1');"
+                        " return window.gjoaTest.treeOf.get(t).parentId == null;"))
        (let [parent-r1 (chrome-eval (parent-of-js stamp "r1"))]
          (expect-eq parent-r1 "null"
            (str "Alt+l on nested child r1 must unfold it to a root (parentId " parent-r1 " should be null)")))))
@@ -144,13 +170,16 @@
        (chrome-eval (build-roots-js stamp 3))
        (await-true (str "return [...gBrowser.tabs].some(t => t.getAttribute('gjoa-test-marker') === '" stamp "-r2');") 3000)
        (chrome-eval (nest-js stamp "r2" "r1"))
-       (js/await (sleep 200))
+       (await-true (str "const c = [...gBrowser.tabs].find(x => x.getAttribute('gjoa-test-marker') === '" stamp "-r2');"
+                        " const p = [...gBrowser.tabs].find(x => x.getAttribute('gjoa-test-marker') === '" stamp "-r1');"
+                        " return String(window.gjoaTest.treeOf.get(c).parentId) === String(window.gjoaTest.treeOf.get(p).id);"))
        (js/await (to-horizontal! mn))
-       (js/await (sleep 200))
+       (await-true (row-ready-js stamp "r2") 3000)
        (chrome-eval (place-cursor-js stamp "r2"))
-       (js/await (sleep 150))
+       (await-true (cursor-on-js stamp "r2"))
        (js/await (.performActions mn (key-alt "h")))
-       (js/await (sleep 350))
+       (await-true (str "const t = [...gBrowser.tabs].find(x => x.getAttribute('gjoa-test-marker') === '" stamp "-r2');"
+                        " return window.gjoaTest.treeOf.get(t).parentId == null;"))
        (let [parent-r2 (chrome-eval (parent-of-js stamp "r2"))
              before (chrome-eval (row-before-js stamp "r2" "r1"))]
          (expect-eq parent-r2 "null"

@@ -35,12 +35,19 @@
 (js/export (def tests :- Any
   [(deftest "vim keymap: gjoa.keys.bindings remaps + unbinds keys live" [mn]
      (await-true "return !!document.querySelector(\"#gjoa-tab-panel\");" 10000)
-     (js/await (sleep 400))
+     ;; setup-js needs the vim keymap live (gBrowser + the dispatch that reads
+     ;; gjoa.keys.bindings); window.gjoaTest.vim is set only after tabs init.
+     (await-true "return !!(window.gjoaTest && window.gjoaTest.vim);" 10000)
      (expect (chrome-eval setup-js) "setup failed")
-     (js/await (sleep 200))
+     ;; the rebind takes effect when the bindings pref reads back our override and
+     ;; the new blank tab is the selected one (dispatch resolves the pref live).
+     (await-true "return Services.prefs.getStringPref('gjoa.keys.bindings','') === JSON.stringify({ q: 'tabsPicker', t: null }) && gBrowser.selectedBrowser.currentURI.spec === 'about:blank';")
      (chrome-eval closePicker-js)
      ;; --- 't' is UNBOUND (opens nothing → no mid-test close needed) ---
      (js/await (.performActions mn (key-action "t")))
+     ;; NEGATIVE assertion: nothing should open, so there's no positive state to
+     ;; await — a fixed settle is the only way to give a (wrongly-bound) picker
+     ;; time to appear before we assert it did NOT.
      (js/await (sleep 1000))
      (expect (not (chrome-eval pickerOpen-js))
        "unbound key 't' still opened the tabs picker (override null not honored)")

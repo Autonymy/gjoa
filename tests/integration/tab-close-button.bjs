@@ -3,7 +3,7 @@
 ;; the active row that closes the tab. Asserts the element is present on a row
 ;; and that clicking it removes the tab.
 (ns gjoa.tests.integration.tab-close-button
-  (:require [gjoa.tests.dsl :refer [deftest chrome-eval await-true wait-for expect sleep]]))
+  (:require [gjoa.tests.dsl :refer [deftest chrome-eval await-true wait-for expect]]))
 (define-mode strict)
 
 (js/export (def tests :- Any
@@ -34,7 +34,7 @@
           const x = row.querySelector('.gjoa-tab-close');
           x.dispatchEvent(new MouseEvent('click', { bubbles:true, cancelable:true, button:0 }));
           return true;"))
-       (js/await (sleep 300))
+       (await-true (str "return ![...gBrowser.tabs].some(t => t.getAttribute('gjoa-test-marker') === '" stamp "');") 3000)
        (let [gone (chrome-eval (str "return ![...gBrowser.tabs].some(t => t.getAttribute('gjoa-test-marker') === '" stamp "');"))]
          (expect gone "clicking the × must close the tab"))))]))
 

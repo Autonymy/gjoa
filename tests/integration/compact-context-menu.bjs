@@ -52,7 +52,11 @@
      (js/await (await-true "return !!document.querySelector('#sidebar-main[data-gjoa-compact]');" 4000))
      (let [r (js/await (chrome-eval OPEN-MENU-AND-LEAVE))]
        (expect (.-menuLive r) "precondition: a live menupopup[state=showing] should exist"))
-     ;; let the 0ms mouseleave-collapse check (+ any flash/watchdog) run
+     ;; KEEP: negative assertion — no observable flag to await. The leave-collapse
+     ;; opportunity is on-sidebar-leave's setTimeout(linger=150ms); we must let it FIRE
+     ;; (then abort on the live menu) before asserting "still hovered". await-true on
+     ;; gjoa-has-hover would pass at the first 20ms poll, before the timer ran — defeating
+     ;; the regression. Blind settle past the 150ms linger (+ rAF/flash margin) is required.
      (js/await (sleep 400))
      (let [held (js/await (chrome-eval HAS-HOVER))]
        (expect held "REGRESSION #88: sidebar collapsed while a context menu was open"))

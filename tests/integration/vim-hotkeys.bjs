@@ -10,7 +10,7 @@
 ;; explicitly. This test drives REAL key events (trusted, via Marionette
 ;; PerformActions) on a neutral page and asserts the hotkeys open their pickers.
 (ns gjoa.tests.integration.vim-hotkeys
-  (:require [gjoa.tests.dsl :refer [deftest chrome-eval await-true expect wait-for sleep]]))
+  (:require [gjoa.tests.dsl :refer [deftest chrome-eval await-true expect wait-for]]))
 (define-mode strict)
 
 (def setup-js :- String
@@ -39,8 +39,7 @@
 
 (js/export (def tests :- Any
   [(deftest "vim 't' (tabs) fires with leader off" [mn]
-     (await-true "return !!document.querySelector(\"#gjoa-tab-panel\");" 10000)
-     (js/await (sleep 600))
+     (await-true "return !!window.gjoaTest && !!document.getElementById(\"gjoa-tab-panel\");" 10000)
      (expect (chrome-eval setup-js) "no #gjoa-tab-panel to focus")
      (chrome-eval closePicker-js)
      (js/await (.performActions mn (key-action "t")))
@@ -48,8 +47,7 @@
      (expect (chrome-eval pickerOpen-js) "real 't' did not open the tabs picker (leader_key regression)"))
 
    (deftest "vim ':' (ex-command) fires with leader off" [mn]
-     (await-true "return !!document.querySelector(\"#gjoa-tab-panel\");" 10000)
-     (js/await (sleep 200))
+     (await-true "return !!window.gjoaTest && !!document.getElementById(\"gjoa-tab-panel\");" 10000)
      (chrome-eval setup-js)
      (chrome-eval closePicker-js)
      (js/await (.performActions mn (key-action ":")))

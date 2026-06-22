@@ -63,15 +63,18 @@
 (js/export (def tests :- Any
   [(deftest "vim is live on about:gjoa but yields to its form fields" [mn]
      (await-true "return !!document.querySelector(\"#gjoa-tab-panel\");" 10000)
-     (js/await (sleep 400))
+     (await-true "return !!(gBrowser && gBrowser.selectedTab && gBrowser.selectedBrowser);")
      (chrome-eval open-gjoa-js)
      (await-true on-gjoa-js 8000)
-     (js/await (sleep 400))
+     ;; about:gjoa fully parsed/interactive before we drive keys at it
+     (await-true "return gBrowser.selectedBrowser.contentDocument.readyState === 'complete';" 8000)
      (chrome-eval closePicker-js)
      ;; --- B FIRST (opens nothing → no fragile mid-test close): a form field is
      ;; focused, so the state manager must make vim YIELD ---
      (expect (chrome-eval focus-input-js) "could not focus an injected input in the about:gjoa document")
      (js/await (.performActions mn (key-action "t")))
+     ;; negative assertion: no positive flag for "nothing opened" — settle to give
+     ;; vim its full chance to (wrongly) open a picker before asserting it did not
      (js/await (sleep 1000))
      (expect (not (chrome-eval pickerOpen-js))
        "vim 't' opened a picker while a form field was focused on about:gjoa — state manager failed to detect editing (typing would be eaten)")

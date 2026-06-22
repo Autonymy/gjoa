@@ -667,6 +667,13 @@
   overflow: visible !important;
 }
 
+/* Telegraph clickability: on hover (before focus) pre-apply the focus border
+ * colour so the resting pill signals "click me". Colour-only, zero layout
+ * impact (no #108 risk). */
+#urlbar:hover:not([focused]) {
+  --toolbar-field-border-color: var(--toolbar-field-focus-border-color) !important;
+}
+
 /* Ghost: a static look-alike that drawer/urlbar.bjs drops into the resting slot
  * while the Ctrl+L floating palette is active, so the real urlbar lifting to the
  * window centre doesn't collapse the slot or look like the bar "flew out" — the

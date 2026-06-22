@@ -63,7 +63,11 @@ function mirrorOverridesPref(fixes) {
   try {
     const overrides = {};
     for (const host of Object.keys(fixes || {})) {
-      overrides[host] = fixes[host].override || "inactive";
+      const ov = fixes[host].override || "inactive";
+      if (ov === "auto") {
+        continue; // "auto" is decided at runtime by the measured refiner, not pre-paint
+      }
+      overrides[host] = ov;
     }
     Services.prefs.setStringPref(
       "gjoa.darkmode.fix-overrides",
@@ -195,42 +199,22 @@ export class GjoaDarkmodeParent extends JSWindowActorParent {
     if (!host) {
       return null;
     }
-    // (1) Fix registry — highest precedence; owns override + css + inject.
+    // (1) Fix registry — but only a HARD override ("active"/"inactive") applies here,
+    // pre-paint. An "auto" entry (the bulk default) defers its invert/accept decision
+    // to the measured #auto refiner, which yields to a genuinely-dark site (so github
+    // with a fix is NOT force-inverted). So fall through "auto" as if no explicit
+    // decision and let #auto measure + decide + ship the curated CSS.
+    // A HARD "inactive" entry is a complete hand-authored DARK THEME (sets a dark
+    // html/body/:root bg or color-scheme:dark): apply the css AS-IS with inversion OFF
+    // (inverting it would flip its dark bg back to light — the HN/BBC regression). The
+    // bulk "auto" entries are corrections layered on DR's own inversion, which conflict
+    // with gjoa's engine inversion, so they DON'T ship css — they only signal "force"
+    // to the measured #auto refiner.
     const fix = fixForHost(await loadFixes(), host);
-    if (fix) {
-      let css = fix.css || "";
-      // INVERT (Dark-Reader `INVERT`) + NO-INVERT (gjoa-curated) both reduce to
-      // the SAME operation under engine inversion: re-apply invert(1)+hue-rotate
-      // so the element renders as the page authored it (a counter-invert). They
-      // are kept as distinct curated fields for provenance/intent, but emit one
-      // combined rule.
-      const reinvert = [].concat(
-        Array.isArray(fix.invertSelectors) ? fix.invertSelectors : [],
-        Array.isArray(fix.noInvertSelectors) ? fix.noInvertSelectors : []
-      );
-      if (reinvert.length) {
-        css +=
-          "\n" +
-          reinvert.join(",") +
-          "{filter:invert(1) hue-rotate(180deg)!important}\n";
-      }
-      // removeBgSelectors (gjoa-curated, mirrors Dark-Reader's `background:none`
-      // corrections): strip a light backdrop image so the engine scrim owns it.
-      if (Array.isArray(fix.removeBgSelectors) && fix.removeBgSelectors.length) {
-        css +=
-          "\n" +
-          fix.removeBgSelectors.join(",") +
-          "{background-image:none!important}\n";
-      }
-      // ignoreImageAnalysis (Dark-Reader `IGNORE IMAGE ANALYSIS`): true = skip the
-      // pass-2 image rasterizer entirely for this host; an array = skip those
-      // selectors. Threaded to the child verbatim so #collectImageTargets honors it
-      // (no CSS — it gates a content-side pass, not a style rule). ignoreInlineStyle
-      // is carried through for parity/forward-use; the engine inversion does not
-      // process inline styles, so it currently emits no rule.
+    if (fix && (fix.override || "auto") !== "auto") {
       return {
-        override: fix.override || "inactive",
-        css,
+        override: fix.override,
+        css: fix.css || "",
         inject: fix.inject || "",
         ignoreImageAnalysis: fix.ignoreImageAnalysis ?? false,
         ignoreInlineStyle: fix.ignoreInlineStyle ?? false,
@@ -271,8 +255,19 @@ export class GjoaDarkmodeParent extends JSWindowActorParent {
       // color-scheme sites, but better than fighting the engine blind).
       return { override: data?.hasNativeDark ? "inactive" : "none", css: "", inject: "" };
     }
-    const DARK_LSTAR = 50; // scorer DARK_HI
-    return { override: L >= DARK_LSTAR ? "active" : "none", css: "", inject: "" };
+    // A curated Tier-2 fix (override:"auto") is a "this site's dark is bad" signal, so it
+    // LOWERS the force bar (FIX_FORCE_LSTAR) — yet still yields to a site that painted
+    // clearly dark (github WITH a fix stays native). No fix → only force a clearly-light
+    // page (LIGHT_LSTAR), to avoid double-inverting an un-curated medium-dark theme. We do
+    // NOT ship the correction css here: it's tuned for DR's own inversion and conflicts
+    // with gjoa's engine inversion; the engine luminance-invert alone carries the force.
+    const host = hostOf(this.trustedUrl());
+    const fix = host ? fixForHost(await loadFixes(), host) : null;
+    const useFix = !!fix && (fix.override || "auto") === "auto";
+    const LIGHT_LSTAR = 50,
+      FIX_FORCE_LSTAR = 20;
+    const invert = L >= (useFix ? FIX_FORCE_LSTAR : LIGHT_LSTAR);
+    return { override: invert ? "active" : "none", css: "", inject: "" };
   }
 
   // drawSnapshot the content viewport, downsample, return the MEDIAN CIE L* of the painted

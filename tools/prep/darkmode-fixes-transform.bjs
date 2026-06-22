@@ -34,20 +34,46 @@
 ;; PROVENANCE — Dark Reader is MIT-licensed. Each emitted entry carries
 ;;   "_provenance":"darkreader@<pin> MIT" so the registry records where it came from.
 (ns gjoa.tools.prep.darkmode-fixes-transform
-  (:require [fs :refer [existsSync readFileSync]]
+  (:require [fs :refer [existsSync readFileSync writeFileSync]]
             [path :refer [join]]
             [gjoa.tools.prep.paths :refer [REPO-ROOT]]
             [gjoa.tools.prep.log :refer [log]]))
 (define-mode strict)
-(declare-extern [process] Any)
+(declare-extern [process Reflect Bun] Any)
+
+;; Set a STRING/keyword-named property on a plain JS object. The pinned beagle
+;; emits `(set! (get o k) v)` as `($$bc$get(o,k) = v)` — an invalid JS assignment
+;; target (a call on the LHS) — so we route object-property mutation through
+;; Reflect.set, which emits as a plain `Reflect.set(o,k,v)` call. This is the
+;; idiomatic interop escape until the pinned compiler's set!-of-get lowering is
+;; repaired upstream (it still bracket-assigns in the older committed registry.js).
+(defn oset! [o :- Any k :- Any v :- Any] :- Any
+  (.set Reflect o k v)
+  v)
 
 ;; ---------------------------------------------------------------------------
 ;; Paths + pin (mirror darkmode-registry.bjs — same snapshot, same release).
 ;; ---------------------------------------------------------------------------
 
 (def SNAPSHOT-PATH :- String (join REPO-ROOT "tools" "prep" "darkreader-fixes.snapshot"))
+(def REGISTRY-PATH :- String
+  (join REPO-ROOT "src" "gjoa" "toolkit" "components" "content-classifier" "darkmode-fixes.json"))
 (def DARKREADER-PIN :- String "v4.9.127")
 (def PROVENANCE :- String (str "darkreader@" DARKREADER-PIN " MIT"))
+
+;; SHA-256 of the committed snapshot at DARKREADER-PIN. --write-all verifies the
+;; on-disk snapshot against this before generating any USER_SHEET CSS; a mismatch
+;; (tampered / silently-refreshed corpus) aborts the write. Mirrors the same pin
+;; gate darkmode-registry.bjs enforces. Recompute with
+;; `sha256sum tools/prep/darkreader-fixes.snapshot`.
+(def EXPECTED-SNAPSHOT-SHA256 :- String
+  "0e6d82b4df349edeb789e4dbb346f427caff4861f071020525fd81e6f50e638f")
+
+;; Hex SHA-256 of a string (Bun runtime hasher). Pure — no `!`.
+(defn sha256 [text :- String] :- String
+  (let [hash (Bun.CryptoHasher. "sha256")]
+    (.update hash text)
+    (.digest hash "hex")))
 
 ;; ---------------------------------------------------------------------------
 ;; Color model + luminance flip — a verbatim re-use of darkmode-registry.bjs's
@@ -246,7 +272,7 @@
             cur-lines (atom [])
             flush! (fn []
                      (when @cur-name
-                       (set! (get sections @cur-name) (.trim (.join @cur-lines "\n"))))
+                       (oset! sections @cur-name (.trim (.join @cur-lines "\n"))))
                      (reset! cur-lines []))]
         (doseq [line lines]
           (let [trimmed (.trim line)]
@@ -341,23 +367,55 @@
 
 ;; Resolve + compact a CSS section to a single line (matches existing entries'
 ;; style). Returns {:css ... :unresolved [...] :unmapped [...]} or {:rejected r}.
+;; Resolve all ${...} tokens to a FIXPOINT. A few DR blocks NEST tokens, e.g.
+;; `${${#15150d}}` — the inner-first regex peels one layer per pass, so re-run
+;; until no `${` remains (bounded to `passes` to stop a pathological loop; DR never
+;; nests deeper than 2). Returns {:css ... :unresolved [...]} where :unresolved is
+;; ONLY the FINAL pass's leftovers (a transient inner-layer literal isn't reported).
+;; Pure: builds a fresh unresolved list per pass and returns the last one.
+(defn resolve-tokens-fixpoint [css :- String passes :- Any] :- Any
+  (if (or (<= passes 0) (not (.includes css "${")))
+    {:css css :unresolved []}
+    (let [u []
+          next (resolve-tokens css u)]
+      (if (or (= next css) (not (.includes next "${")))
+        {:css next :unresolved u}
+        (resolve-tokens-fixpoint next (- passes 1))))))
+
 (defn build-css [css :- Any] :- Any
   (if (or (not css) (= (.trim css) ""))
     {:css "" :unresolved [] :unmapped []}
-    (let [unresolved []
-          unmapped []
-          resolved (resolve-dr-vars (resolve-tokens css unresolved) unmapped)
+    (let [unmapped []
+          fixed (resolve-tokens-fixpoint css 5)
+          resolved (resolve-dr-vars (.-css fixed) unmapped)
           compact (.trim (.replace (.replace resolved (RegExp. "\\s*\\n\\s*" "g") " ")
                                    (RegExp. "  +" "g") " "))]
       (if (.test FORBIDDEN-CSS compact)
         {:rejected "resolved CSS contains a forbidden construct (url()/@import/expression())"}
-        {:css compact :unresolved unresolved :unmapped unmapped}))))
+        {:css compact :unresolved (.-unresolved fixed) :unmapped unmapped}))))
 
 ;; Build the candidate gjoa entry from a matched DR block. DR's per-site CSS is a
-;; set of CORRECTIONS layered on its own page inversion, so the faithful default
-;; is override:"active" (engine inverts) + the resolved corrections. A human flips
-;; to "inactive" during eyeball if the block carries a complete hand-authored theme.
-(defn build-entry! [block :- Any] :- Any
+;; set of CORRECTIONS layered on its own page inversion. gjoa is accept-native-FIRST,
+;; so the faithful default is override:"auto": the actor MEASURES the painted page
+;; (drawSnapshot median L*, the scorer signal) and only force-inverts when the site
+;; isn't already dark — a DR fix just lowers the force threshold (it's a "this site's
+;; dark is bad" signal), never a blanket force. A blanket "active" was WRONG: it
+;; inverted good native-dark sites (github) back to light. A human flips to "inactive"
+;; (always accept native) or "active" (always force, pre-paint) during eyeball.
+;;
+;; PERFORMANCE PRUNE — DR's `INVERT` directive marks logo/image elements for a
+;; per-element `filter: invert(1) hue-rotate(180deg)` so they survive DR's page
+;; inversion. gjoa's engine already luminance-inverts every computed color at the
+;; style-resolution stage (the fast, cached path); the actor would re-emit those
+;; same selectors as per-element COMPOSITOR filters (the slow path). At bulk scale
+;; (~2.8k sites) that piles thousands of compositor-filter rules onto the registry
+;; for marginal logo fidelity — exactly the low-performance trap. So bulk import
+;; DROPS `invertSelectors` and keeps only the high-value, cheap parts: CSS color
+;; corrections, the override mode, and the IGNORE-* content-pass flags. (Curated
+;; entries that carry hand-reviewed invertSelectors are merged on top and win, so
+;; nothing hand-tuned is lost.) `keep-invert?` lets the QA print path still inspect
+;; the raw INVERT list without it ever reaching the written entry.
+(defn build-entry! [block :- Any keep-invert? :- Any] :- Any
   (let [secs (.-sections block)
         css-built (build-css (get secs "CSS"))]
     (if (.-rejected css-built)
@@ -365,24 +423,32 @@
       (let [invert-sels (selector-lines (get secs "INVERT"))
             ign-inline (ignore-field (get secs "IGNORE INLINE STYLE"))
             ign-image (ignore-field (get secs "IGNORE IMAGE ANALYSIS"))
-            entry {:mode "css" :override "active"}]
+            has-css (> (.-length (.-css css-built)) 0)
+            entry {:mode "css" :override "auto"}]
         ;; Provenance uses a STRING key so the emitted JSON key is exactly
         ;; "_provenance" (a keyword :_provenance munges the leading underscore).
-        (set! (get entry "_provenance") PROVENANCE)
+        (oset! entry "_provenance" PROVENANCE)
         ;; Only attach non-empty fields so entries stay minimal + diffable.
-        (when (> (.-length (.-css css-built)) 0)
-          (set! (get entry :css) (.-css css-built)))
-        (when (> (.-length invert-sels) 0)
-          (set! (get entry :invertSelectors) invert-sels))
+        (when has-css
+          (oset! entry "css" (.-css css-built)))
+        ;; invertSelectors: PRUNED from the written entry (see perf note above).
+        ;; Only re-attached for the human print/QA path via keep-invert?.
+        (when (and keep-invert? (> (.-length invert-sels) 0))
+          (oset! entry "invertSelectors" invert-sels))
         (when (not (nil? ign-inline))
-          (set! (get entry :ignoreInlineStyle) ign-inline))
+          (oset! entry "ignoreInlineStyle" ign-inline))
         (when (not (nil? ign-image))
-          (set! (get entry :ignoreImageAnalysis) ign-image))
+          (oset! entry "ignoreImageAnalysis" ign-image))
         {:entry entry
+         ;; An entry is SUBSTANTIVE only if it carries a real correction after the
+         ;; prune: CSS or an IGNORE-* flag. A block that was INVERT-only collapses to
+         ;; bare {mode,override:"active"} — which is already the engine default — so
+         ;; the bulk writer skips it (no benefit, just file size + a pref-map entry).
+         :substantive (or has-css (not (nil? ign-inline)) (not (nil? ign-image)))
          :unresolved (.-unresolved css-built)
          :unmapped (.-unmapped css-built)
          :directives {:invert (> (.-length invert-sels) 0)
-                      :css (> (.-length (.-css css-built)) 0)
+                      :css has-css
                       :ignoreInline (not (nil? ign-inline))
                       :ignoreImage (not (nil? ign-image))}}))))
 
@@ -406,7 +472,7 @@
                     "IGNORE IMAGE ANALYSIS\n*\n")
         blocks (parse-snapshot! sample)
         blk (find-block blocks "example.com")
-        built (and blk (build-entry! blk))
+        built (and blk (build-entry! blk true))
         e (and built (.-entry built))]
     (info "darkmode-fixes-transform self-test")
     (check! "white→dark" (< (luminance white) 0.22) (str "luminance " (.toFixed (luminance white) 4)))
@@ -442,10 +508,18 @@ gjoa darkmode-fixes-transform — Dark Reader → gjoa curated entry generator (
 Usage:
   bun .beagle-tools/gjoa/tools/prep/darkmode-fixes-transform.js <host> [host...]
   bun .beagle-tools/gjoa/tools/prep/darkmode-fixes-transform.js --selftest
+  bun .beagle-tools/gjoa/tools/prep/darkmode-fixes-transform.js --write-all
 
-Prints CANDIDATE darkmode-fixes.json entries (directives expanded, DR tokens
-PRE-RESOLVED to fixed dark constants — LOSSY, eyeball before committing). Does
-NOT --write: curated entries land via human review + hand-merge.
+Per-host: prints CANDIDATE darkmode-fixes.json entries (directives expanded, DR
+tokens PRE-RESOLVED to fixed dark constants — LOSSY, eyeball before committing).
+
+--write-all: BULK-imports the WHOLE pinned DR corpus into darkmode-fixes.json.
+Each entry is PRUNED to the cheap, high-value parts (CSS color corrections, the
+override mode, IGNORE-* flags); DR's per-element INVERT selectors are dropped
+because gjoa's engine already inverts at style-resolution (re-emitting them as
+per-element compositor filters is the low-performance trap). The existing curated
+registry is AUTHORITATIVE — its keys are merged ON TOP and win over any bulk
+counterpart. Output is minified (the actor lazy-loads + caches it once).
 "))
 
 (defn read-snapshot! [] :- Any
@@ -461,7 +535,9 @@ NOT --write: curated entries land via human review + hand-merge.
   (let [block (find-block blocks host)]
     (if (not block)
       {:host host :missing true :reason "no matching DR block"}
-      (let [built (build-entry! block)]
+      ;; print/QA path keeps invertSelectors visible so a human can eyeball what
+      ;; the bulk import drops; the --write-all path prunes them.
+      (let [built (build-entry! block true)]
         (cond
           (.-rejected built)
           {:host host :missing true :reason (.-rejected built)}
@@ -494,12 +570,109 @@ NOT --write: curated entries land via human review + hand-merge.
           (warn (str "  ⚠ unmapped --darkreader vars → fixed dark palette (QA): " (.join (.-unmapped r) ", "))))
         (console/log (JSON/stringify {(.-host r) (.-entry r)} nil 2))))))
 
+;; ---------------------------------------------------------------------------
+;; Bulk import (--write-all): convert the WHOLE pinned DR corpus into pruned,
+;; host-keyed entries and merge them UNDER the existing curated registry — every
+;; hand-reviewed key wins over its bulk counterpart, so curation is never lost.
+;; ---------------------------------------------------------------------------
+
+;; Derive the registry host KEY(S) a DR block's URL patterns map to. A `*.foo.com`
+;; glob keys as the bare apex `foo.com` (the actor's fixForHost walks parent
+;; domains, so the apex key also covers every subdomain). A plain host keys as
+;; itself. The global `*` block and any pattern that reduces to `*` / empty is
+;; skipped. De-duped within a block.
+(defn block-host-keys! [block :- Any] :- Any
+  (let [seen {}
+        keys []]
+    (doseq [pat (.-patterns block)]
+      (let [ph (pattern-host pat)
+            key (if (.startsWith ph "*.") (.slice ph 2) ph)]
+        (when (and (not= key "") (not= key "*") (not (.includes key "*"))
+                   (not (get seen key)))
+          (oset! seen key true)
+          (.push keys key))))
+    keys))
+
+;; Build the full host -> pruned-entry map from every block in the corpus. Keys
+;; that several blocks fight over keep the FIRST substantive entry (DR orders the
+;; corpus most-specific-first within a domain family). INVERT-only blocks (which
+;; collapse to the engine default after the prune) contribute nothing.
+(defn build-all! [blocks :- Any] :- Any
+  (let [out {}
+        ;; Hyphen-free keys: the beagle/js keyword `:skipped-empty` would munge to
+        ;; `skipped_empty` on read while `oset!`/`get` use the literal string —
+        ;; mismatched keys silently zero the counter. Plain camelCase keeps the
+        ;; keyword-accessor (`.-skippedEmpty`) and the string key identical.
+        stats {:blocks (.-length blocks) :written 0 :skippedEmpty 0 :rejected 0}]
+    (doseq [block blocks]
+      (let [built (build-entry! block false)] ;; false = prune invertSelectors
+        (cond
+          (.-rejected built)
+          (oset! stats "rejected" (+ (.-rejected stats) 1))
+          (not (.-substantive built))
+          (oset! stats "skippedEmpty" (+ (.-skippedEmpty stats) 1))
+          :else
+          (doseq [key (block-host-keys! block)]
+            (when (not (get out key))
+              (oset! out key (.-entry built))
+              (oset! stats "written" (+ (.-written stats) 1)))))))
+    {:fixes out :stats stats}))
+
+(defn write-all! [] :- Any
+  (let [info (.-info log) ok (.-ok log) warn (.-warn log) err (.-error log)
+        snapshot (read-snapshot!)]
+    ;; Pin gate — refuse to write generated CSS unless the on-disk snapshot matches
+    ;; the SHA-256 recorded at DARKREADER-PIN (tampered / silently-refreshed corpus
+    ;; is rejected before any USER_SHEET CSS is produced).
+    (let [actual (sha256 snapshot)]
+      (when (not= actual EXPECTED-SNAPSHOT-SHA256)
+        (err (str "snapshot SHA-256 does not match the pinned hash for Dark Reader " DARKREADER-PIN ".\n"
+                  "  expected: " EXPECTED-SNAPSHOT-SHA256 "\n"
+                  "  got:      " actual "\n"
+                  "  --write-all refused. Re-pin deliberately, then update EXPECTED-SNAPSHOT-SHA256."))
+        (.exit process 1)))
+    (let [blocks (parse-snapshot! snapshot)
+          built (build-all! blocks)
+          bulk (.-fixes built)
+          st (.-stats built)
+          ;; Curated registry is AUTHORITATIVE — load it last and let its keys win.
+          curated (if (existsSync REGISTRY-PATH)
+                    (JSON/parse (readFileSync REGISTRY-PATH "utf8"))
+                    {})
+          merged {}
+          curated-keys (Object.keys curated)
+          bulk-keys (Object.keys bulk)
+          overlap (atom 0)]
+      ;; 1. lay down every bulk entry, then 2. overwrite with curated (curated wins).
+      (doseq [k bulk-keys] (oset! merged k (get bulk k)))
+      (doseq [k curated-keys]
+        (when (get bulk k) (reset! overlap (+ @overlap 1)))
+        (oset! merged k (get curated k)))
+      (let [merged-keys (Object.keys merged)
+            ;; minified single-line JSON — the file is lazy-loaded + cached by the
+            ;; actor, so on-disk compactness is pure win (smaller fetch + parse).
+            json (JSON/stringify merged)]
+        (writeFileSync REGISTRY-PATH (str json "\n"))
+        (info "darkmode bulk import (Dark Reader → gjoa, pruned)")
+        (info (str "  blocks parsed:        " (.-blocks st)))
+        (info (str "  bulk entries written: " (.-written st)))
+        (info (str "  skipped (INVERT-only / no correction after prune): " (.-skippedEmpty st)))
+        (info (str "  rejected (forbidden CSS): " (.-rejected st)))
+        (info (str "  curated entries kept (authoritative): " (.-length curated-keys)))
+        (info (str "  curated∩bulk (curated won): " @overlap))
+        (ok (str "wrote " (.-length merged-keys) " total entries → "
+                 "src/gjoa/toolkit/components/content-classifier/darkmode-fixes.json "
+                 "(" (Math.round (/ (.-length json) 1024)) " KB, minified)"))
+        0))))
+
 (defn main! [] :- Any
   (let [argv (.slice (.-argv process) 2)
         selftest? (.includes argv "--selftest")
+        write-all? (.includes argv "--write-all")
         hosts (.filter argv (fn [a] (not (.startsWith a "--"))))]
     (cond
       selftest? (.exit process (selftest!))
+      write-all? (.exit process (write-all!))
       (= (.-length hosts) 0) (do (console/log USAGE) (.exit process 0))
       :else
       (let [snapshot (read-snapshot!)

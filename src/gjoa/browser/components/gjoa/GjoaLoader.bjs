@@ -300,6 +300,27 @@
     (catch Any e
       (console/error "gjoa-loader: registerDarkmodeActor failed" e))))
 
+;; Registers the INPUT-STATE actor: reports editable-focus (so vim keys yield to
+;; typing) and drives smooth scroll. allFrames so an input inside an iframe is
+;; detected too; events fire in the system group so a page can't preventDefault
+;; its way out of us seeing focus changes. Replaces a FF152-rejected data:-URL
+;; frame script (see GjoaInput{Child,Parent}.sys.mjs).
+(defn register-input-actor [] :- Any
+  (try
+    (.registerWindowActor ChromeUtils "GjoaInput"
+      {:parent {:esModuleURI "resource://gre/modules/GjoaInputParent.sys.mjs"}
+       :child {:esModuleURI "resource://gre/modules/GjoaInputChild.sys.mjs"
+               :events {:focusin {:capture true :mozSystemGroup true}
+                        :focusout {:capture true :mozSystemGroup true}
+                        :pageshow {:mozSystemGroup true}
+                        :pagehide {:mozSystemGroup true}
+                        :DOMContentLoaded {:mozSystemGroup true}}}
+       :allFrames true
+       :messageManagerGroups ["browsers"]})
+    (console/log "gjoa-loader: registered GjoaInput window actor")
+    (catch Any e
+      (console/error "gjoa-loader: registerInputActor failed" e))))
+
 (defn set-new-tab-url! [] :- Any
   (try
     (set! (.-newTabURL (.-AboutNewTab lazy)) NEW-TAB-URL)
@@ -455,6 +476,7 @@
       (set-new-tab-url!)
       (register-cosmetic-actor)
       (register-darkmode-actor)
+      (register-input-actor)
       (.addObserver (.-obs Services) observer "chrome-document-loaded")
       (let [dev (dev-mode-dir)]
         (if dev

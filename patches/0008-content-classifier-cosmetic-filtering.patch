@@ -475,7 +475,7 @@ diff --git a/toolkit/components/content-classifier/moz.build b/toolkit/component
 index e65d3eebce..4b5b68ccda 100644
 --- a/toolkit/components/content-classifier/moz.build
 +++ b/toolkit/components/content-classifier/moz.build
-@@ -28,6 +28,19 @@ LOCAL_INCLUDES += [
+@@ -28,6 +28,21 @@ LOCAL_INCLUDES += [
  
  EXTRA_JS_MODULES += [
      "ContentClassifierRemoteSettingsClient.sys.mjs",
@@ -483,6 +483,8 @@ index e65d3eebce..4b5b68ccda 100644
 +    "GjoaCosmeticParent.sys.mjs",
 +    "GjoaDarkmodeChild.sys.mjs",
 +    "GjoaDarkmodeParent.sys.mjs",
++    "GjoaInputChild.sys.mjs",
++    "GjoaInputParent.sys.mjs",
 +]
 +
 +# uBO-derived scriptlet/redirect resource library (JSON), read at init by the

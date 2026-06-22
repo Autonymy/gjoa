@@ -1,75 +1,111 @@
 #lang beagle/js
+;; Chrome-side reader of "is the user typing into a form right now?" — the signal
+;; that makes vim keys YIELD to editing. Two sources, narrowest-wins:
+;;   1. same-process pages (privileged about: pages, view-source) expose their
+;;      document to chrome, so we read the live activeElement SYNCHRONOUSLY — 100%
+;;      accurate, no async cache, the fork advantage an extension can't have.
+;;   2. content-process pages report editable focus via the GjoaInput JSWindowActor,
+;;      which stamps `_gjoaEditable` on the <browser> (see GjoaInput{Child,Parent}).
+;; The old data:-URL frame script that fed #2 was rejected by FF152
+;; ("unsafe filename: data:...") — silently breaking content-page detection — and
+;; is gone; the actor replaces it (and the smooth-scroll it also carried).
+;;
+;; Editable predicate attribution: the rules (input-type blacklist, textarea,
+;; select, contentEditable, ARIA textbox/searchbox/combobox/application, the
+;; readOnly exclusion and the SVG-safe contentEditable read) distill what Vimium
+;; (MIT — github.com/philc/vimium, lib/dom_utils.js) and Tridactyl (Apache-2.0 —
+;; github.com/tridactyl/tridactyl, src/lib/dom.ts isTextEditable) learned across
+;; millions of users. This is an independent reimplementation, not their code.
+;; gjoa adds two things an extension cannot: document.designMode, and traversal
+;; through CLOSED shadow roots via the [ChromeOnly] openOrClosedShadowRoot.
 (ns gjoa.tabs.content-focus
-  (:require [gjoa.macros :refer [on! off! bool]]
-            [gjoa.tabs.log :refer [create-logger!]]))
+  (:require [gjoa.tabs.log :refer [create-logger!]]))
 (define-mode strict)
 
 (declare-extern [window gBrowser String] Any)
 
-(def FRAME-SCRIPT-SRC :- String
-  "\"use strict\";\n(function() {\n  var UNSELECTABLE_INPUT_TYPES = new Set([\n    \"button\",\"checkbox\",\"color\",\"file\",\"hidden\",\"image\",\"radio\",\"reset\",\"submit\"\n  ]);\n\n  function isSelectable(el) {\n    if (!el || typeof el.nodeName !== \"string\") return false;\n    var tag = el.nodeName.toLowerCase();\n    if (tag === \"input\") return !UNSELECTABLE_INPUT_TYPES.has((el.type || \"\").toLowerCase());\n    if (tag === \"textarea\") return true;\n    if (el.isContentEditable) return true;\n    return false;\n  }\n\n  function isEditable(el) {\n    if (isSelectable(el)) return true;\n    if (!el || typeof el.nodeName !== \"string\") return false;\n    if (el.nodeName.toLowerCase() === \"select\") return true;\n    var role = (typeof el.getAttribute === \"function\") ? el.getAttribute(\"role\") : null;\n    if (role === \"textbox\" || role === \"searchbox\" || role === \"application\") return true;\n    return false;\n  }\n\n  function deepActiveElement() {\n    if (!content || !content.document) return null;\n    var a = content.document.activeElement;\n    while (a && a.shadowRoot && a.shadowRoot.activeElement) {\n      a = a.shadowRoot.activeElement;\n    }\n    return a;\n  }\n\n  var lastReported = null;\n  function report() {\n    try {\n      var editable = isEditable(deepActiveElement());\n      if (editable === lastReported) return;\n      lastReported = editable;\n      sendAsyncMessage(\"Gjoa:FocusState\", { editable: editable });\n    } catch (_) {}\n  }\n\n  addEventListener(\"focusin\",  report, true);\n  addEventListener(\"focusout\", report, true);\n  addEventListener(\"click\",    report, true);\n  addEventListener(\"DOMContentLoaded\", function () {\n    lastReported = null;\n    report();\n  }, true);\n  addEventListener(\"pagehide\", function () {\n    if (lastReported === false) return;\n    lastReported = false;\n    try { sendAsyncMessage(\"Gjoa:FocusState\", { editable: false }); } catch (_) {}\n  }, true);\n\n  addMessageListener(\"Gjoa:FocusProbe\", function () {\n    lastReported = null;\n    report();\n  });\n\n  var scrollDir = 0;\n  var velocity = 0;\n  var pos = 0;\n  var lastTs = 0;\n  var TARGET_VELOCITY = 1200;\n  var ACCEL = 4500;\n  var DECEL = 6000;\n\n  function scrollFrame(ts) {\n    var now = typeof ts === \"number\" ? ts : (content && content.performance ? content.performance.now() : Date.now());\n    var dt = lastTs > 0 ? Math.min((now - lastTs) / 1000, 0.05) : 0;\n    lastTs = now;\n    if (scrollDir !== 0) {\n      var target = scrollDir * TARGET_VELOCITY;\n      var diff = target - velocity;\n      var maxStep = ACCEL * dt;\n      velocity += Math.abs(diff) <= maxStep ? diff : Math.sign(diff) * maxStep;\n    } else {\n      var decel = DECEL * dt;\n      velocity = Math.abs(velocity) <= decel ? 0 : velocity - Math.sign(velocity) * decel;\n    }\n    pos += velocity * dt;\n    var whole = pos >= 0 ? Math.floor(pos) : Math.ceil(pos);\n    if (whole !== 0) {\n      try { if (content) content.scrollBy(0, whole); } catch (_) {}\n      pos -= whole;\n    }\n    if (scrollDir !== 0 || velocity !== 0) {\n      if (content && content.requestAnimationFrame) content.requestAnimationFrame(scrollFrame);\n    } else {\n      lastTs = 0;\n      pos = 0;\n    }\n  }\n\n  addMessageListener(\"Gjoa:ScrollStart\", function (msg) {\n    var data = (msg && msg.data) || {};\n    var dy = typeof data.dy === \"number\" ? data.dy : 0;\n    var dir = dy > 0 ? 1 : dy < 0 ? -1 : 0;\n    if (dir === 0) return;\n    var wasIdle = scrollDir === 0 && velocity === 0;\n    scrollDir = dir;\n    if (wasIdle && content && content.requestAnimationFrame) {\n      lastTs = 0;\n      content.requestAnimationFrame(scrollFrame);\n    }\n  });\n  addMessageListener(\"Gjoa:ScrollStop\", function () {\n    scrollDir = 0;\n  });\n\n  report();\n})();")
+;; <input> types that take no text — focusing them is NOT "editing".
+(def UNSELECTABLE-INPUT-TYPES :- Any
+  ["button" "checkbox" "color" "file" "hidden" "image" "radio" "reset" "submit"])
+
+;; Is `el` something the user types into? Kept in lockstep with GjoaInputChild's
+;; isEditableElement so the synchronous (chrome) and actor (content) sides agree.
+(defn editable-element? [el :- Any] :- Boolean
+  (if (or (not el) (not= (typeof (.-nodeName el)) "string"))
+    false
+    ;; readOnly text controls aren't "editing" (Tridactyl). Undefined on non-inputs.
+    (if (= (.-readOnly el) true)
+      false
+      (let [tag (.toLowerCase (.-nodeName el))]
+        (cond
+          (= tag "input") (not (.includes UNSELECTABLE-INPUT-TYPES
+                                          (.toLowerCase (or (.-type el) ""))))
+          (= tag "textarea") true
+          (= tag "select") true
+          ;; contentEditable is boolean only on HTMLElement; undefined on SVG/MathML.
+          (and (= (typeof (.-isContentEditable el)) "boolean") (.-isContentEditable el)) true
+          :else (let [role (if (= (typeof (.-getAttribute el)) "function")
+                             (.toLowerCase (or (.getAttribute el "role") "")) "")]
+                  (or (= role "textbox") (= role "searchbox")
+                      (= role "combobox") (= role "application"))))))))
+
+;; Deepest focused element, descending through AUTHOR shadow roots — OPEN *and
+;; CLOSED* (openOrClosedShadowRoot is [ChromeOnly]; a closed shadow root can't hide
+;; its focused input from us the way it hides from an extension). CRITICAL: stop
+;; the moment the element is itself editable — openOrClosedShadowRoot ALSO exposes
+;; form controls' UA-internal shadow roots (date/time/etc.), and descending into a
+;; focused <input>'s internals would land on an anonymous, non-editable div and we
+;; would wrongly conclude "not editing". The control IS the target.
+(defn deep-active [doc :- Any] :- Any
+  (if (not doc)
+    nil
+    (loop [a (.-activeElement doc)]
+      (if (or (not a) (editable-element? a))
+        a
+        (let [root (try (or (.-openOrClosedShadowRoot a) (.-shadowRoot a))
+                        (catch Any _e nil))]
+          (if (and root (.-activeElement root))
+            (recur (.-activeElement root))
+            a))))))
+
+;; THE privileged-page path: about:gjoa / about:config / about:preferences are
+;; parent-process, so chrome reads their document straight off the <browser>.
+;; designMode makes the whole doc editable (WYSIWYG). Returns false for remote
+;; (content-process) browsers — contentDocument is null there; they use the actor.
+(defn same-process-editable? [browser :- Any] :- Boolean
+  (try
+    (let [doc (.-contentDocument browser)]
+      (if (not doc)
+        false
+        (if (= (.-designMode doc) "on")
+          true
+          (editable-element? (deep-active doc)))))
+    (catch Any _e false)))
 
 (js/export (defn make-content-focus! [] :- Any
-  (let [log (create-logger! "contentFocus")
-        editable-per-browser (WeakMap.)
-        data-url (str "data:application/javascript;charset=utf-8,"
-                      (encodeURIComponent FRAME-SCRIPT-SRC))
-        mm (or (.-messageManager window) (.-messageManager gBrowser))]
-    (if (not mm)
-      (do (log "init:no-message-manager")
-          (let [noop-diag {:messageCount 0 :lastMessageEditable nil :cachedForCurrent nil}]
-            {:contentInputFocused (fn [] false)
-             :diag (fn [] noop-diag)
-             :destroy (fn [] nil)}))
-      (let [state :- Any {:messageCount 0 :lastMessageEditable nil}
-
-            on-focus-state (fn [msg]
-              (set! (.-messageCount state) (+ (.-messageCount state) 1))
-              (set! (.-lastMessageEditable state) (bool (.-editable (.-data msg))))
-              (.set editable-per-browser (.-target msg) (bool (.-editable (.-data msg))))
-              (log "focusState:received" {:editable (.-editable (.-data msg))
-                                          :count (.-messageCount state)}))]
-
-        (.addMessageListener mm "Gjoa:FocusState" on-focus-state)
-        (.loadFrameScript mm data-url true)
-        (log "init" {:dataUrlSize (.-length data-url)})
-
-        (let [on-tab-select (fn []
-               (try
-                 (let [browser (.-selectedBrowser gBrowser)]
-                   (when (and browser (.-messageManager browser))
-                     (.sendAsyncMessage (.-messageManager browser) "Gjoa:FocusProbe")))
-                 (catch Any e
-                   (log "probe:error" {:msg (String e)}))))]
-
-          (when (.-tabContainer gBrowser)
-            (on! (.-tabContainer gBrowser) "TabSelect" on-tab-select))
-
-          {:contentInputFocused (fn []
-             (try
-               (let [browser (.-selectedBrowser gBrowser)]
-                 (if (not browser)
-                   false
-                   (= (.get editable-per-browser browser) true)))
-               (catch Any _e false)))
-
-           :diag (fn []
-             (let [holder :- Any {:v nil}]
-               (try
-                 (let [browser (.-selectedBrowser gBrowser)]
-                   (when browser
-                     (set! (.-v holder) (.get editable-per-browser browser))))
-                 (catch Any _e nil))
-               {:messageCount (.-messageCount state)
-                :lastMessageEditable (.-lastMessageEditable state)
-                :cachedForCurrent (.-v holder)}))
-
-           :destroy (fn []
-             (try
-               (.removeMessageListener mm "Gjoa:FocusState" on-focus-state)
-               (when (.-removeDelayedFrameScript mm)
-                 (.removeDelayedFrameScript mm data-url))
-               (catch Any e
-                 (log "destroy:error" {:msg (String e)})))
-             (when (.-tabContainer gBrowser)
-               (off! (.-tabContainer gBrowser) "TabSelect" on-tab-select)))}))))))
+  (let [log (create-logger! "contentFocus")]
+    (log "init" {:transport "GjoaInput actor + same-process read"})
+    {:contentInputFocused (fn []
+       (try
+         (let [browser (.-selectedBrowser gBrowser)]
+           (cond
+             (not browser) false
+             ;; Same-process (privileged about:) page: contentDocument is readable,
+             ;; so the SYNCHRONOUS read is authoritative and always fresh — do NOT
+             ;; consult the actor's async cache here (it can lag a focusout and go
+             ;; stale, wrongly keeping vim suppressed after the field is gone).
+             (.-contentDocument browser) (same-process-editable? browser)
+             ;; Content-process page (contentDocument null): the actor's reported
+             ;; cache is the only signal we can read from the parent.
+             :else (= (.-_gjoaEditable browser) true)))
+         (catch Any _e false)))
+     :diag (fn []
+       (let [holder :- Any {:sameProcess nil :actorCache nil}]
+         (try
+           (let [browser (.-selectedBrowser gBrowser)]
+             (when browser
+               (set! (.-sameProcess holder) (same-process-editable? browser))
+               (set! (.-actorCache holder) (.-_gjoaEditable browser))))
+           (catch Any _e nil))
+         holder))
+     :destroy (fn [] nil)})))

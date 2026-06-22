@@ -23,11 +23,14 @@
 (defn show-children [el :- Any] :- Any
   (.forEach (Array/from (.-children el)) #(set! (.-hidden %) false)))
 
-(def PRIVILEGED-BAIL-URI-PREFIXES :- Any
-  ["about:preferences" "about:addons" "about:debugging"
-   "about:profiles" "about:logins" "about:protections"
-   "about:performance" "about:processes" "about:config"
-   "about:profiling" "about:certificate" "view-source:"])
+;; URL bail list — DELIBERATELY EMPTY. It used to blanket-disable vim on privileged
+;; about: pages because (PaleFox era) we couldn't tell whether the user was typing
+;; into a form on a page we didn't own. We own the browser now: the content-focus
+;; state manager (contentInputFocused) reads editable focus on EVERY page — including
+;; privileged parent-process ones, via the <browser>'s contentDocument — so vim works
+;; on every about: page and yields only when a form field is actually focused. Kept
+;; as a structured escape hatch in case one page ever needs a hard bail.
+(def PRIVILEGED-BAIL-URI-PREFIXES :- Any [])
 (def LEADER-BINDINGS :- Any
   [{:key "t" :desc "tabs (this window)"}
    {:key "T" :desc "tabs (all windows)"}
@@ -621,13 +624,13 @@
                 (try (.goForward (.-selectedBrowser gBrowser)) (catch Any _e nil)))
               (key= e "j") (dispatch-key e "j"
                 (when (not (.-repeat e))
-                  (try (some-> gBrowser .-selectedBrowser .-messageManager
-                         (.sendAsyncMessage "Gjoa:ScrollStart" {:dy 1}))
+                  (try (some-> gBrowser .-selectedBrowser .-browsingContext .-currentWindowGlobal
+                         (.getActor "GjoaInput") (.sendAsyncMessage "GjoaInput:ScrollStart" {:dy 1}))
                        (catch Any _e nil))))
               (key= e "k") (dispatch-key e "k"
                 (when (not (.-repeat e))
-                  (try (some-> gBrowser .-selectedBrowser .-messageManager
-                         (.sendAsyncMessage "Gjoa:ScrollStart" {:dy -1}))
+                  (try (some-> gBrowser .-selectedBrowser .-browsingContext .-currentWindowGlobal
+                         (.getActor "GjoaInput") (.sendAsyncMessage "GjoaInput:ScrollStart" {:dy -1}))
                        (catch Any _e nil))))
               (key= e "e") (dispatch-key e "e"
                 ;; #127: mode-aware. In COMPACT/collapse mode, `e` toggles the overlay
@@ -1633,8 +1636,8 @@
             (fn [e]
               (when (or (key= e "j") (key= e "k"))
                 (try
-                  (some-> gBrowser .-selectedBrowser .-messageManager
-                    (.sendAsyncMessage "Gjoa:ScrollStop"))
+                  (some-> gBrowser .-selectedBrowser .-browsingContext .-currentWindowGlobal
+                    (.getActor "GjoaInput") (.sendAsyncMessage "GjoaInput:ScrollStop"))
                   (catch Any _e nil))))))
 
 

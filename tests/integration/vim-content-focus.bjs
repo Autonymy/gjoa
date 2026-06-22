@@ -1,0 +1,76 @@
+#lang beagle/js
+;; Regression: the GjoaInput JSWindowActor must report editable focus on CONTENT-
+;; process pages (where chrome cannot read contentDocument), so vim yields to
+;; typing there. This is the path that the FF152-rejected data:-URL frame script
+;; used to (fail to) serve. A data: page loads in the content process, so its
+;; contentDocument is null from chrome — same-process-editable? returns false and
+;; the ONLY signal is the actor's _gjoaEditable stamp. So this test isolates the
+;; actor.
+(ns gjoa.tests.integration.vim-content-focus
+  (:require [gjoa.tests.dsl :refer [deftest chrome-eval await-true expect wait-for sleep]]))
+(define-mode strict)
+
+(def open-input-page-js :- String
+  "
+  const html = '<!DOCTYPE html><body style=\"height:3000px\"><input id=i autofocus style=\"position:fixed;top:0;left:0\"></body>';
+  const t = gBrowser.addTab('data:text/html,' + encodeURIComponent(html), {
+    triggeringPrincipal: Services.scriptSecurityManager.getSystemPrincipal(),
+  });
+  gBrowser.selectedTab = t;
+  Services.prefs.setBoolPref('gjoa.keys.useLeader', false);
+  return 1;
+")
+
+(def open-plain-page-js :- String
+  "
+  const t = gBrowser.addTab('data:text/html,' + encodeURIComponent('<!DOCTYPE html><body style=\"height:3000px\">hello world</body>'), {
+    triggeringPrincipal: Services.scriptSecurityManager.getSystemPrincipal(),
+  });
+  gBrowser.selectedTab = t;
+  try { gBrowser.selectedBrowser.focus(); } catch (e) {}
+  return 1;
+")
+
+(def on-data-js :- String
+  "return gBrowser.selectedBrowser.currentURI.spec.startsWith('data:');")
+
+(def editable-js :- String
+  "return gBrowser.selectedBrowser._gjoaEditable === true;")
+
+(def pickerOpen-js :- String
+  "return !!document.querySelector('[class*=picker], [id*=picker], .gjoa-search-input');")
+
+(def closePicker-js :- String
+  "try { document.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true,cancelable:true})); } catch(e){} return 1;")
+
+(defn key-action [ch :- String] :- Any
+  [{:type "key" :id "kbd"
+    :actions [{:type "keyDown" :value ch} {:type "keyUp" :value ch}]}])
+
+(js/export (def tests :- Any
+  [(deftest "GjoaInput actor: content-page editable focus makes vim yield" [mn]
+     (await-true "return !!document.querySelector(\"#gjoa-tab-panel\");" 10000)
+     (js/await (sleep 400))
+     ;; --- content page with an autofocused input → actor must report editable ---
+     (chrome-eval open-input-page-js)
+     (await-true on-data-js 8000)
+     (await-true editable-js 5000)
+     (expect (chrome-eval editable-js)
+       "GjoaInput actor did not report editable focus for an autofocused content input (actor not loaded / not reporting)")
+     (chrome-eval closePicker-js)
+     (js/await (.performActions mn (key-action "t")))
+     (js/await (sleep 1000))
+     (expect (not (chrome-eval pickerOpen-js))
+       "vim 't' opened a picker while a content input was focused — actor focus detection failed")
+     ;; --- plain content page, browser focused (no input) → actor reports NOT editable, vim works ---
+     (chrome-eval open-plain-page-js)
+     (await-true on-data-js 8000)
+     (js/await (sleep 600))
+     (expect (not (chrome-eval editable-js))
+       "actor wrongly reports editable on a page with no focused input")
+     (js/await (.performActions mn (key-action "t")))
+     (await-true pickerOpen-js 4000)
+     (expect (chrome-eval pickerOpen-js)
+       "vim 't' did not open the picker on a plain content page (vim wrongly inert)"))]))
+
+(js/export-default tests)

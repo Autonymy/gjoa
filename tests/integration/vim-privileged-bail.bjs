@@ -1,0 +1,85 @@
+#lang beagle/js
+;; Regression: vim must WORK on gjoa's own privileged chrome-UI pages (about:gjoa),
+;; and YIELD when a form field there is focused — WITHOUT bailing by URL.
+;;
+;; History: vim used to blanket-bail on about: pages (PaleFox-era crutch for lacking
+;; privileged focus state). Tom (2026-06-22): "we own the browser now — every about
+;; page should work with vim, and the state manager should know if I'm editing a
+;; form." Fix: contentInputFocused reads editable focus on privileged parent-process
+;; pages directly off the <browser>'s contentDocument (the content frame script can't
+;; run there). This test proves BOTH halves on about:gjoa in one run:
+;;   A. no form focused → 't' opens the tabs picker (vim is live, NOT bailed).
+;;   B. a text input focused → 't' opens NOTHING (state manager yields to typing).
+(ns gjoa.tests.integration.vim-privileged-bail
+  (:require [gjoa.tests.dsl :refer [deftest chrome-eval await-true expect wait-for sleep]]))
+(define-mode strict)
+
+(def open-gjoa-js :- String
+  "
+  const tab = gBrowser.addTab('about:gjoa', {
+    triggeringPrincipal: Services.scriptSecurityManager.getSystemPrincipal(),
+  });
+  gBrowser.selectedTab = tab;
+  Services.prefs.setBoolPref('gjoa.keys.useLeader', false);
+  return 1;
+")
+
+(def on-gjoa-js :- String
+  "return gBrowser.selectedBrowser.currentURI.spec.startsWith('about:gjoa')
+       && !!gBrowser.selectedBrowser.contentDocument
+       && !!gBrowser.selectedBrowser.contentDocument.body;")
+
+;; A: clear any editable focus, put focus on the content browser (no input).
+(def focus-neutral-js :- String
+  "
+  const doc = gBrowser.selectedBrowser.contentDocument;
+  try { const old = doc.getElementById('gjoa-test-input'); if (old) old.remove(); } catch(e){}
+  try { if (doc.activeElement && doc.activeElement.blur) doc.activeElement.blur(); } catch(e){}
+  gBrowser.selectedBrowser.focus();
+  return 1;
+")
+
+;; B: inject a real text input into the privileged page and focus it (deterministic —
+;; does not depend on which form controls the settings page happens to render).
+(def focus-input-js :- String
+  "
+  const doc = gBrowser.selectedBrowser.contentDocument;
+  let inp = doc.getElementById('gjoa-test-input');
+  if (!inp) { inp = doc.createElement('input'); inp.type='text'; inp.id='gjoa-test-input'; doc.body.appendChild(inp); }
+  inp.focus();
+  return doc.activeElement === inp;
+")
+
+(def pickerOpen-js :- String
+  "return !!document.querySelector('[class*=picker], [id*=picker], .gjoa-search-input');")
+
+(def closePicker-js :- String
+  "try { document.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true,cancelable:true})); } catch(e){} return 1;")
+
+(defn key-action [ch :- String] :- Any
+  [{:type "key" :id "kbd"
+    :actions [{:type "keyDown" :value ch} {:type "keyUp" :value ch}]}])
+
+(js/export (def tests :- Any
+  [(deftest "vim is live on about:gjoa but yields to its form fields" [mn]
+     (await-true "return !!document.querySelector(\"#gjoa-tab-panel\");" 10000)
+     (js/await (sleep 400))
+     (chrome-eval open-gjoa-js)
+     (await-true on-gjoa-js 8000)
+     (js/await (sleep 400))
+     (chrome-eval closePicker-js)
+     ;; --- B FIRST (opens nothing → no fragile mid-test close): a form field is
+     ;; focused, so the state manager must make vim YIELD ---
+     (expect (chrome-eval focus-input-js) "could not focus an injected input in the about:gjoa document")
+     (js/await (.performActions mn (key-action "t")))
+     (js/await (sleep 1000))
+     (expect (not (chrome-eval pickerOpen-js))
+       "vim 't' opened a picker while a form field was focused on about:gjoa — state manager failed to detect editing (typing would be eaten)")
+     ;; --- A LAST: clear the form focus → vim WORKS on about:gjoa (no URL bail) ---
+     (chrome-eval focus-neutral-js)
+     (js/await (.performActions mn (key-action "t")))
+     (await-true pickerOpen-js 4000)
+     (expect (chrome-eval pickerOpen-js)
+       "vim 't' did NOT open the picker on about:gjoa — vim is wrongly inert on an about page (must not bail)"))]))
+
+(js/export-default tests)

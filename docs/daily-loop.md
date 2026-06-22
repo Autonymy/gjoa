@@ -89,8 +89,11 @@ silently drop modules a fresh CI checkout bakes correctly.
    (CI checks out fresh and runs `import` from scratch — none of the stale-engine
    skip-traps a local build hits; the binary is built from the *pushed commit*.)
 2. tag + push the tag:     `git tag vX.Y.Z <commit> && git push origin vX.Y.Z`
-3. CI `release.yml` fans out to `build-{linux,macos,windows}.yml` (Blacksmith,
-   ~25-30 min each) → assembles a **DRAFT** GitHub release with all three assets.
+3. CI `release.yml` fans out to `build-{linux,macos,windows}.yml` on **free
+   GitHub-hosted runners** by default (`ubuntu-24.04` / `macos-26`, Windows
+   cross-compiled on Linux; `-j2`, ~1-2 h each) → assembles a **DRAFT** GitHub
+   release with all three assets. (Blacksmith is a faster **paid** runner —
+   opt-in per job via `fast: true`; it costs credits, so it is NOT the default.)
 4. review the draft + notes (`bun run release:notes`) → **Publish**. CI never
    auto-publishes — a human clicks Publish.
 

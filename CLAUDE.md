@@ -69,8 +69,9 @@ preflight missed it / new gate to add / could it have been Lane 1.
 - **Lane 3** — C++/Rust / version bump / configure flags, full mach or nix, **30–60 min (build whenever needed)**
 - **Release is NOT a lane.** A local mach/nix build is dev **verification** only —
   never the release artifact. Cutting a release = push a `vX.Y.Z` tag → CI
-  `release.yml` builds all 3 platforms (Blacksmith) → **draft** GitHub release →
-  human publishes. If you catch yourself running a 2-3 h local `nix build` to "make
+  `release.yml` builds all 3 platforms on **free GitHub-hosted runners** (default;
+  Blacksmith is a faster *paid* opt-in via `fast: true` — costs credits, not the
+  default) → **draft** GitHub release → human publishes. If you catch yourself running a 2-3 h local `nix build` to "make
   the release", STOP — that's the 2026-06-23 mistake. → `docs/daily-loop.md` **"I
   want to cut a release"** (the verify-vs-release decision tree).
 

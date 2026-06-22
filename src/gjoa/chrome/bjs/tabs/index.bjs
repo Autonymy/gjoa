@@ -169,6 +169,18 @@
     (.setTimeout window apply-orientation 0)
     (.addEventListener mq "change" apply-orientation)))
 
+;; Card gap (#125): ONE user-adjustable gjoa gap value (about:gjoa → gjoa.layout.cardGap)
+;; drives the --gjoa-card-gap CSS var used for EVERY inset/gap in the floating-card
+;; layout — window↔sidebar, sidebar↔content, content↔edge, and top/bottom are all
+;; exactly this value. Live-updates on change (no restart).
+(let [apply-gap (fn []
+                  (.setProperty (.-style (.-documentElement document))
+                                "--gjoa-card-gap"
+                                (str (pref-int "gjoa.layout.cardGap" 8) "px")))
+      gap-observer {:observe (fn [_s _t _d] (apply-gap))}]
+  (apply-gap)
+  (.addObserver (.-prefs Services) "gjoa.layout.cardGap" gap-observer))
+
 ;; Write-on-every-change saver
 (def schedule-save :- Any
   (make-saver!

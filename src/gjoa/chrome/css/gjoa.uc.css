@@ -1101,12 +1101,16 @@ Preserve these (security warnings):
     overflow: clip !important;
   }
 
-  /* The launcher splitter is a flex child BETWEEN the two cards, so it eats a full
-   * card-gap on each side: sidebar→content gap = gap + splitter + gap (~20px) while
-   * the window inset is a single gap (~8px) — the asymmetry. In the card layout the
-   * cards have a fixed gap (drag-resize isn't this layout's model), so drop it from
-   * flow and let the content card grow left: sidebar→content == window inset == one gap. */
-  #browser:has(> #sidebar-main:not([data-gjoa-compact]):not([hidden])) > #sidebar-launcher-splitter {
+  /* Splitters are flex children BETWEEN cards, so each one eats a full card-gap on
+   * BOTH sides (gap + splitter + gap ≈ 20px) instead of one (≈8px) — the asymmetry.
+   * The launcher-splitter does it on the LEFT (sidebar↔content); the ai-window-splitter
+   * does it on the RIGHT (content↔ai/edge). In the card layout the cards sit at a fixed
+   * gap (drag-resize isn't this layout's model), so drop BOTH from flow and let the
+   * content card fill: every gap — window↔sidebar, sidebar↔content, content↔edge, and
+   * top/bottom — is then exactly one --gjoa-card-gap. */
+  #browser:has(> #sidebar-main:not([data-gjoa-compact]):not([hidden])) > #sidebar-launcher-splitter,
+  #browser:has(> #sidebar-main:not([data-gjoa-compact]):not([hidden])) > #ai-window-splitter[collapsed],
+  #browser:has(> #sidebar-main:not([data-gjoa-compact]):not([hidden])) > #ai-window-box[collapsed] {
     display: none !important;
   }
 

@@ -18,6 +18,12 @@
 ;; ~half of a common 1920px display; tune for your display/tiling.
 (pref "gjoa.layout.narrowThreshold" 1000)
 
+;; The ONE gjoa gap value (#125): the uniform inset/gap, in px, used EVERYWHERE in the
+;; floating-card layout — window↔sidebar, sidebar↔content, content↔window edge, and
+;; top/bottom are all exactly this. Read by tabs/index.bjs into the --gjoa-card-gap CSS
+;; var (live, no restart). 0 = cards flush to the edges and each other.
+(pref "gjoa.layout.cardGap" 8)
+
 ;; Horizontal tab layout STYLE (#98): false = classic column-major grid (tabs in
 ;; their own strip below the toolbar); true = single-row, where the toolbar icons
 ;; collapse into the omni-icon dropdown, the urlbar grows, and tabs flow

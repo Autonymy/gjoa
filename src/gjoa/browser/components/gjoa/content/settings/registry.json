@@ -221,6 +221,13 @@
             { "label": "700", "detail": "Keeps the vertical sidebar down to quite narrow windows before flipping horizontal." }
           ],
           "note": "Ignored when Dynamic orientation is OFF." },
+        { "pref": "gjoa.layout.cardGap", "type": "int", "title": "Card gap (px)", "default": 8, "min": 0, "max": 24, "slider": true,
+          "help": "The ONE gjoa gap value: the uniform inset used everywhere in the floating-card layout — window↔sidebar, sidebar↔content, content↔window edge, and top/bottom are all exactly this. Live, no restart.",
+          "examples": [
+            { "label": "8 (default)", "detail": "A balanced gap — cards float with a clear, even margin on every side." },
+            { "label": "0", "detail": "Cards sit flush to the window edges and to each other — maximum content area, no floating look." },
+            { "label": "16", "detail": "A roomier, more pronounced floating-card look with wider margins all around." }
+          ] },
         { "pref": "gjoa.layout.horizontalSingleRow", "type": "bool", "title": "Horizontal tabs — single-row style", "default": false,
           "help": "Chooses the STYLE of horizontal tabs. OFF = the classic layout (toolbar on top, tabs in their own strip below it). ON = a single combined row where the toolbar icons collapse into the omni-icon menu, the URL bar grows, and tabs flow on the same row: [menu][url][tab1 … tabN]. Only affects horizontal mode — vertical (sidebar) tabs are unchanged.",
           "examples": [

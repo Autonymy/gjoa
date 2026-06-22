@@ -24,7 +24,7 @@ gjoa makes those capabilities browser features. Fewer per-page injections, fewer
 
 ## Features
 
-Each is a capability in the build today. The table is a nav aid — the durable mechanism and where it lives; the prose subsections below carry the living source of truth for anything the code keeps changing. Source for every subsystem is one directory under [`src/gjoa/chrome/bjs/`](src/gjoa/chrome/bjs/) (chrome modules) or [`src/gjoa/toolkit/`](src/gjoa/toolkit/) and [`patches/`](patches/) (engine).
+Each is a capability in today's build — the table is the at-a-glance index. The three notes below go deeper on the few where the *how* is the differentiator; the rest are well covered by the table. Source for every subsystem is one directory under [`src/gjoa/chrome/bjs/`](src/gjoa/chrome/bjs/) (chrome) or [`src/gjoa/toolkit/`](src/gjoa/toolkit/) + [`patches/`](patches/) (engine).
 
 | Feature | Native mechanism | Source |
 |---|---|---|
@@ -36,19 +36,11 @@ Each is a capability in the build today. The table is a nav aid — the durable 
 | Session history | Append-only SQLite log + FTS5 full-text index | [`tabs/history.bjs`](src/gjoa/chrome/bjs/tabs/history.bjs), `patches/0007` |
 | Custom new-tab / home | Forced-dark navigator page via a redirector | [`newtab/`](src/gjoa/browser/components/gjoa/content/newtab/), `patches/0011` |
 
-- **Native ad / tracker blocking** — FF152 ships Brave's `adblock-rust` in-tree but only for tracker *annotation*; gjoa drives it as a full content blocker across three layers: **network** (requests killed before they leave the browser), **cosmetic** (element-hiding as a single `USER_SHEET`), and **scriptlets** (sandboxed, curated-only by default — list-driven `+js()` expansion stays off). No extension, no content-script blocker. The exact filter lists are a default pref, not baked into prose — see `list_names` in [`src/gjoa/defaults/pref/adblock-prefs.bjs`](src/gjoa/defaults/pref/adblock-prefs.bjs). Chrome half in [`blocking/`](src/gjoa/chrome/bjs/blocking/); engine half in [`src/gjoa/toolkit/components/content-classifier/`](src/gjoa/toolkit/components/content-classifier/) (overlay + `patches/0008`).
+- **Blocking is native, not an extension.** FF152 ships Brave's `adblock-rust` in-tree but only for tracker *annotation*; gjoa drives it as a full content blocker across three layers — **network** (requests killed before they leave the browser), **cosmetic** (element-hiding as a single `USER_SHEET`), and **scriptlets** (sandboxed, curated-only; list-driven `+js()` stays off). The filter lists are a default pref (`list_names` in [`adblock-prefs.bjs`](src/gjoa/defaults/pref/adblock-prefs.bjs)), not baked into prose. Chrome half in [`blocking/`](src/gjoa/chrome/bjs/blocking/); engine half in [`content-classifier/`](src/gjoa/toolkit/components/content-classifier/) + `patches/0008`.
 
-- **Engine-level dark mode** — respects each site rather than inverting blindly: pages with native dark CSS keep it, themeless pages are darkened by the engine pre-paint (no white flash), with a curated registry + per-site overrides for the rest. Driven by Gecko-native levers (a content `prefers-color-scheme` override pref and an engine luminance-inversion flag read by `nsPresContext`), plus a chrome-CSS invert fallback — no content-script darkening on the core path. — [`dark-mode/`](src/gjoa/chrome/bjs/dark-mode/) + the `dark-mode-*` engine patches in [`patches/`](patches/).
+- **Dark mode respects the site.** Pages with native dark CSS keep it; themeless pages are darkened by the engine *pre-paint* (no white flash), with a curated registry + per-site overrides for the rest. The levers are Gecko-native — a `prefers-color-scheme` override and an engine luminance-inversion flag read by `nsPresContext`, with a chrome-CSS fallback — so there's no content-script darkening on the core path. — [`dark-mode/`](src/gjoa/chrome/bjs/dark-mode/) + the `dark-mode-*` patches.
 
-- **Tree-style tabs + a vim keymap** — a vertical, keyboard-driven tab tree (nesting, folder groups, collapse, multi-select) driven by a modal vim layer: motion, indent/swap, leader chords, `/` filter, and a `:` ex-command set with picker + help overlay. Every binding is remappable in **`about:vim`** or with qutebrowser-style `:bind` / `:unbind` commands. A chrome bundle over `gBrowser`; tree structure is per-tab metadata. The keymap is a single command registry (`about:vim` and `:bind` are projections of it), data in [`tabs/vim.bjs`](src/gjoa/chrome/bjs/tabs/vim.bjs); the subsystem is [`tabs/`](src/gjoa/chrome/bjs/tabs/).
-
-- **Workspaces** — tabs partitioned into named spaces; switching shows only that space's tabs, and the selected tab stays inside it (survives session restore). On the niri compositor, focusing an OS workspace switches gjoa to the same-named space (one-way OS→gjoa). — [`spaces/`](src/gjoa/chrome/bjs/spaces/).
-
-- **Sidebar drawer + floating urlbar** — the tab sidebar is a drawer (expand/collapse, compact, drag-resize, hover-reveal); a floating urlbar on the focus-urlbar shortcut. — [`drawer/`](src/gjoa/chrome/bjs/drawer/).
-
-- **Searchable session history** — workspace changes auto-save to a searchable timeline (`:checkpoint`, `:history`, `:restore`), backed by an append-only SQLite log with WAL crash-safety and an FTS5 full-text index over tab URLs and titles (search degrades to substring when FTS5 is unavailable). — [`tabs/history.bjs`](src/gjoa/chrome/bjs/tabs/history.bjs) + `patches/0007` (FTS5).
-
-- **Custom new-tab / home** — new tabs, home, and home-based startup land on a minimal forced-dark navigator page (the screenshot above). — [`src/gjoa/browser/components/gjoa/content/newtab/`](src/gjoa/browser/components/gjoa/content/newtab/) + `patches/0011` (redirector).
+- **The keyboard surface.** The tab tree is modal-vim-driven (motion, indent/swap, leader chords, `/` filter, `:` ex-commands with picker + help) and fully remappable in **`about:vim`** or via qutebrowser-style `:bind`. Tabs partition into named **workspaces** that survive session restore (and follow the niri compositor's OS workspaces, one-way); workspace changes auto-save to a searchable **history** — `:checkpoint` / `:history` / `:restore`, an append-only SQLite log (WAL) + FTS5 index over URLs and titles. — [`tabs/`](src/gjoa/chrome/bjs/tabs/), [`spaces/`](src/gjoa/chrome/bjs/spaces/).
 
 ## Sovereignty and control
 
@@ -61,10 +53,6 @@ These share one philosophy: you can see what the browser does, you can turn it o
 - **Reversible by design** — every feature gjoa disables stays *present* and flippable — capabilities are parked behind a knob, never deleted. The reversible set, and the honest cost of re-enabling each (the network endpoint it re-contacts, not an invented perf number), is the reversible-features section of the settings registry.
 
 - **Security freshness gate** — gjoa refuses to keep running a dangerously stale build: it probes Mozilla's published `firefox_versions.json` on startup + hourly; a full major behind latest stable quits, a point-release behind warns. Fails open offline; an env override exists for one-off emergencies. — [`security/`](src/gjoa/chrome/bjs/security/).
-
-## Why Beagle?
-
-gjoa is written in [Beagle](https://github.com/Autonymy/beagle) (a typed Clojure subset) compiled to chrome JS and a native loader baked into `omni.ja`. Authoring in Beagle is a deliberate edge, not an aesthetic one: compile-time macros, **one** typed language across chrome / loader / tooling / tests / prefs, machine-checked effect discipline (a `BEAGLE_PURITY=error` check a TypeScript type system can't express), engine patches anchored by *declared structural dependencies* (a preflight gate fails the build when an upstream refactor moves a symbol a patch relies on, instead of letting it silently rot), and gjoa's own source queryable as a **call graph** — `who-calls` / `blast-radius` / `leverage`, CI-checked against the compiler. The honest case, including what *isn't* a win, is in [`docs/why-beagle.md`](docs/why-beagle.md).
 
 ## Performance
 
@@ -123,6 +111,10 @@ tools/               Firefox-source prep, release tooling, test harness, audits 
 configs/            branding assets + pinned source/compiler refs
 docs/               deep-dive documentation
 ```
+
+## Why Beagle?
+
+gjoa is written in [Beagle](https://github.com/Autonymy/beagle) (a typed Clojure subset) compiled to chrome JS and a native loader baked into `omni.ja`. Authoring in Beagle is a deliberate edge, not an aesthetic one: compile-time macros, **one** typed language across chrome / loader / tooling / tests / prefs, machine-checked effect discipline (a `BEAGLE_PURITY=error` check a TypeScript type system can't express), engine patches anchored by *declared structural dependencies* (a preflight gate fails the build when an upstream refactor moves a symbol a patch relies on, instead of letting it silently rot), and gjoa's own source queryable as a **call graph** — `who-calls` / `blast-radius` / `leverage`, CI-checked against the compiler. The honest case, including what *isn't* a win, is in [`docs/why-beagle.md`](docs/why-beagle.md).
 
 ## License
 

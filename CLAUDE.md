@@ -80,6 +80,9 @@ live in the gates + [`docs/stewardship/topology.md`](docs/stewardship/topology.m
 - On disk: `~/code/reference/zen-browser/` (peer fork) ·
   `~/code/reference/firefox/` (mozilla-central).
 - [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) — map, rebuild ladder, decision tree.
+- [`docs/build-pipeline.md`](docs/build-pipeline.md) — binary-vs-chrome cadence, what
+  `gjoa dev` loads, the "looks broken / stale chrome" recovery. **Verify chrome
+  visually with `bash tools/test-driver/chrome-gallery.sh` — never push manual QA back on the user.**
 - [`docs/daily-loop.md`](docs/daily-loop.md) — command cheatsheet + verify-vs-release tree.
 - [`docs/nix-dev-options.md`](docs/nix-dev-options.md) — when mach vs nix.
 - [`docs/stewardship/`](docs/stewardship/README.md) — the maintenance manifesto

@@ -123,12 +123,17 @@
     (cond
       (or (not en) (= m "off"))
         (do (set-chrome-scheme! false) (set-content-override! 2) (set-invert! false) (set-default-invert! false) (set-rfp-colorscheme-exempt! false) (remove-filter!))
-      ;; "system": conventional follow-OS (what Chrome/Firefox/Safari mean). content-
-      ;; override=2 routes content through LookAndFeel::SystemColorScheme both ways;
-      ;; each site decides via prefers-color-scheme; gjoa adds ZERO inversion. Applied
-      ;; UNCONDITIONALLY (no OS branch) — deliberately NOT dark-first.
+      ;; "system": RESOLVE to Dark or Light by the OS preference (system-dark?), then
+      ;; apply that appearance — System is not a separate "do nothing" mode, it just
+      ;; picks which of Dark/Light to be. "Force" is the orthogonal axis (Dark already
+      ;; force-darkens light sites). So on a dark OS, System behaves exactly like Dark
+      ;; (prefers-dark + engine default-invert + the actor's per-site force → YouTube
+      ;; is dark); on a light OS, like Light. The mql 'change' listener re-runs apply!
+      ;; when the OS theme flips, so this tracks the OS live.
       (= m "system")
-        (do (set-chrome-scheme! false) (set-content-override! 2) (set-invert! false) (set-default-invert! false) (set-rfp-colorscheme-exempt! false) (remove-filter!))
+        (if (system-dark?)
+          (do (set-chrome-scheme! true)  (set-content-override! 0) (set-invert! false) (set-default-invert! true)  (set-rfp-colorscheme-exempt! true)  (remove-filter!))
+          (do (set-chrome-scheme! false) (set-content-override! 1) (set-invert! false) (set-default-invert! false) (set-rfp-colorscheme-exempt! false) (remove-filter!)))
       ;; "uniform" (was "engine"): force LIGHT, then the engine luminance-inverts every
       ;; absolute color into the Darkness band — one controlled dark over ALL sites,
       ;; even native-dark ones. Content is light by design, so clear the RFP exemption.

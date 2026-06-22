@@ -33,6 +33,10 @@ export class GjoaDarkmodeChild extends JSWindowActorChild {
     this._dimSheet = null;
     this._imgPassScheduled = false;
     this._imgRerunTimer = null;
+    // One delayed re-measure for heavy SPAs (YouTube) that are still painting a
+    // loading skeleton at the first refine — only UPGRADES to forced-dark, never
+    // retracts, so it can't oscillate an already-correct page.
+    this._reRefined = false;
     // Curated `ignoreImageAnalysis` from the explicit decision: `true` skips the
     // pass-2 image rasterizer for the whole document; an array of selectors skips
     // matching elements. Set from Darkmode:GetInject in #applyExplicit; read in
@@ -334,6 +338,22 @@ export class GjoaDarkmodeChild extends JSWindowActorChild {
     // Pass-3 (pref-gated): backdrop-aware APCA contrast normalization. Runs after
     // the inversion state is settled so we measure + correct the FINAL colors.
     this.#maybeNormalizeContrast(win, doc);
+    // SPA backstop: a heavy SPA (YouTube) may still be painting its loading skeleton
+    // at this first refine, so the measurement read the wrong state. Re-measure ONCE
+    // after a delay to catch the settled page — but skip if we already forced dark
+    // ("active"), so this only UPGRADES a still-light page and never retracts a
+    // correctly-accepted native-dark page (no oscillation).
+    if (!this._reRefined) {
+      this._reRefined = true;
+      win.setTimeout(() => {
+        try {
+          if (this.browsingContext.colorInversionOverride === "active") {
+            return;
+          }
+          this.#measureAndRefine();
+        } catch (e) {}
+      }, 2500);
+    }
   }
 
   // Dim large bright replaced media (<img>/<video>/<canvas>) on an inverted page. The

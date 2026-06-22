@@ -152,6 +152,12 @@
 ;; after window.Spaces exists.
 (make-niri-binding!)
 
+;; #148: hide chrome until the layout has been applied once, ONLY on a narrow
+;; (will-go-horizontal) launch. Wide/vertical spawns resolve correctly pre-paint
+;; and stay untouched — so we don't pay the reveal fade for them.
+(js/export (defn should-defer-reveal? [dynamic-on? :- Bool narrow? :- Bool] :- Bool
+  (and dynamic-on? narrow?)))
+
 ;; Dynamic orientation (#99): vertical tabs on a wide/full window, horizontal on
 ;; a narrow/half-width one — flips live as the window resizes (e.g. niri tiling).
 ;; matchMedia fires only when the width CROSSES the threshold, so a manual mode
@@ -166,6 +172,13 @@
                   is-vertical (pref-bool "sidebar.verticalTabs" true)]
               (when (= is-vertical want-horizontal)
                 (set-pref-bool! "sidebar.verticalTabs" (not want-horizontal))))))]
+    ;; #148: a narrow spawn flips DOM->horizontal inside init! (positionPanel, behind
+    ;; delayedStartupFinished + rAF), so first paint shows vertical-then-horizontal warp.
+    ;; Stamp gjoa-booting pre-paint to hide #browser until positionPanel has run once
+    ;; (cleared in init!). Failsafe timeout so a thrown init never leaves chrome hidden.
+    (when (.-matches mq)
+      (attr! (.-documentElement document) "gjoa-booting" "")
+      (setTimeout #(rmattr! (.-documentElement document) "gjoa-booting") 1200))
     ;; #126: decide SYNCHRONOUSLY at chrome-init (not setTimeout 0, which ran after first
     ;; paint and let the persisted vertical strip flash before flipping to horizontal on a
     ;; narrow spawn). Setting the pref now means the window resolves to the right mode up
@@ -495,6 +508,10 @@
 
                 ;; Position panel
                 (.positionPanel layout)
+
+                ;; #148: DOM is now in final arrangement — reveal chrome on the next
+                ;; frame (no-op if gjoa-booting was never stamped, e.g. wide spawn).
+                (requestAnimationFrame #(rmattr! (.-documentElement document) "gjoa-booting"))
 
                 ;; MutationObserver for sidebar attribute changes. Use the
                 ;; rAF-coalesced wrapper: compact mode bursts these attributes in

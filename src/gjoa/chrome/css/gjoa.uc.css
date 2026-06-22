@@ -38,6 +38,14 @@
  * defends against ancestor color-scheme inversion.
  */
 
+/* #148: hide chrome until layout has been applied once on a narrow launch — kills
+ * the boot vertical→horizontal flash. Hide #browser (not :root) so the window frame
+ * paints immediately; visibility:hidden reserves geometry so positionPanel's
+ * getBoundingClientRect still measures. Cleared in tabs/index after positionPanel. */
+:root[gjoa-booting] #browser { visibility: hidden !important; }
+:root:not([gjoa-booting]) #browser { animation: gjoa-chrome-reveal 140ms ease-out; }
+@keyframes gjoa-chrome-reveal { from { opacity: 0 } to { opacity: 1 } }
+
 :root {
   color-scheme: light dark;
 

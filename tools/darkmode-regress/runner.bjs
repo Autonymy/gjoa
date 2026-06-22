@@ -34,10 +34,10 @@
   (let [dir (.mkdtempSync fs (.join path (.tmpdir os) "gjoa-dmregress-"))
         mode (or (get (.-env process) "GJOA_DM_MODE") "dark")
         enabled (if (= mode "off") "false" "true")
-        ;; GJOA_DM_NORMALIZE_PREF=1 turns the in-engine GjoaDarkmode actor's contrast
-        ;; normalization ON, so the BINARY fixes contrast live and the harness just
-        ;; measures the result (use with GJOA_DM_NORMALIZE=0 to avoid double-applying).
-        normpref (if (= (get (.-env process) "GJOA_DM_NORMALIZE_PREF") "1") "true" "false")
+        ;; Default ON — matches the SHIPPED config (gjoa.darkmode.normalize.enabled
+        ;; now defaults true). The gate must measure what users actually run; set
+        ;; GJOA_DM_NORMALIZE_PREF=0 to measure the raw engine (pre-backstop).
+        normpref (if (= (get (.-env process) "GJOA_DM_NORMALIZE_PREF") "0") "false" "true")
         ;; GJOA_DM_NOVA=1 turns FF152's nova content-card inset ON, to reproduce the
         ;; "content not full width + wallpaper margin" report and prove the cause.
         nova (or (get (.-env process) "GJOA_DM_NOVA") "false")]

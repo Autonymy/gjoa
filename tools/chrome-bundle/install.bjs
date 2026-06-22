@@ -19,9 +19,10 @@
 ;; owned install root), only root could create this symlink — end users
 ;; can't accidentally activate dev mode.
 (ns gjoa.tools.chrome-bundle.install
-  (:require [fs :refer [existsSync]]
+  (:require [fs :refer [existsSync statSync]]
             [fs/promises :refer [rm symlink cp]]
-            [path :refer [join]]))
+            [path :refer [join]]
+            [child_process :refer [spawnSync]]))
 (define-mode strict)
 (declare-extern [process] Any)
 
@@ -49,6 +50,41 @@
 (def SRC-TOOLKIT :- String (join REPO-ROOT "src" "gjoa" "toolkit"))
 (def ENG-TOOLKIT :- String (join REPO-ROOT "engine" "toolkit"))
 
+;; GjoaLoader.bjs is the OTHER half of the same recurring class: it compiles to
+;; engine/.../GjoaLoader.sys.mjs (symlinked live into the dev binary), but ONLY
+;; `gjoa import`'s overlay step recompiled it — so a `gjoa sync` left the running
+;; binary on a STALE loader (e.g. a newly-registered window actor never loads).
+;; Recompile it here too, staleness-gated, so one `gjoa sync` is genuinely
+;; complete: chrome bundles + toolkit overlays + the loader.
+(def SRC-LOADER :- String
+  (join REPO-ROOT "src" "gjoa" "browser" "components" "gjoa" "GjoaLoader.bjs"))
+(def ENG-LOADER :- String
+  (join REPO-ROOT "engine" "browser" "components" "gjoa" "GjoaLoader.sys.mjs"))
+(def ENG-LOADER-STRAY :- String
+  (join REPO-ROOT "engine" "browser" "components" "gjoa" "GjoaLoader.bjs"))
+(def BEAGLE-BUILD :- String
+  (join (or (.-BEAGLE_PIN_ROOT (.-env process))
+            (join (.-HOME (.-env process)) "code" "beagle-pin"))
+        "bin" "beagle-build"))
+
+;; Recompile GjoaLoader.bjs → its .sys.mjs iff the source is newer (or output is
+;; missing). Mirrors tools/prep/overlay.bjs' beagle-build invocation, incl. the
+;; runtime-prefix remap Firefox's chrome ES loader needs.
+(defn refresh-loader! [] :- Any
+  (when (and (existsSync SRC-LOADER)
+             (or (not (existsSync ENG-LOADER))
+                 (> (.-mtimeMs (statSync SRC-LOADER)) (.-mtimeMs (statSync ENG-LOADER)))))
+    (let [r (spawnSync "bash" [BEAGLE-BUILD SRC-LOADER ENG-LOADER]
+                       {:cwd REPO-ROOT
+                        :env (.assign Object {} (.-env process)
+                               {"BEAGLE_JS_RUNTIME_PREFIX" "resource:///modules/gjoa/beagle/"})
+                        :stdio "inherit"})]
+      (when (not= (.-status r) 0)
+        (console/error "✗ GjoaLoader.bjs recompile failed")
+        (.exit process 1))
+      (js/await (rm ENG-LOADER-STRAY {:force true}))
+      (console/log "✓ recompiled GjoaLoader.bjs → engine (loader symlinked live into the dev binary)"))))
+
 (defn main! [] :- Any
   (when (not (existsSync DIST-CHROME))
     (console/error "✗ dist/chrome/ not built — run `bun run chrome:dist` first")
@@ -71,6 +107,9 @@
   (when (existsSync SRC-TOOLKIT)
     (js/await (cp SRC-TOOLKIT ENG-TOOLKIT {:recursive true :force true}))
     (console/log (str "✓ synced loose toolkit overlays " SRC-TOOLKIT " → " ENG-TOOLKIT)))
+
+  ;; Recompile the loader if its source moved (closes the last sync gap).
+  (js/await (refresh-loader!))
 
   (console/log "\nLaunch:")
   (console/log (str "  " INSTALL-ROOT "/gjoa --no-remote --profile <profile_dir>"))

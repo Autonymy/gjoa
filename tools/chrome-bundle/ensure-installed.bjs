@@ -29,6 +29,13 @@
 (def CSS-ROOT :- String (join REPO-ROOT "src" "gjoa" "chrome" "css"))
 (def BUNDLE-TOOLS :- String (join REPO-ROOT "tools" "chrome-bundle"))
 (def STAMP :- String (join REPO-ROOT ".cache" "gjoa" "chrome-install.stamp"))
+;; The OTHER dev-chrome sources install.bjs now refreshes — editing them must
+;; bust the cache too, or the harness runs a stale loader/actor (the recurring
+;; "registered a new actor but it didn't load" / "actor edit didn't take" trap).
+;; GjoaLoader.bjs → live .sys.mjs; toolkit = loose actors + fixes JSON.
+(def SRC-LOADER :- String
+  (join REPO-ROOT "src" "gjoa" "browser" "components" "gjoa" "GjoaLoader.bjs"))
+(def SRC-TOOLKIT :- String (join REPO-ROOT "src" "gjoa" "toolkit"))
 
 ;; Resolved gjoa-dev symlink (mirrors install.bjs target derivation). If the
 ;; objdir or symlink is gone, fingerprinting its readlink yields "" → busts
@@ -90,6 +97,11 @@
     ;; the bundler tools themselves — output changes if they change
     (doseq [f (walk BUNDLE-TOOLS)]
       (when (.endsWith f ".bjs") (.push out f)))
+    ;; GjoaLoader.bjs (install recompiles it to the live .sys.mjs) + the loose
+    ;; toolkit overlays (actors + fixes JSON that install mirrors into engine).
+    (when (existsSync SRC-LOADER) (.push out SRC-LOADER))
+    (doseq [f (walk SRC-TOOLKIT)]
+      (when (or (.endsWith f ".sys.mjs") (.endsWith f ".json")) (.push out f)))
     out))
 
 ;; sha256 over sorted `path:mtimeMs:size` lines + the symlink target line.

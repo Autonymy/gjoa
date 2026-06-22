@@ -115,7 +115,11 @@ class Marionette:
         return r.get("value") if isinstance(r, dict) else r
 
     def screenshot_b64(self):
-        r = self.send("WebDriver:TakeScreenshot", {"full": True, "hash": False})
+        # Viewport (above-the-fold), NOT full-page: it's what the user sees first AND what
+        # the dark-mode actor measures (drawSnapshot of innerWidth x innerHeight). A full-
+        # page capture of an infinite-scroll site (cnn ~17000px tall) downsamples to grey
+        # mush and mis-scores a page whose visible area is correctly dark.
+        r = self.send("WebDriver:TakeScreenshot", {"full": False, "hash": False})
         return r if isinstance(r, str) else r.get("value")
 
     def quit(self):

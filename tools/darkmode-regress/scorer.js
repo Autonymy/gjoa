@@ -20,24 +20,55 @@ function colorfulness(buf, N) {           // Hasler & Susstrunk 2003 (0..~110)
 }
 
 // rgba = Uint8 buffer of W*H*4 (downsample to ~64x64 before calling for global stats)
+// Per-tile chroma STANDARD DEVIATION (not full colorfulness). This is the photo
+// detector: a PHOTO has many different colors -> high chroma variance; a FLAT colored UI
+// surface (amazon's orange promo banner, a brand header) is uniform -> low variance even
+// though it's far from grey. We must NOT exclude flat colored UI as "media" (it should be
+// darkened), only true varied media. So key on variance, deliberately dropping the
+// mean-chroma-offset term that a flat colored banner would trip.
+function tileChromaStd(buf, W, x0, x1, y0, y1) {
+  let mrg = 0, myb = 0, c = 0;
+  for (let y = y0; y < y1; y++) for (let x = x0; x < x1; x++) {
+    const o = (y * W + x) * 4, R = buf[o], G = buf[o + 1], B = buf[o + 2];
+    mrg += R - G; myb += 0.5 * (R + G) - B; c++;
+  }
+  if (!c) return 0;
+  const mr = mrg / c, my = myb / c;
+  let vrg = 0, vyb = 0;
+  for (let y = y0; y < y1; y++) for (let x = x0; x < x1; x++) {
+    const o = (y * W + x) * 4, R = buf[o], G = buf[o + 1], B = buf[o + 2];
+    vrg += (R - G - mr) ** 2; vyb += (0.5 * (R + G) - B - my) ** 2;
+  }
+  return Math.sqrt(vrg / c + vyb / c);
+}
+
 function scoreDarkMode(buf, W, H) {
   const N = W * H;
   const Ls = new Float64Array(N);
   for (let i = 0; i < N; i++) { const o = i * 4; Ls[i] = Lstar(wcagY(buf[o], buf[o + 1], buf[o + 2])); }
-  // COVERAGE: MEDIAN L* (a hero photo / thumbnail wall is a minority of area -> can't flip the median)
-  const sorted = Float64Array.from(Ls).sort();
-  const median = sorted[Math.floor(N / 2)];
-  const DARK_LO = 20, DARK_HI = 50;
-  const coverage_raw = Math.max(0, Math.min(1, (DARK_HI - median) / (DARK_HI - DARK_LO)));
-  // LEAK localization: tile into TXxTY, per-tile median L*, flag bright, 4-connect components.
-  const TX = 16, TY = 16, tw = W / TX, th = H / TY, BRIGHT = 65;
-  const tileL = new Float64Array(TX * TY), bright = new Uint8Array(TX * TY);
+  const globalMedian = Float64Array.from(Ls).sort()[Math.floor(N / 2)];
+  // MEDIA-AWARE coverage. Tile into TXxTY; per tile take median L* + colorfulness. A
+  // COLORFUL tile is legitimate media (photo/thumbnail/product shot) — the rubric KEEPS
+  // it bright (fidelity), so it's excluded from the "are the surfaces dark?" measure and
+  // never counts as a leak. Coverage is the darkness of the non-media SURFACE tiles; a
+  // bright FLAT tile (un-darkened white/grey UI) is the real leak. This stops the scorer
+  // false-failing a correctly-dark, photo-heavy page (cnn, amazon) while still catching a
+  // genuinely light page (its flat-white tiles are not media).
+  const TX = 16, TY = 16, tw = W / TX, th = H / TY, BRIGHT = 65, MEDIA_STD = 22;
+  const tileL = new Float64Array(TX * TY), bright = new Uint8Array(TX * TY), media = new Uint8Array(TX * TY);
+  const surfaceLs = [];
   for (let ty = 0; ty < TY; ty++) for (let tx = 0; tx < TX; tx++) {
+    const x0 = (tx * tw) | 0, x1 = ((tx + 1) * tw) | 0, y0 = (ty * th) | 0, y1 = ((ty + 1) * th) | 0;
     const v = [];
-    for (let y = (ty * th) | 0; y < ((ty + 1) * th) | 0; y++)
-      for (let x = (tx * tw) | 0; x < ((tx + 1) * tw) | 0; x++) v.push(Ls[y * W + x]);
-    v.sort((a, b) => a - b); const m = v[v.length >> 1] || 0;
-    tileL[ty * TX + tx] = m; if (m >= BRIGHT) bright[ty * TX + tx] = 1;
+    for (let y = y0; y < y1; y++) for (let x = x0; x < x1; x++) v.push(Ls[y * W + x]);
+    v.sort((a, b) => a - b); const m = v[v.length >> 1] || 0; const ti = ty * TX + tx;
+    tileL[ti] = m;
+    if (tileChromaStd(buf, W, x0, x1, y0, y1) >= MEDIA_STD) {
+      media[ti] = 1; // high chroma variance → true varied media (photo), excluded
+    } else {
+      surfaceLs.push(m);
+      if (m >= BRIGHT) bright[ti] = 1; // bright FLAT UI → real leak
+    }
   }
   const seen = new Uint8Array(TX * TY), comps = [];
   for (let i = 0; i < TX * TY; i++) {
@@ -52,11 +83,19 @@ function scoreDarkMode(buf, W, H) {
   }
   comps.sort((a, b) => b.area_frac * b.peak - a.area_frac * a.peak);
   const leak_area = comps.reduce((s, c) => s + c.area_frac, 0);
+  const media_frac = media.reduce((s, v) => s + v, 0) / (TX * TY);
+  // Surface darkness: median L* of the non-media tiles (fall back to global if a page is
+  // almost entirely media, so an all-photo page can't read falsely dark).
+  const surfMedian = surfaceLs.length >= TX * TY * 0.15
+    ? surfaceLs.sort((a, b) => a - b)[surfaceLs.length >> 1]
+    : globalMedian;
+  const DARK_LO = 20, DARK_HI = 50;
+  const coverage_raw = Math.max(0, Math.min(1, (DARK_HI - surfMedian) / (DARK_HI - DARK_LO)));
   const coverage = Math.max(0, coverage_raw - leak_area);
   const verdict = coverage >= 0.7 ? "DARK" : coverage < 0.4 ? "LIGHT/FAIL" : "PARTIAL";
   return {
-    coverage: +coverage.toFixed(3), median_Lstar: +median.toFixed(1),
-    leak_area_frac: +leak_area.toFixed(3), leaks: comps.slice(0, 3),
+    coverage: +coverage.toFixed(3), median_Lstar: +surfMedian.toFixed(1),
+    leak_area_frac: +leak_area.toFixed(3), media_frac: +media_frac.toFixed(2), leaks: comps.slice(0, 3),
     colorfulness: +colorfulness(buf, N).toFixed(1), verdict,
   };
 }

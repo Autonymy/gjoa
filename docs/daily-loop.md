@@ -74,6 +74,32 @@ nix build .#gjoa --impure --cores 8 -j 1   # ~30-60 min cold
 gjoa test:integration:nix                  # confirm sidebar + chrome bundles load
 ```
 
+A local `nix build` is a **dev verification** — it is NOT the release artifact.
+Cutting a release is a different path entirely (below).
+
+## I want to cut a release — push a tag, let CI build (NEVER a local build)
+
+DECISION: am I **verifying a change** (Lane ladder above, stays on my machine) or
+**cutting a release**? A release is **GitHub-CI-built** — the canonical,
+reproducible, multi-platform artifact. Do **not** run a 2-3 h local `nix build` to
+"make the release": it's Linux-only, not canonical, and a stale local engine can
+silently drop modules a fresh CI checkout bakes correctly.
+
+1. land + push the work:   `git push origin main`
+   (CI checks out fresh and runs `import` from scratch — none of the stale-engine
+   skip-traps a local build hits; the binary is built from the *pushed commit*.)
+2. tag + push the tag:     `git tag vX.Y.Z <commit> && git push origin vX.Y.Z`
+3. CI `release.yml` fans out to `build-{linux,macos,windows}.yml` (Blacksmith,
+   ~25-30 min each) → assembles a **DRAFT** GitHub release with all three assets.
+4. review the draft + notes (`bun run release:notes`) → **Publish**. CI never
+   auto-publishes — a human clicks Publish.
+
+Watch it: `gh run watch` · `gh run list --workflow=release.yml`.
+
+> **Postmortem 2026-06-23:** drove a 2-3 h local `nix build` to "produce v0.4.1"
+> when the release build is CI's job. Local build = **verify**; tag push =
+> **release**. (This decision tree exists so that conflation can't recur.)
+
 ## I want to bump the Firefox version
 
 That's a Lane 3 change to `gjoa.json`. Implies a Sunday rebuild.

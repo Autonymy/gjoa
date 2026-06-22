@@ -25,7 +25,7 @@
 (def FLAKE :- String (join REPO-ROOT "flake.nix"))
 (def PATCHES-DIR :- String (join REPO-ROOT "patches"))
 (def GJOA-JSON :- String (join REPO-ROOT "gjoa.json"))
-(def LEDGER :- String (join REPO-ROOT "BUILD-LEDGER.md"))
+(def LEDGER :- String (join REPO-ROOT "private-docs" "build-logs" "ledger.md"))
 (def NIX-RESULT :- String (join REPO-ROOT "result" "bin" "gjoa"))
 
 (def tty :- Any (.-isTTY (.-stdout process)))
@@ -226,7 +226,7 @@
 ;; For `__noChroot = true` to actually take effect, the daemon's
 ;; `sandbox` setting must be `relaxed` (or `false`). `sandbox = true`
 ;; rejects it at eval time even for trusted users. This gate caught
-;; me on 2026-05-26 — see BUILD-LEDGER postmortem.
+;; me on 2026-05-26 — see build-logs postmortem.
 (defn gateF [] :- Any
   ;; Strip nix comment lines before matching so we don't false-positive
   ;; on `__noChroot = true` written inside an explanation comment.

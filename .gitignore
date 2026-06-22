@@ -53,3 +53,6 @@ tools/security/audit-ledger.bjs
 
 # dev launcher auto-sync stamp (gjoa dev)
 .gjoa-sync-stamp
+
+# Build ledger moved to private-docs/build-logs/ (can leak nix paths / internal detail)
+BUILD-LEDGER.md

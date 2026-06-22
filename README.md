@@ -74,7 +74,7 @@ The honest framing: the release build is `-O3` + full LTO + `-march=native`, but
 
 ## Status and source of truth
 
-This README is the stable shape — durable claims about what the software does, with pointers to the living source of truth for anything the code keeps changing. Volatile detail (exact feature state, build outcomes, versions) lives in [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md), [`BUILD-LEDGER.md`](BUILD-LEDGER.md), [`gjoa.json`](gjoa.json), and the [releases](../../releases).
+This README is the stable shape — durable claims about what the software does, with pointers to the living source of truth for anything the code keeps changing. Volatile detail (exact feature state, build outcomes, versions) lives in [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md), [`gjoa.json`](gjoa.json), and the [releases](../../releases).
 
 ## Getting gjoa
 
@@ -122,7 +122,6 @@ tools/               Firefox-source prep, release tooling, test harness, audits 
 .github/workflows/   cross-platform CI (Linux + macOS + Windows builds)
 configs/            branding assets + pinned source/compiler refs
 docs/               deep-dive documentation
-BUILD-LEDGER.md      every build's outcome + postmortems
 ```
 
 ## License

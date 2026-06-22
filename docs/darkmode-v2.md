@@ -310,7 +310,7 @@ found `mFrameBackgroundColor` already carries the opaque ancestor-composited bac
 | **M2** | Tier-2 fixes DB expanded 2→~50–150 from Dark Reader's config + new override primitives (`noInvert`/`removeBg`/`ignoreImageAnalysis`); image `color_buckets_ratio` photo-vs-icon discriminator promoted to core | P3 / domain partition | 1 | no | per-fixed-site visual QA; photos untouched, icons counter-retone |
 | **M3** | Surfaces-first **freeze** onto the dark ramp (floor ~#121212), then `correct()` at `nsTextFrame` paint against the **frozen composited backdrop**, cached frame-level (**not** ComputedValues — refuted) | Convergence theorem | 3 | yes | full corpus A/B beats M0's JS numbers; print/WR parity; no re-inversion |
 | **M4** | Two-sided **band** clamp (add the halation ceiling the current build lacks) + tiers as domain partition (replace the 0.22 proxy with declaration+band measurement) | P1∩P2 band | 3 | yes | zero marks above the ceiling; declared-legible-dark sites render native (zero correctives) |
-| **M5** | Retire `filter:invert`; fold modes; close patch 0010's scrim as the P2 photo surface | idempotence | 1 | no | all modes resolve to a tiered path; harness green; BUILD-LEDGER updated |
+| **M5** | Retire `filter:invert`; fold modes; close patch 0010's scrim as the P2 photo surface | idempotence | 1 | no | all modes resolve to a tiered path; harness green; build-logs updated |
 
 ### The adversarial corrections (what reshaped the plan)
 

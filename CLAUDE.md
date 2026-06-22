@@ -33,7 +33,7 @@ builds (which is the actual goal):
    stale source — cost a whole build on 2026-06-14.
 2. **Run `bun run preflight`** (gates A–I) — catches patch/jar/eval/
    alignment breakage before a 2–3 h compile.
-3. **Append every build's outcome to `BUILD-LEDGER.md`** — the postmortems
+3. **Append every build's outcome to a NEW atomic file in `private-docs/build-logs/`** — the postmortems
    are how we stop repeating failures (stale engine, `march` no-op,
    history-sqlite shutdown). Still required.
 4. **Prefer Lane 1/2 when the change allows it** — still the cheapest path.
@@ -57,7 +57,7 @@ builds (which is the actual goal):
 
 ### Postmortem on any unexpected rebuild
 
-Append to `BUILD-LEDGER.md` BEFORE moving on. Template: trigger / why
+Append to `private-docs/build-logs/` BEFORE moving on. Template: trigger / why
 preflight missed it / new gate to add / could it have been Lane 1.
 
 ---
@@ -148,6 +148,6 @@ profiler grades actual-vs-budget from history and gates on regressions.
 - [`docs/daily-loop.md`](docs/daily-loop.md) — command cheatsheet
 - [`docs/nix-dev-options.md`](docs/nix-dev-options.md) — when mach vs nix
 - [`docs/stewardship/testing.md`](docs/stewardship/testing.md) — test suite hygiene policy + profiler
-- [`BUILD-LEDGER.md`](BUILD-LEDGER.md) — every build's outcome + postmortems
+- `private-docs/build-logs/` (private) — every build's outcome + postmortems
 - `bun run status` / `gjoa status` — operational dashboard
 - `bun run preflight` / `gjoa preflight` — mandatory before any rebuild

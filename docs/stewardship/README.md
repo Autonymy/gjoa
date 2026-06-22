@@ -51,7 +51,7 @@ this table is the map.
 |---|---|---|---|
 | **Security** | a Firefox vuln silently re-opens on a version bump; a mitigation we shipped silently rots | Gates **R** (code mitigations) + **S** (patch mitigations), `configs/security-mitigations.json`, generated `configs/security-patches.json`, `tools/security/{check,bump,patch-disclosure,audit-ledger}.bjs`, `bin/gjoa` staleness refusal | [`security.md`](security.md) |
 | **Testing / maintainability** | a slow, flaky, un-budgeted suite taxes every future change to death | `configs/test-budgets.json` (tiered budgets), `tools/test-driver/test-profile.mjs` (actual-vs-budget hygiene gate + diminishing-returns trend), `.test-metrics/audit-ledger.jsonl`, `tags.json` locality | [`testing.md`](testing.md) |
-| **Performance** | a perf flag silently no-ops (cc-wrapper strips `-march=native`), a build ships stale, PGO deadlocks | `BUILD-LEDGER.md` (append-only, postmortem-per-anomaly), perfFlags audit, Blacksmith CI runner topology | [`performance.md`](performance.md) |
+| **Performance** | a perf flag silently no-ops (cc-wrapper strips `-march=native`), a build ships stale, PGO deadlocks | `private-docs/build-logs/` (append-only, postmortem-per-anomaly), perfFlags audit, Blacksmith CI runner topology | [`performance.md`](performance.md) |
 | **Churn-minimization** | upstream refactors a signature and our patch/overlay breaks at compile time, three hours in | Gates **A/K/L/M/P/Q** + the Lane 1/2/3 doctrine + the codegraph projector + `src/gjoa/` overlay over native patches | [`churn.md`](churn.md) |
 
 ### Security — a shipped fix can't be deleted by accident
@@ -87,7 +87,7 @@ is creeping back. An un-budgeted test fails the gate — no test enters un-stewa
 
 ### Performance — the ledger is the memory; postmortems are the gates' seed corn
 
-`BUILD-LEDGER.md` is append-only, one row per real `nix`/`mach` build, and every
+`private-docs/build-logs/` is append-only, one row per real `nix`/`mach` build, and every
 *unexpected* outcome gets a postmortem (trigger / why preflight missed it / new
 gate to add / could it have been Lane 1). This is where the perf machinery is held
 honest: it caught the cc-wrapper silently stripping `-march=native`
@@ -141,7 +141,7 @@ round-trips back to source.
 ## How to add to the tapestry (the rule)
 
 1. A new failure mode → a new **gate** in `tools/scripts/preflight.bjs` (lettered,
-   mechanical), plus a `BUILD-LEDGER.md` postmortem if a build exposed it. Never a
+   mechanical), plus a `private-docs/build-logs/` postmortem if a build exposed it. Never a
    line in a checklist.
 2. A new fact about the code → a **generator** (like `patch-disclosure.bjs`) or a
    **claim projection** (codegraph), so it's regenerable and a drift is a diff.

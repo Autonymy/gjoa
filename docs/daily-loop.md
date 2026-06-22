@@ -59,11 +59,12 @@ gjoa test:integration:nix           # same suite against result/bin/gjoa
                                     # (use this to confirm a fresh nix build is healthy)
 ```
 
-## I want to rebuild from scratch (Lane 3 — Sunday only)
+## I want to rebuild from scratch (Lane 3)
 
-Before you do anything, **read CLAUDE.md Rule #0** and check
-`BUILD-LEDGER.md` for this week's budget. The cadence is one nix
-build per week, Sunday. Strictly enforced through 2026-06-26.
+Before you do anything, **read CLAUDE.md Rule #0** and run `bun run preflight`
+(gates A–W). The Sunday-only cadence rule is gone (rescinded 2026-06-15) — build
+whenever it's needed, but run `import` + `preflight` first so a stale engine or a
+`.rej` doesn't waste the compile, and log the outcome to `private-docs/build-logs/`.
 
 If approved:
 

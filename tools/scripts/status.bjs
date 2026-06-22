@@ -27,7 +27,7 @@
 (def MACH-DEV-OVERLAY :- String (join ENGINE-DIR "obj-x86_64-pc-linux-gnu" "dist" "bin" "gjoa-dev"))
 (def NIX-RESULT :- String (join REPO-ROOT "result" "bin" "gjoa"))
 (def DIST-CHROME :- String (join REPO-ROOT "dist" "chrome"))
-(def LEDGER :- String (join REPO-ROOT "BUILD-LEDGER.md"))
+(def LEDGER :- String (join REPO-ROOT "private-docs" "build-logs" "ledger.md"))
 (def GJOA-JSON :- String (join REPO-ROOT "gjoa.json"))
 
 ;; -- ANSI helpers ------------------------------------------------------------
@@ -364,7 +364,7 @@
             (console/log (dim (str "oracles offline: " (.join (:errors oracles) ", ")))))
 
           (console/log "")
-          (console/log (dim "docs/ARCHITECTURE.md  ·  CLAUDE.md Rule #0  ·  BUILD-LEDGER.md")))))))
+          (console/log (dim "docs/ARCHITECTURE.md  ·  CLAUDE.md Rule #0  ·  private-docs/build-logs/")))))))
 
 ;; Entry point: run via `bun run`. Gated on import.meta.main so the CLI runs
 ;; only when invoked directly, never on import.

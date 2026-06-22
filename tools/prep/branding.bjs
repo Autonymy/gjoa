@@ -166,7 +166,7 @@
     ;;     omni.ja under defaults/pref/ and is read onto the default branch at startup.
     ;;     (The same source files also overlay to engine/defaults/pref/ via the generic
     ;;     overlay, but THAT path has no moz.build and is never packaged — this append
-    ;;     is what actually makes the prefs take effect. See BUILD-LEDGER: unreferenced
+    ;;     is what actually makes the prefs take effect. See build-logs: unreferenced
     ;;     files in the objdir are silently dropped by mozpack.)
     ;;     Appended AFTER substitutions so pref values pass through verbatim.
     (let [branding-pref-file (join target "pref" "firefox-branding.js")]

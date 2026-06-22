@@ -150,7 +150,7 @@ of in the writable `gjoa-dev/` overlay.
 **One nix or full mach build per week. Sunday.**
 
 Any unexpected rebuild outside this window is a failure event. If you
-hit one, it goes in `BUILD-LEDGER.md` with a postmortem describing
+hit one, it goes in `private-docs/build-logs/` with a postmortem describing
 which preflight check should have caught it.
 
 You don't need to remember the preflight. Claude runs it when proposing
@@ -240,7 +240,7 @@ can see when they diverge.
 ## Pointers
 
 - [`CLAUDE.md`](../CLAUDE.md) — operational rules, Rule #0 (Sunday rebuild budget)
-- [`BUILD-LEDGER.md`](../BUILD-LEDGER.md) — every build's date + outcome + postmortem
+- `private-docs/build-logs/` (private) — every build's date + outcome + postmortem
 - [`docs/build-and-dev-loop.md`](build-and-dev-loop.md) — long-form reference (file types, mach command details, troubleshooting)
 - [`docs/nix-dev-options.md`](nix-dev-options.md) — comparison of nix-dev paths, impurity tradeoffs
 - [`docs/dev-loader.md`](dev-loader.md) — chrome loader architecture

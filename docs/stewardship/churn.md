@@ -120,7 +120,7 @@ The thesis throughout: **minimize the surface we own, and make every remaining p
 
 ## Pre-build integrity gates — catch breakage before a wasted compile
 
-Beyond the churn-specific levers above, preflight runs a band of build-integrity gates so an upstream-tracking or wiring break dies in seconds, not 26 minutes into a compile — each motivated by a real `BUILD-LEDGER.md` postmortem:
+Beyond the churn-specific levers above, preflight runs a band of build-integrity gates so an upstream-tracking or wiring break dies in seconds, not 26 minutes into a compile — each motivated by a real `private-docs/build-logs/` postmortem:
 
 - **Gate C** — no production-mode `TODO`/`future commit` no-op landmines (the dev-overlay-hides-stub class).
 - **Gate D** — dependency floors satisfied (NSS overlay etc. vs nixpkgs).
@@ -141,4 +141,4 @@ Beyond the churn-specific levers above, preflight runs a band of build-integrity
 - `tools/prep/patch-order.bjs` (ordering/batching analyzer + minimal renumber)
 - `tools/prep/upstream-provenance.bjs` + `configs/upstream-provenance.json` (per-file upstream blob-OID lock)
 - `tools/scripts/preflight.bjs` Gate L (surface contracts), Gate M (beagle-currency), Gate S (security-critical patches persist), Gate U (patch numbering coherence)
-- `BUILD-LEDGER.md` — the postmortems that motivated each gate
+- `private-docs/build-logs/` — the postmortems that motivated each gate

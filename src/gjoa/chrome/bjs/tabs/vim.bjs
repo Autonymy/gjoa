@@ -8,7 +8,7 @@
 (define-mode strict)
 
 ;; Browser globals
-(declare-extern [document window gBrowser Services setTimeout clearTimeout Math Array] Any)
+(declare-extern [document window gBrowser Services setTimeout clearTimeout Math Array Reflect] Any)
 
 ;; Sibling module externs (no import)
 (defn insert-after-each [anchor :- Any rows-arr :- Any] :- Any
@@ -89,6 +89,17 @@
           (.get DEFAULT-KEYMAP key)   ; not overridden → default
           v))                          ; overridden id, or null = unbound
       (catch Any _e (.get DEFAULT-KEYMAP key)))))
+
+;; Mutate one entry of the gjoa.keys.bindings override pref — cmd = a command-id
+;; to bind, or nil to unbind that key. about:vim and `:bind`/`:unbind` share this.
+;; key :- Any: callers pass the trimmed ex-command arg (String|Nil at the type
+;; level, but the dispatch guard already proved it truthy); it's a JS-object key
+;; at runtime. cmd = command-id string, or nil to unbind.
+(defn set-key-binding! [key :- Any cmd :- Any] :- Any
+  (let [raw (pref-str "gjoa.keys.bindings" "")
+        ov (if (= raw "") (Object.) (try (JSON/parse raw) (catch Any _e (Object.))))]
+    (.set Reflect ov key cmd)
+    (set-pref-str! "gjoa.keys.bindings" (JSON/stringify ov))))
 (def EX-COMMANDS :- Any
   [{:name "group"      :description "Create a named folder at cursor"                    :takesArgs true}
    {:name "refile"     :description "Move cursor tab into a different group"             :takesArgs false}
@@ -102,6 +113,9 @@
    {:name "space"      :description "Workspaces: new / rename / delete / switch"            :takesArgs true}
    {:name "tabpos"     :description "Where new tabs open: sibling | root | child"       :takesArgs true}
    {:name "sidebar-strip" :description "Toggle Firefox's sidebar launcher strip (horizontal mode)" :takesArgs false}
+   {:name "bind"       :description "Rebind a key: :bind <key> <command>  (about:vim)"   :takesArgs true}
+   {:name "unbind"     :description "Unbind a key: :unbind <key>"                        :takesArgs true}
+   {:name "bindreset"  :description "Reset all keybindings to defaults"                  :takesArgs false}
    {:name "help"       :description "Show the keymap cheatsheet"                         :takesArgs false}])
 (js/export (defn make-vim! [deps :- Any] :- Any
   (let [{:keys [rows layout scheduleSave clearSelection selectRange sidebarMain history contentFocus spaces]} deps
@@ -1364,6 +1378,28 @@
                 (or (= name "sidebar-strip") (= name "strip"))
                 (toggle-h-sidebar-strip)
                 (= name "help") (toggle-which-key)
+
+                ;; Textual keybinding edits (the vim :map lineage) — write the same
+                ;; gjoa.keys.bindings pref about:vim does; dispatch resolves it live.
+                (or (= name "bind") (= name "map"))
+                (let [k (some-> (aget args 1) (.trim))
+                      cmd (some-> (aget args 2) (.trim))]
+                  (if (or (not (bool k)) (not (bool cmd)))
+                    (modeline-msg "usage: :bind <key> <command>  (commands: about:vim)" 5000)
+                    (if (not (.has COMMAND-IDS cmd))
+                      (modeline-msg (str "Unknown command: " cmd "  (see about:vim)") 4500)
+                      (do (set-key-binding! k cmd)
+                          (modeline-msg (str "Bound " k " → " cmd) 3000)))))
+
+                (or (= name "unbind") (= name "unmap"))
+                (let [k (some-> (aget args 1) (.trim))]
+                  (if (not (bool k)) (modeline-msg "usage: :unbind <key>" 4000)
+                    (do (set-key-binding! k nil)
+                        (modeline-msg (str "Unbound " k) 3000))))
+
+                (= name "bindreset")
+                (do (set-pref-str! "gjoa.keys.bindings" "")
+                    (modeline-msg "Keybindings reset to defaults" 3000))
 
                 (= name "tabpos")
                 (let [valid ["sibling" "root" "child"]

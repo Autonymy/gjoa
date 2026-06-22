@@ -118,6 +118,22 @@ This means Firefox churn and beagle churn are **decoupled**: a Firefox bump can'
 
 The thesis throughout: **minimize the surface we own, and make every remaining piece of it loudly self-report the instant upstream moves under it** — before a build, not during one.
 
+## Pre-build integrity gates — catch breakage before a wasted compile
+
+Beyond the churn-specific levers above, preflight runs a band of build-integrity gates so an upstream-tracking or wiring break dies in seconds, not 26 minutes into a compile — each motivated by a real `BUILD-LEDGER.md` postmortem:
+
+- **Gate C** — no production-mode `TODO`/`future commit` no-op landmines (the dev-overlay-hides-stub class).
+- **Gate D** — dependency floors satisfied (NSS overlay etc. vs nixpkgs).
+- **Gate E** — current binary recoverability status (don't burn a build if the existing one still works).
+- **Gate F** — the nix daemon will accept the flake's settings (`sandbox = relaxed` for `__noChroot`).
+- **Gate G** — the flake `nix eval`s without errors (catches eval-time rejections pre-compile).
+- **Gate H** — the diff since the last working build is reviewed for prereqs.
+- **Gate I** — chrome bundles align three ways (loader ↔ `jar.mn` ↔ `chrome-bake`).
+- **Gate N** — every knob is backed + reversible (debloat is a toggle, not a deletion — keeps divergence reversible).
+- **Gate O** — no bare `beagle/` import in a shipped `.sys.mjs` (the value-semantics chrome-break class).
+
+(**Gate J** — scriptlet bundle integrity — is documented under Security; it pins the curated scriptlet resources to a SHA-256.)
+
 ## See also
 
 - `docs/why-beagle.md` — code-as-claims, the projector, the call graph

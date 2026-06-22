@@ -49,6 +49,9 @@ Currently **vacuously green**: zero patches carry a `# security:` block (preflig
 
 If the belt is deleted, the `*/` guard dropped, or the pref default flipped, Gate R fails *before* the build. (`tools/security/mitigations.test.bjs` exercises the same extract-and-retest logic without a build.)
 
+#### Gate J — scriptlet bundle integrity
+`src/gjoa/toolkit/components/content-classifier/scriptlet-resources.json` holds base64-encoded scriptlet JS run via `evalInSandbox`; Gate J shells `tools/prep/verify-scriptlet-resources.sh`, which recomputes the bundle digest and HARD-FAILS on drift from the SHA-256 pinned in that verifier + `scriptlet-resources.PROVENANCE.md` (finding F10). So the scriptlet payloads injected into content can't change unreviewed — a real supply-chain surface, since these execute in the page. Curated-only by policy; list-driven scriptlets stay opt-in behind Gate R's `list-scriptlets-default-off`.
+
 #### Gate P — patch-hash drift (#104a)
 `configs/patch-hashes.json` records the expected SHA-256 of every `patches/*.patch`. Gate P recomputes each digest and HARD-FAILS on any mismatch, any patch missing from the manifest, or any manifest entry whose patch was deleted. A patch cannot change — or appear/vanish — without a review-gated manifest update; that *is* the point. (Distinct from the aggregate `gjoa.build.engine-patch-hash` that `fingerprint.bjs` bakes into the binary for provenance.)
 

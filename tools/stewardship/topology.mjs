@@ -23,7 +23,7 @@ const REPO_TOPDIRS = ["src/", "tools/", "configs/", "docs/", "patches/", "bin/",
 // --- parse the preflight gate registry --------------------------------------
 function gateRegistry() {
   const src = readFileSync(PREFLIGHT, "utf8");
-  const ids = [...src.matchAll(/\["([A-Z])"\s+gate[A-Z]\]/g)].map((m) => m[1]);
+  const ids = [...src.matchAll(/\["([A-Z])"\s+gate[A-Z]!?\]/g)].map((m) => m[1]);
   const reg = new Map(ids.map((id) => [id, { id, name: id, hard: false }]));
   // names + hard/soft from (pass|warn|fail "X" "name" ...) calls; fail => hard gate
   for (const m of src.matchAll(/\((pass|warn|fail)\s+"([A-Z])"\s+"([^"]+)"/g)) {

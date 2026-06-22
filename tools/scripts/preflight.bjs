@@ -69,7 +69,7 @@
          :out (or (str stderr stdout) (.-message e))}))))
 
 ;; ── Gate A: patches apply cleanly against fresh source ─────────────────────
-(defn gateA [] :- Any
+(defn gateA! [] :- Any
   (let [cache (str (.-HOME (.-env process)) "/.cache/gjoa/sources")
         gjoa (JSON/parse (readFileSync GJOA-JSON "utf8"))
         tarball (str cache "/firefox-" (.-version (.-firefox gjoa)) ".source.tar.xz")]
@@ -800,7 +800,7 @@
 (defn patch-security-block? [text :- String] :- Bool
   ;; `# security:` (with optional indent) anywhere in the header region.
   (.test (RegExp. "^#\\s*security:\\s*$" "m") text))
-(defn gateS [] :- Any
+(defn gateS! [] :- Any
   (let [patches (.sort (.filter (readdirSync PATCHES-DIR) (fn [p :- String] :- Bool (.endsWith p ".patch"))))
         sec-patches (.filter patches (fn [p :- String] :- Bool
                                        (patch-security-block? (readFileSync (join PATCHES-DIR p) "utf8"))))]
@@ -916,11 +916,11 @@
   (console/log (dim "Mandatory gate before any nix or full-mach build (CLAUDE.md Rule #0)."))
   (console/log "")
 
-  (let [gates [["A" gateA] ["B" gateB] ["C" gateC] ["D" gateD]
+  (let [gates [["A" gateA!] ["B" gateB] ["C" gateC] ["D" gateD]
                ["E" gateE] ["F" gateF] ["G" gateG] ["H" gateH]
                ["I" gateI] ["J" gateJ] ["K" gateK] ["L" gateL] ["M" gateM]
                ["N" gateN] ["O" gateO] ["P" gateP] ["Q" gateQ]
-               ["R" gateR] ["S" gateS] ["T" gateT] ["U" gateU] ["V" gateV]
+               ["R" gateR] ["S" gateS!] ["T" gateT] ["U" gateU] ["V" gateV]
                ["W" gateW]]]
     (doseq [gate gates]
       (let [fn (aget gate 1)]

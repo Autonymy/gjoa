@@ -1,160 +1,89 @@
 # CLAUDE.md — gjoa project guide
 
-## 🚨 2026-05-27 postmortem — chose nix when mach was the answer
+gjoa is a Firefox 152 fork authored in **beagle** (`.bjs` → JS / `.sys.mjs`). This
+file is the always-loaded surface: load-bearing rules + thin pointers. The rich
+detail lives in the docs it references — keep those current, keep this lean.
 
-User had a broken sidebar in their nix binary. I drove 4 nix-build
-attempts across 3 hours (3 of them eval-failures, one success that
-exposed more bugs that I couldn't iterate on). The right move was
-**ONE mach build**: ~30–60 min once, writable install, sub-second
-chrome-JS iteration via `gjoa sync` forever after. I had
-`docs/nix-dev-options.md` open earlier arguing exactly that — and went
-the wrong way anyway.
+## Build lanes — seam depth sets conflict cadence
 
-**Rule:** chrome JS / CSS / layout broken? **Mach, not nix.** Nix
-outputs to `/nix/store/` (immutable, sealed omni.ja). Mach outputs to
-`engine/obj-*/` (writable, supports `gjoa-dev/` hot-reload). If you
-find yourself proposing a nix rebuild to verify a chrome-bundle fix —
-stop and use mach.
+- **Lane 1** — chrome JS/CSS, `gjoa sync` + restart, **~1 s, no rebuild**. *Default new code here.*
+- **Lane 2** — `.sys.mjs` overlay / patch / branding, `mach build faster`, **~30 s**.
+- **Lane 3** — C++/Rust / version bump / configure flags, full mach or nix, **30–60 min**.
+- **Release is NOT a lane.** A local build is dev *verification*; the release is
+  **CI-built on a `vX.Y.Z` tag push** (free GitHub runners by default; Blacksmith =
+  paid opt-in `fast: true`). → `docs/daily-loop.md` "I want to cut a release".
 
----
-
-## Build cadence: Sunday rule REMOVED 2026-06-15 (user rescinded)
-
-The "one nix build per week, Sunday-only" gate is **gone** — the user
-explicitly removed it ("remove the whole sunday rule, i don't care
-anymore"). Build whenever it's needed. No calendar window, no per-build
-approval ceremony, no abandon-the-fork threat.
-
-What REMAINS — not as permission gates, but because they prevent *wasted*
-builds (which is the actual goal):
-
-1. **Run `bun run import` FIRST.** The flake compiles from `engine/`,
-   which only reflects `src/gjoa/` after an import. Skipping it compiles
-   stale source — cost a whole build on 2026-06-14.
-2. **Run `bun run preflight`** (gates A–I) — catches patch/jar/eval/
-   alignment breakage before a 2–3 h compile.
-3. **Append every build's outcome to a NEW atomic file in `private-docs/build-logs/`** — the postmortems
-   are how we stop repeating failures (stale engine, `march` no-op,
-   history-sqlite shutdown). Still required.
-4. **Prefer Lane 1/2 when the change allows it** — still the cheapest path.
-
-### Preflight gates (automated by `tools/scripts/preflight.ts`)
-
-- A — patches apply clean on fresh tarball
-- B — `jar.mn` uses `browser.jar:` (not `<pkg>.jar:` which is no-op)
-- C — no `TODO`/`future commit` no-ops in production code paths
-- D — dep floors satisfied (NSS overlay, etc.)
-- E — current binary actually unrecoverable
-- F — daemon accepts flake settings (`sandbox = relaxed` for `__noChroot`)
-- G — `nix eval` succeeds (catches eval-time rejections before compile)
-- H — diff since last working build reviewed for prereqs
-- I — chrome bundles aligned across loader / `jar.mn` / `chrome-bake.ts`
-- J — scriptlet bundle integrity (`scriptlet-resources.json` matches pinned SHA-256)
-- K — engine-currency (refuse build if `src/gjoa/`/`patches/`/`tools/prep/` is newer than the last `bun run import` — kills the stale-`engine/` class). Gate A also WARNs on patch line-offset drift (early `.rej` warning).
-- L — surface contracts (a patch/overlay's declared `# depends-on:` upstream symbols still resolve in `engine/` — catches a Rust path move / field removal / JS prop deletion *before* the compile)
-- R — security mitigations intact (per-mitigation regression manifest `configs/security-mitigations.json`: every `mustMatch` source assertion still holds, and the extracted cosmetic-selector regex still rejects breakouts / accepts real rules — a shipped mitigation can't silently rot)
-- S — security-critical patches persist (any patch with a `# security:` header MUST still apply + its `depends-on` anchors resolve; non-apply is a HARD stop, not a warn — vacuously green while zero patches are security-tagged)
-
-### Postmortem on any unexpected rebuild
-
-Append to `private-docs/build-logs/` BEFORE moving on. Template: trigger / why
-preflight missed it / new gate to add / could it have been Lane 1.
-
----
-
-## Lane classification
-
-- **Lane 1** — chrome JS/CSS, `gjoa sync` + restart, **~1 sec, no rebuild**
-- **Lane 2** — `.sys.mjs` overlay / patch / branding, `mach build faster`, **~30 sec**
-- **Lane 3** — C++/Rust / version bump / configure flags, full mach or nix, **30–60 min (build whenever needed)**
-- **Release is NOT a lane.** A local mach/nix build is dev **verification** only —
-  never the release artifact. Cutting a release = push a `vX.Y.Z` tag → CI
-  `release.yml` builds all 3 platforms on **free GitHub-hosted runners** (default;
-  Blacksmith is a faster *paid* opt-in via `fast: true` — costs credits, not the
-  default) → **draft** GitHub release → human publishes. If you catch yourself running a 2-3 h local `nix build` to "make
-  the release", STOP — that's the 2026-06-23 mistake. → `docs/daily-loop.md` **"I
-  want to cut a release"** (the verify-vs-release decision tree).
+🚨 **Chrome JS/CSS/layout broken? Mach, not nix** (2026-05-27 postmortem). Nix =
+sealed `/nix/store` omni.ja; mach = writable `engine/obj-*/` + `gjoa sync`
+hot-reload. Proposing a nix rebuild to verify a *chrome* fix is the smell.
 
 ## Hard rules
 
-1. **No `./mach build` or `nix build` without explicit user permission.**
-   `mach build faster` is OK with a concrete Lane 2 reason.
-2. **Don't rebuild to verify.** Use `bun run test:integration` or read
-   the load path. Stale binary is the LAST hypothesis.
-3. **Default new code to chrome bundles (Lane 1).** Source-tree changes
-   are the exception, not the default. **Within Lane 3 patches, prefer
-   `.sys.mjs` overlays over Mozilla-source C++/Rust.** Patch-conflict
-   cadence rises with every step deeper into native code: chrome JS via
-   `ChromeUtils.importESModule` conflicts ~never; `.sys.mjs` overlays
-   conflict per major Firefox version; C++/Rust patches conflict per
-   release because Mozilla refactors signatures constantly. Always ask
-   "can this be done in chrome JS?" before writing a source patch.
-4. **Lane 3 queue lives in TaskCreate**, not in this file.
-5. **Audit-before-modify on big tasks.** "Don't modify or build. List
-   Lane 1/2/3 candidates. Propose Lane 1 first." Wait for go.
-6. **Creating `patches/*.patch` is fine; applying them isn't.** The
-   file is harmless. The rebuild is what activates it.
+1. **No `./mach build` / `nix build` without explicit user permission.** `mach build
+   faster` is OK with a concrete Lane 2 reason.
+2. **Don't rebuild to verify.** `bun run test:integration` or read the load path —
+   a stale binary is the LAST hypothesis.
+3. **Default new code to chrome bundles (Lane 1).** Within Lane 3, prefer `.sys.mjs`
+   overlays over C++/Rust: conflict cadence rises with seam depth (chrome JS via
+   `ChromeUtils.importESModule` ~never · `.sys.mjs` per major FF · native per
+   release, Mozilla refactors signatures constantly). Ask "can this be chrome JS?"
+   before any source patch.
+4. **Audit-before-modify on big tasks.** List Lane 1/2/3 candidates, propose Lane 1
+   first, wait for go.
+5. **`patches/*.patch` files are harmless; *applying* them (the rebuild) isn't.**
+6. **Lane 3 queue lives in TaskCreate**, not in this file.
 
----
+## Before any Lane 3 build — prevent the *wasted* build (the actual goal)
 
-## Lessons learned
+1. **`bun run import` first** — the flake compiles `engine/`, which reflects
+   `src/gjoa/` only after an import (a stale engine cost a whole build 2026-06-14).
+2. **`bun run preflight`** — 23 gates (A–W) catch patch / eval / alignment /
+   security breakage before a 2–3 h compile. The live gate registry + what each
+   enforces is **GENERATED** in [`docs/stewardship/topology.md`](docs/stewardship/topology.md)
+   (Gate T fails on docs↔machinery drift) — never hand-maintain a gate list here.
+3. **Log the outcome** to `private-docs/build-logs/` (a new atomic file per build).
+   Any unexpected rebuild gets a postmortem: trigger / why preflight missed it /
+   new gate to add / could it have been Lane 1.
 
-- **Mach, not nix, for chrome bug fixes.** See top postmortem.
-- **Firefox version bumps cascade.** `bun run import` first — patches
-  with fuzzy context fail HERE, before a 45-min build gets wasted.
-  Check NSS floor against nixpkgs. Update stale `baseline-firefox:`
-  headers so warnings clear.
-- **Production-mode code paths must actually work in nix builds.**
-  Dev-mode overlay hides "// TODO future commit" stubs that nix
-  exposes. Audit them before claiming "ships."
-- **Auto-detect-with-override CLI is wrong.** Explicit `gjoa` (nix)
-  vs `gjoa dev` (mach). Whatever you typed runs.
-- **`<package>.jar:` in jar.mn is a no-op.** Modern Firefox merges
-  into `browser.jar:`. Verify with `unzip -p omni.ja chrome.manifest`
-  AFTER any chrome-registration change.
-- **`__noChroot` requires `sandbox = relaxed`, not trusted-users.**
-  Cost the 2026-05-26 build (gate F now catches it).
-- **One rebuild ≠ one binary.** Mach (`engine/obj-*/`) and nix
-  (`/nix/store/`) are separate builds for separate purposes. Doing
-  nix doesn't give you a mach objdir, and vice versa.
+(The Sunday-only cadence rule was rescinded 2026-06-15 — build whenever needed.)
 
----
+## Test stewardship — a slow suite is the project-killer
+
+The integration suite runs constantly; un-stewarded it rots into a compounding
+velocity tax. Policy + profiler:
+[`docs/stewardship/testing.md`](docs/stewardship/testing.md) — read it before
+adding/editing tests. No test enters un-budgeted (`configs/test-budgets.json`);
+prefer a unit test over a browser boot; a fixed `(sleep N)` is a smell —
+`await-true` a real condition. `bun run test:profile` grades actual-vs-budget +
+gates regressions.
 
 ## Anti-goals
 
-- Don't depend on surfer or external fork tooling. Use `tools/prep/`.
+- Don't depend on surfer / external fork tooling — use `tools/prep/`.
 - Don't pre-port palefox v0.43.0 wholesale; promote deliberately.
-- Don't patch surfer output post-import; add to
-  `tools/prep/branding.ts` substitution table with a test.
+- Don't patch surfer output post-import; add to `tools/prep/branding.bjs`
+  substitution table + a test.
 
-## Reference materials on disk
+## Lessons not yet encoded as a gate
 
-- `~/code/palefox/archive/` — userscript-era palefox v0.43.0
-- `~/code/zen-browser/` — peer fork, reference only
-- `~/code/firefox/` — mozilla-central source
+(The gated ones — jar.mn no-op, `__noChroot` sandbox, version-bump cascade — now
+live in the gates + [`docs/stewardship/topology.md`](docs/stewardship/topology.md).)
 
-## Test stewardship — POLICY (a slow suite is the project-killer)
+- **One rebuild ≠ one binary.** Mach (`engine/obj-*/`) and nix (`/nix/store/`) are
+  separate builds for separate purposes; doing one doesn't give you the other.
+- **Explicit CLI, not auto-detect:** `gjoa` (nix) vs `gjoa dev` (mach) — whatever
+  you typed runs.
+- **Production-mode paths must work in nix** — the dev overlay hides `// TODO`
+  stubs that a nix build exposes.
 
-The integration suite runs constantly; an un-stewarded one rots into a velocity
-tax that compounds. We hold it **lean, robust, comprehensive, fast** and we
-*track the stewardship itself* (audit date + result + diminishing-returns trend).
-Every test carries a `budgetMs` + category in `configs/test-budgets.json`; the
-profiler grades actual-vs-budget from history and gates on regressions.
+## Reference + pointers
 
-- **Policy + procedure:** [`docs/stewardship/testing.md`](docs/stewardship/testing.md) —
-  read it before adding/editing tests. No test enters un-budgeted; prefer a unit
-  test (ms) over a browser boot; fixed `(sleep N)` is a smell — `await-true` a
-  real condition.
-- `bun run test:profile` — actual-vs-budget report + hygiene gate.
-- `bun run test:audit` — full re-audit; writes `.test-metrics/audit-ledger.jsonl`
-  (tracks where returns diminish).
-
-## Pointers
-
-- [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) — map, rebuild ladder, decision tree
-- [`docs/daily-loop.md`](docs/daily-loop.md) — command cheatsheet
-- [`docs/nix-dev-options.md`](docs/nix-dev-options.md) — when mach vs nix
-- [`docs/stewardship/testing.md`](docs/stewardship/testing.md) — test suite hygiene policy + profiler
-- `private-docs/build-logs/` (private) — every build's outcome + postmortems
-- `bun run status` / `gjoa status` — operational dashboard
-- `bun run preflight` / `gjoa preflight` — mandatory before any rebuild
+- On disk: `~/code/palefox/archive/` (userscript palefox v0.43.0) ·
+  `~/code/zen-browser/` (peer fork) · `~/code/reference/firefox/` (mozilla-central).
+- [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) — map, rebuild ladder, decision tree.
+- [`docs/daily-loop.md`](docs/daily-loop.md) — command cheatsheet + verify-vs-release tree.
+- [`docs/nix-dev-options.md`](docs/nix-dev-options.md) — when mach vs nix.
+- [`docs/stewardship/`](docs/stewardship/README.md) — the maintenance manifesto
+  (security / testing / performance / churn + the generated gate topology).
+- `private-docs/build-logs/` — every build's outcome + postmortems (private).
+- `bun run status` · `bun run preflight` — operational dashboard · mandatory pre-build gate.

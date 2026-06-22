@@ -1,0 +1,59 @@
+#lang beagle/js
+;; Horizontal tab mode must keep its FULL nav-bar toolbar — the icons gjoa users
+;; expect on the row: back, forward, refresh, urlbar, sidebar toggle, extensions,
+;; hamburger. A regression collapsed it to just [urlbar][hamburger] in horizontal
+;; mode (reported 2026-06-22, real gjoa-dev window). This guards the whole set so
+;; it can't silently vanish again — asserted both freshly-horizontal AND after a
+;; vertical→horizontal flip (the live niri-resize path where the drawer reparents
+;; the urlbar; see task #122 transition instability).
+(ns gjoa.tests.integration.horizontal-toolbar
+  (:require [gjoa.tests.dsl :refer [deftest chrome-eval expect await-true wait-for]]))
+(define-mode strict)
+
+;; Returns {horizontal, missing:[...]} — `missing` names any expected toolbar icon
+;; that is absent OR not visible (display:none / zero-width). Empty == healthy.
+(def buttonsCheck :- String "
+  const want = {
+    'back-button': 'back', 'forward-button': 'forward', 'stop-reload-button': 'refresh',
+    'urlbar-container': 'urlbar', 'sidebar-button': 'sidebar',
+    'unified-extensions-button': 'extensions', 'PanelUI-button': 'hamburger'
+  };
+  const win = window;
+  const missing = [];
+  for (const id of Object.keys(want)) {
+    const e = document.getElementById(id);
+    if (!e) { missing.push(want[id] + ' (#' + id + ' ABSENT)'); continue; }
+    const cs = win.getComputedStyle(e);
+    const r = e.getBoundingClientRect();
+    if (cs.display === 'none' || cs.visibility === 'hidden' || r.width < 1)
+      missing.push(want[id] + ' (#' + id + ' hidden display=' + cs.display + ' w=' + Math.round(r.width) + ')');
+  }
+  return { horizontal: document.documentElement.hasAttribute('gjoa-horizontal-tabs'), missing: missing };
+")
+
+(defn assert-full-toolbar [r :- Any ctx :- String] :- Any
+  (expect (.-horizontal r) (str ctx ": not in horizontal mode (gjoa-horizontal-tabs unset)"))
+  (expect (= 0 (.-length (.-missing r)))
+    (str ctx ": horizontal toolbar is missing expected icons: " (JSON/stringify (.-missing r)) ". "
+         "Expected left→right: back forward refresh urlbar sidebar extensions hamburger.")))
+
+(def tests :- Any
+  [(deftest "horizontal nav-bar keeps back/forward/refresh/urlbar/sidebar/ext/hamburger" [mn]
+     ;; Force horizontal from the current state; disable dynamic-orientation so the
+     ;; window width can't flip it back mid-assert.
+     (chrome-eval "Services.prefs.setBoolPref('gjoa.layout.dynamicOrientation', false); Services.prefs.setBoolPref('sidebar.verticalTabs', false); return true;")
+     (await-true "return document.documentElement.hasAttribute('gjoa-horizontal-tabs');" 4000)
+     (assert-full-toolbar (chrome-eval buttonsCheck) "fresh-horizontal"))
+
+   (deftest "horizontal toolbar survives a vertical→horizontal flip" [mn]
+     ;; vertical first, then flip to horizontal — the live-resize path that reparents
+     ;; the urlbar (drawer) and must restore the full nav-bar, not leave [urlbar][☰].
+     (chrome-eval "Services.prefs.setBoolPref('gjoa.layout.dynamicOrientation', false); Services.prefs.setBoolPref('sidebar.verticalTabs', true); return true;")
+     (await-true "return !document.documentElement.hasAttribute('gjoa-horizontal-tabs');" 4000)
+     (chrome-eval "Services.prefs.setBoolPref('sidebar.verticalTabs', false); return true;")
+     (await-true "return document.documentElement.hasAttribute('gjoa-horizontal-tabs');" 4000)
+     (assert-full-toolbar (chrome-eval buttonsCheck) "after-flip")
+     ;; restore defaults so we don't pollute later tests (#102)
+     (chrome-eval "Services.prefs.setBoolPref('sidebar.verticalTabs', true); Services.prefs.clearUserPref('gjoa.layout.dynamicOrientation'); return true;"))])
+
+(js/export-default tests)

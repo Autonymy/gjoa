@@ -66,6 +66,15 @@
 
 (defn ff-present? [] :- Bool (existsSync (join FF ".git")))
 
+;; L3 blame-locator: the upstream commits that touched <pth> between the lock
+;; baseline and <ref> — turns "this file changed" into "Mozilla commit abc123
+;; (bug …) touched it, here's why." base/ref are validated tags; pth is guarded.
+(defn upstream-commits [base :- String ref :- String pth :- String] :- Any
+  (if (not (.match pth (RegExp. "^[\\w./-]+$")))
+    []
+    (let [out (.trim (sh (str "git -C " FF " log --oneline --no-decorate -n 4 " base ".." ref " -- " pth) {:quiet true}))]
+      (if (= out "") [] (.split out "\n")))))
+
 (defn tier-of [pth :- String] :- String
   (cond
     (.match pth (RegExp. "\\.(rs|cpp|cc|h|webidl)$")) "native"
@@ -100,7 +109,7 @@
 
 ;; ── check ───────────────────────────────────────────────────────────────────
 
-(defn check! [ref-arg :- String strict :- Bool] :- Any
+(defn check! [ref-arg :- String strict :- Bool blame? :- Bool] :- Any
   (when (not (ff-present?))
     (console/log (str "provenance: Firefox clone absent (" FF ") — check skipped")) (.exit process 0))
   (when (not (existsSync LOCK))
@@ -153,10 +162,16 @@
                                                     (- (if (= (.-tier a) "native") 0 1) (if (= (.-tier b) "native") 0 1)))))]
           (when (> (.-length changed) 0)
             (console/log "  changed upstream (potential conflict, native first):")
-            (doseq [c (native-first changed)] (console/log (str "    [" (.-tier c) "] " (.-patch c) ": " (.-file c)))))
+            (doseq [c (native-first changed)]
+              (console/log (str "    [" (.-tier c) "] " (.-patch c) ": " (.-file c)))
+              (when blame?
+                (doseq [ln (upstream-commits (.-tag lock) ref (.-file c))] (console/log (str "        · " ln))))))
           (when (> (.-length vanished) 0)
             (console/log "  VANISHED upstream (file moved/deleted — patch WILL fail):")
-            (doseq [c (native-first vanished)] (console/log (str "    [" (.-tier c) "] " (.-patch c) ": " (.-file c)))))
+            (doseq [c (native-first vanished)]
+              (console/log (str "    [" (.-tier c) "] " (.-patch c) ": " (.-file c)))
+              (when blame?
+                (doseq [ln (upstream-commits (.-tag lock) ref (.-file c))] (console/log (str "        · " ln))))))
           (when (> (.-length collision) 0)
             (console/log "  upstream now ships a file we CREATE (collision):")
             (doseq [c collision] (console/log (str "    " (.-patch c) ": " (.-file c))))))
@@ -182,7 +197,7 @@
         ref (.find argv (fn [a :- String] :- Bool (and (not (.startsWith a "--")) (not= a cmd))))]
     (cond
       (= cmd "lock") (lock!)
-      (= cmd "check") (check! (or ref nil) strict)
-      :else (do (console/error "usage: upstream-provenance <lock|check [ref] [--strict]>") (.exit process 1)))))
+      (= cmd "check") (check! (or ref nil) strict (.includes argv "--blame"))
+      :else (do (console/error "usage: upstream-provenance <lock|check [ref] [--strict] [--blame]>") (.exit process 1)))))
 
 (when (.-main (js/import-meta)) (main!))

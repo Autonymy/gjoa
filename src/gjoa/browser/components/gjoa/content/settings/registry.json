@@ -229,7 +229,14 @@
             { "label": "OFF — classic (default)", "detail": "Two rows in horizontal mode: the toolbar, then a dedicated tab strip beneath it." },
             { "label": "ON — single row", "detail": "Everything on one line to save vertical space: omni-menu, a wide URL bar, then the tabs — compact, good on short windows." }
           ],
-          "note": "No effect in vertical / sidebar tab mode." }
+          "note": "No effect in vertical / sidebar tab mode." },
+        { "pref": "gjoa.layout.horizontalSidebarStrip", "type": "bool", "title": "Horizontal tabs — sidebar launcher strip", "default": false,
+          "help": "Controls Firefox's vertical sidebar launcher strip (the narrow left column of icons: AI/sparkle, sidebar, history, bookmarks, settings) WHILE in horizontal tab mode. OFF (default) hides it — the tabs already live in the toolbar row, so the strip is redundant chrome, and the content reclaims the column. ON brings it back. Toggle live with leader-b or the `:sidebar-strip` command. Only affects horizontal mode — in vertical / sidebar tabs the strip always shows.",
+          "examples": [
+            { "label": "OFF — hidden (default)", "detail": "In horizontal mode the left icon strip is gone and web content fills the freed width. Toggle on the fly with leader-b." },
+            { "label": "ON — shown", "detail": "Keeps the vertical launcher strip (AI, sidebar, history, bookmarks, settings icons) visible even in horizontal mode, as stock Firefox does." }
+          ],
+          "note": "No effect in vertical / sidebar tab mode — that mode always shows the strip." }
       ] }
   ],
   "links": [

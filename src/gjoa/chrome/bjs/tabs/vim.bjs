@@ -40,6 +40,7 @@
    {:key "j" :desc "scroll down"}
    {:key "k" :desc "scroll up"}
    {:key "e" :desc "toggle compact mode"}
+   {:key "b" :desc "toggle sidebar strip (horizontal)"}
    {:key "?" :desc "show this help"}])
 (def EX-COMMANDS :- Any
   [{:name "group"      :description "Create a named folder at cursor"                    :takesArgs true}
@@ -53,6 +54,7 @@
    {:name "blacklist"  :description "Disable gjoa keys on a site (`list` / `remove`)"   :takesArgs true}
    {:name "space"      :description "Workspaces: new / rename / delete / switch"            :takesArgs true}
    {:name "tabpos"     :description "Where new tabs open: sibling | root | child"       :takesArgs true}
+   {:name "sidebar-strip" :description "Toggle Firefox's sidebar launcher strip (horizontal mode)" :takesArgs false}
    {:name "help"       :description "Show the keymap cheatsheet"                         :takesArgs false}])
 (js/export (defn make-vim! [deps :- Any] :- Any
   (let [{:keys [rows layout scheduleSave clearSelection selectRange sidebarMain history contentFocus spaces]} deps
@@ -447,6 +449,17 @@
                 (catch Any e
                   (console/error "gjoa-tabs: toggleLastTab failed" e))))))
 
+        ;; Toggle Firefox's vertical sidebar launcher strip (#sidebar-main) in
+        ;; horizontal tab mode. Default OFF (hidden) — the tabs already live in
+        ;; the toolbar row, so the strip is redundant chrome. The CSS reacts to
+        ;; the pref live via @media -moz-pref; we just flip the bool. Reports the
+        ;; new state in the modeline so the silent CSS change is legible.
+        toggle-h-sidebar-strip (fn []
+          (let [cur (pref-bool "gjoa.layout.horizontalSidebarStrip" false)
+                next (not cur)]
+            (set-pref-bool! "gjoa.layout.horizontalSidebarStrip" next)
+            (modeline-msg (str "Sidebar strip " (if next "shown" "hidden")) 2000)))
+
         key-enabled (fn [name] :- Bool
           (pref-bool (str "gjoa.keys." name ".enabled") true))
 
@@ -619,6 +632,7 @@
               (key= e "e") (dispatch-key e "e"
                 (let [cur (pref-bool "gjoa.sidebar.compact" false)]
                   (set-pref-bool! "gjoa.sidebar.compact" (not cur))))
+              (key= e "b") (dispatch-key e "b" (toggle-h-sidebar-strip))
               (key= e "?") (dispatch-key e "question" (toggle-which-key))
               :else false)))
 
@@ -1285,6 +1299,8 @@
                         (str "Not in blacklist: " host)) 3000)))
 
                 (= name "sessions") (modeline-msg "Use :restore instead" 3000)
+                (or (= name "sidebar-strip") (= name "strip"))
+                (toggle-h-sidebar-strip)
                 (= name "help") (toggle-which-key)
 
                 (= name "tabpos")

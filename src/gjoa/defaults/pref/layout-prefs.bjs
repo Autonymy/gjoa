@@ -24,3 +24,12 @@
 ;; horizontally on the same row — [omni][url][tab1..tabN]. Default classic.
 ;; Toggle in about:gjoa. Only affects horizontal mode.
 (pref "gjoa.layout.horizontalSingleRow" false)
+
+;; In HORIZONTAL tab mode Firefox still shows its vertical sidebar launcher strip
+;; (#sidebar-main — the narrow left column of icons: AI/sparkle, sidebar, history,
+;; bookmarks, settings). In horizontal mode the tabs already live in the toolbar
+;; row, so that strip is redundant chrome eating horizontal space. Default OFF =
+;; hidden; the content reclaims the column. Toggle live with leader-b or
+;; `:sidebar-strip`, or here in about:gjoa. Only affects horizontal mode —
+;; vertical (sidebar) tabs always show the strip. CSS reacts via @media -moz-pref.
+(pref "gjoa.layout.horizontalSidebarStrip" false)

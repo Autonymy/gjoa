@@ -703,3 +703,31 @@
 }
 
 /* #endregion single-row horizontal */
+
+
+/* #region horizontal sidebar strip (gjoa.layout.horizontalSidebarStrip)
+ *
+ * In horizontal tab mode Firefox still renders its vertical sidebar launcher
+ * strip — #sidebar-main, the narrow left column of icons (AI/sparkle, sidebar,
+ * history, bookmarks, settings). The tabs already live in the toolbar row here,
+ * so that strip is redundant chrome stealing horizontal space. Default = hidden
+ * (pref OFF); flip gjoa.layout.horizontalSidebarStrip on (leader-b, the
+ * `:sidebar-strip` command, or about:gjoa) to bring it back.
+ *
+ * Pref-driven, no JS observer — Firefox re-evaluates -moz-pref() media queries
+ * live, so the toggle just flips the bool and the strip appears/disappears.
+ * Mirrors the gjoa.layout.horizontalSingleRow idiom directly above.
+ *
+ * `display: none` takes #sidebar-main fully out of the #browser flex row, so the
+ * content (#tabbrowser-tabbox) reclaims the column with no leftover gap. The
+ * adjacent #sidebar-launcher-splitter is hidden too, so no orphan divider. Only
+ * matches in horizontal mode (:root[gjoa-horizontal-tabs]); vertical/sidebar tab
+ * mode is untouched and always keeps the strip. */
+@media not -moz-pref("gjoa.layout.horizontalSidebarStrip") {
+  :root[gjoa-horizontal-tabs] #sidebar-main,
+  :root[gjoa-horizontal-tabs] #sidebar-main ~ #sidebar-launcher-splitter {
+    display: none !important;
+  }
+}
+
+/* #endregion horizontal sidebar strip */

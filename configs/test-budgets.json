@@ -40,7 +40,12 @@
         "test": "gjoa-favicons",
         "saveMs": 2700
       }
-    ]
+    ],
+    "healthyRuns": 13,
+    "suiteP50Ms": 61099,
+    "overBudget": 5,
+    "unbudgeted": 0,
+    "estSavingsMs": 80190
   },
   "tests": {
     "adblock-cosmetic": {
@@ -76,14 +81,14 @@
       "category": "tabs",
       "tier": "fast",
       "budgetMs": 1200,
-      "note": "[trimmable] No boot/nav (synthetic menupopup, headless-safe) \u2014 good. The 400ms fixed sleep is the only real waste: it waits 'for the",
+      "note": "[trimmable] No boot/nav (synthetic menupopup, headless-safe) — good. The 400ms fixed sleep is the only real waste: it waits 'for the",
       "estSavingsMs": 200
     },
     "contrast": {
       "category": "contrast",
       "tier": "slow",
       "budgetMs": 14000,
-      "note": "[bloated] Worst offender. 9 fixtures \u00d7 (sleep 500 + sleep 800) = 11700ms of pure fixed sleep, plus 18 navigations (2 per fixture: ",
+      "note": "[bloated] Worst offender. 9 fixtures × (sleep 500 + sleep 800) = 11700ms of pure fixed sleep, plus 18 navigations (2 per fixture: ",
       "estSavingsMs": 10000
     },
     "darkmode-hybrid": {
@@ -97,28 +102,28 @@
       "category": "darkmode",
       "tier": "slow",
       "budgetMs": 6000,
-      "note": "[bloated] No await-true at all \u2014 entirely fixed-wait driven. 4 navigations via render-lum-js (4\u00d73500=14000ms baked settle) + 1 rel",
+      "note": "[bloated] No await-true at all — entirely fixed-wait driven. 4 navigations via render-lum-js (4×3500=14000ms baked settle) + 1 rel",
       "estSavingsMs": 11000
     },
     "darkmode-render": {
       "category": "darkmode",
       "tier": "slow",
       "budgetMs": 3000,
-      "note": "[bloated] Smallest darkmode file but still pure fixed-wait: 2 navigations \u00d7 the baked 3500ms render-lum-js settle = 7000ms, no pol",
+      "note": "[bloated] Smallest darkmode file but still pure fixed-wait: 2 navigations × the baked 3500ms render-lum-js settle = 7000ms, no pol",
       "estSavingsMs": 5500
     },
     "dynamic-orientation": {
       "category": "tabs",
       "tier": "fast",
       "budgetMs": 1500,
-      "note": "[trimmable] No nav/restart. The 2\u00d7sleep 600 (post-resizeTo) are blind waits for the matchMedia listener to flip sidebar.verticalTabs",
+      "note": "[trimmable] No nav/restart. The 2×sleep 600 (post-resizeTo) are blind waits for the matchMedia listener to flip sidebar.verticalTabs",
       "estSavingsMs": 900
     },
     "gjoa-favicons": {
       "category": "newtab",
       "tier": "fast",
       "budgetMs": 1500,
-      "note": "[bloated] The two (sleep 1500) calls are blind fixed waits for the <link rel=icon>/setIcon belt to resolve \u2014 the exact case await-",
+      "note": "[bloated] The two (sleep 1500) calls are blind fixed waits for the <link rel=icon>/setIcon belt to resolve — the exact case await-",
       "estSavingsMs": 2700
     },
     "group-drag-above": {
@@ -151,7 +156,7 @@
       "category": "horizontal-grid-drag",
       "tier": "fast",
       "budgetMs": 1400,
-      "note": "[trimmable] Each test has a 250ms sleep after to-horizontal! (redundant \u2014 to-horizontal! already await-trues on gjoa-horizontal, so ",
+      "note": "[trimmable] Each test has a 250ms sleep after to-horizontal! (redundant — to-horizontal! already await-trues on gjoa-horizontal, so ",
       "estSavingsMs": 700
     },
     "horizontal-toolbar": {
@@ -163,7 +168,7 @@
       "category": "spaces",
       "tier": "slow",
       "budgetMs": 4000,
-      "note": "[trimmable] No fixed sleeps (good \u2014 all settles are await-true on B's roster). The cost is structural: each of the 3 tests calls Ope",
+      "note": "[trimmable] No fixed sleeps (good — all settles are await-true on B's roster). The cost is structural: each of the 3 tests calls Ope",
       "estSavingsMs": 3500
     },
     "nav-bar-layout": {
@@ -187,7 +192,7 @@
       "category": "newtab",
       "tier": "slow",
       "budgetMs": 3000,
-      "note": "[trimmable] Two 5000ms await-true ceilings wait on a +1 visible-row count after gBrowser.addTab to https://example.com \u2014 the row app",
+      "note": "[trimmable] Two 5000ms await-true ceilings wait on a +1 visible-row count after gBrowser.addTab to https://example.com — the row app",
       "estSavingsMs": 800
     },
     "newtab-home": {
@@ -211,7 +216,7 @@
       "category": "spaces",
       "tier": "slow",
       "budgetMs": 3000,
-      "note": "[trimmable] Test 1 opens 5 https://example.com tabs to 'mimic session-restore' but never awaits their loads \u2014 about:blank tabs would",
+      "note": "[trimmable] Test 1 opens 5 https://example.com tabs to 'mimic session-restore' but never awaits their loads — about:blank tabs would",
       "estSavingsMs": 700
     },
     "sidebar-symmetric-icons": {
@@ -230,7 +235,7 @@
       "category": "spaces",
       "tier": "slow",
       "budgetMs": 3500,
-      "note": "[trimmable] An 8000ms await-true ceiling on the Work-tab becoming visible after gBrowser.addTab(https://example.com/work-tab) \u2014 the ",
+      "note": "[trimmable] An 8000ms await-true ceiling on the Work-tab becoming visible after gBrowser.addTab(https://example.com/work-tab) — the ",
       "estSavingsMs": 900
     },
     "spaces-header": {
@@ -242,7 +247,7 @@
       "category": "spaces",
       "tier": "fast",
       "budgetMs": 1500,
-      "note": "[trimmable] Two (sleep 100) calls 'give the scheduler a tick' after Spaces.setActive before manually calling updateVisibility \u2014 repl",
+      "note": "[trimmable] Two (sleep 100) calls 'give the scheduler a tick' after Spaces.setActive before manually calling updateVisibility — repl",
       "estSavingsMs": 180
     },
     "spaces-session-restore": {
@@ -254,7 +259,7 @@
       "category": "spaces",
       "tier": "fast",
       "budgetMs": 2500,
-      "note": "[trimmable] Zero fixed sleeps \u2014 already lean on that axis. Two trims: (1) every test opens with `(await-true \"return !!window.gjoaTe",
+      "note": "[trimmable] Zero fixed sleeps — already lean on that axis. Two trims: (1) every test opens with `(await-true \"return !!window.gjoaTe",
       "estSavingsMs": 300
     },
     "sqlite": {
@@ -266,14 +271,14 @@
       "category": "tabs",
       "tier": "fast",
       "budgetMs": 900,
-      "note": "[trimmable] The single `(js/await (sleep 300))` after clicking the \u00d7 is a fixed wait for tab removal \u2014 replace with `await-true` on ",
+      "note": "[trimmable] The single `(js/await (sleep 300))` after clicking the × is a fixed wait for tab removal — replace with `await-true` on ",
       "estSavingsMs": 260
     },
     "tab-mode-toggle": {
       "category": "tabs",
       "tier": "slow",
       "budgetMs": 6000,
-      "note": "[trimmable] No fixed sleeps \u2014 every mode flip is gated on the real `gjoa-horizontal` attribute via await-true (correct pattern). Blo",
+      "note": "[trimmable] No fixed sleeps — every mode flip is gated on the real `gjoa-horizontal` attribute via await-true (correct pattern). Blo",
       "estSavingsMs": 1200
     },
     "tab-tree-machine": {
@@ -287,7 +292,7 @@
       "category": "urlbar",
       "tier": "fast",
       "budgetMs": 1800,
-      "note": "[trimmable] Zero fixed sleeps \u2014 chrome-only rect reads, no nav, no tab. Cleanest of the set on the sleep axis. Trims: (1) all 3 test",
+      "note": "[trimmable] Zero fixed sleeps — chrome-only rect reads, no nav, no tab. Cleanest of the set on the sleep axis. Trims: (1) all 3 test",
       "estSavingsMs": 200
     },
     "vim-content-focus": {
@@ -322,7 +327,7 @@
       "category": "scriptlet",
       "tier": "slow",
       "budgetMs": 8000,
-      "note": "[trimmable] Network test (real youtube.com nav) \u2014 inherently the slowest and SKIP-guarded, so judged on its own scale. The 3000ms fi",
+      "note": "[trimmable] Network test (real youtube.com nav) — inherently the slowest and SKIP-guarded, so judged on its own scale. The 3000ms fi",
       "estSavingsMs": 2000
     }
   }

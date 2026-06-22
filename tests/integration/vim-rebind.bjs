@@ -1,0 +1,54 @@
+#lang beagle/js
+;; P1 acceptance: the vim keymap is data-driven — gjoa.keys.bindings (JSON
+;; {key: commandId|null}) remaps and unbinds keys live, with no code change. This
+;; is the pref about:vim and `:bind` (P2/P3) edit. Here: bind a normally-unbound
+;; key ('q') to the tabs picker, and unbind a default ('t').
+(ns gjoa.tests.integration.vim-rebind
+  (:require [gjoa.tests.dsl :refer [deftest chrome-eval await-true expect wait-for sleep]]))
+(define-mode strict)
+
+(def setup-js :- String
+  "
+  const tab = gBrowser.addTab('about:blank', {
+    triggeringPrincipal: Services.scriptSecurityManager.getSystemPrincipal(),
+  });
+  gBrowser.selectedTab = tab;
+  Services.prefs.setBoolPref('gjoa.keys.useLeader', false);
+  Services.prefs.setStringPref('gjoa.keys.bindings', JSON.stringify({ q: 'tabsPicker', t: null }));
+  try { gBrowser.selectedBrowser.focus(); } catch (e) {}
+  return 1;
+")
+
+(def cleanup-js :- String
+  "Services.prefs.clearUserPref('gjoa.keys.bindings'); return 1;")
+
+(def pickerOpen-js :- String
+  "return !!document.querySelector('[class*=picker], [id*=picker], .gjoa-search-input');")
+
+(def closePicker-js :- String
+  "try { document.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true,cancelable:true})); } catch(e){} return 1;")
+
+(defn key-action [ch :- String] :- Any
+  [{:type "key" :id "kbd"
+    :actions [{:type "keyDown" :value ch} {:type "keyUp" :value ch}]}])
+
+(js/export (def tests :- Any
+  [(deftest "vim keymap: gjoa.keys.bindings remaps + unbinds keys live" [mn]
+     (await-true "return !!document.querySelector(\"#gjoa-tab-panel\");" 10000)
+     (js/await (sleep 400))
+     (expect (chrome-eval setup-js) "setup failed")
+     (js/await (sleep 200))
+     (chrome-eval closePicker-js)
+     ;; --- 't' is UNBOUND (opens nothing → no mid-test close needed) ---
+     (js/await (.performActions mn (key-action "t")))
+     (js/await (sleep 1000))
+     (expect (not (chrome-eval pickerOpen-js))
+       "unbound key 't' still opened the tabs picker (override null not honored)")
+     ;; --- 'q' is REBOUND to the tabs picker (opens at the end) ---
+     (js/await (.performActions mn (key-action "q")))
+     (await-true pickerOpen-js 4000)
+     (expect (chrome-eval pickerOpen-js)
+       "rebound key 'q'->tabsPicker did not open the picker (override remap not honored)")
+     (chrome-eval cleanup-js))]))
+
+(js/export-default tests)

@@ -31,20 +31,55 @@
 ;; on every about: page and yields only when a form field is actually focused. Kept
 ;; as a structured escape hatch in case one page ever needs a hard bail.
 (def PRIVILEGED-BAIL-URI-PREFIXES :- Any [])
-(def LEADER-BINDINGS :- Any
-  [{:key "t" :desc "tabs (this window)"}
-   {:key "T" :desc "tabs (all windows)"}
-   {:key "o" :desc "urlbar"}
-   {:key "O" :desc "urlbar (new tab)"}
-   {:key "x" :desc "close tab"}
-   {:key "`" :desc "last tab"}
-   {:key "h" :desc "history back"}
-   {:key "l" :desc "history forward"}
-   {:key "j" :desc "scroll down"}
-   {:key "k" :desc "scroll up"}
-   {:key "e" :desc "toggle compact mode"}
-   {:key "b" :desc "toggle sidebar strip (horizontal)"}
-   {:key "?" :desc "show this help"}])
+;; THE command registry — the single source of truth for the global (normal-mode)
+;; vim keymap. Each command has a stable :id (what about:vim and `:bind` reference,
+;; and the gjoa.keys.<id>.enabled toggle), a :default key, a :desc, and a :cat.
+;; The handler thunks live inside the vim closure (build-handlers below) keyed by
+;; :id; dispatch, the which-key overlay, and (later) about:vim are all projections
+;; of THIS list — so they can't drift from what actually fires.
+(def VIM-COMMANDS :- Any
+  [{:id "tabsPicker"    :key "t" :desc "tabs (this window)"                 :cat "Tabs"}
+   {:id "tabsPickerAll" :key "T" :desc "tabs (all windows)"                :cat "Tabs"}
+   {:id "urlbar"        :key "o" :desc "urlbar"                            :cat "Navigation"}
+   {:id "urlbarNewTab"  :key "O" :desc "urlbar (new tab)"                  :cat "Navigation"}
+   {:id "closeTab"      :key "x" :desc "close tab"                         :cat "Tabs"}
+   {:id "lastTab"       :key "`" :desc "last tab"                          :cat "Tabs"}
+   {:id "back"          :key "h" :desc "history back"                      :cat "Navigation"}
+   {:id "forward"       :key "l" :desc "history forward"                   :cat "Navigation"}
+   {:id "scrollDown"    :key "j" :desc "scroll down"                       :cat "Scrolling"}
+   {:id "scrollUp"      :key "k" :desc "scroll up"                         :cat "Scrolling"}
+   {:id "toggleCompact" :key "e" :desc "toggle compact mode"              :cat "Layout"}
+   {:id "toggleStrip"   :key "b" :desc "toggle sidebar strip (horizontal)" :cat "Layout"}
+   {:id "exCommand"     :key ":" :desc "command palette"                  :cat "Command"}
+   {:id "help"          :key "?" :desc "show this help"                   :cat "Help"}])
+
+;; Default key → command-id, derived from VIM-COMMANDS. The EFFECTIVE keymap is
+;; this overlaid by the user override pref gjoa.keys.bindings (JSON {key: id|null};
+;; null unbinds). about:vim + `:bind` (P2/P3) edit that one pref.
+(def DEFAULT-KEYMAP :- Any
+  (let [m (Map.)]
+    (.forEach VIM-COMMANDS (fn [c] (.set m (.-key c) (.-id c))))
+    m))
+
+;; Valid command ids. A key whose override resolves outside this set is ignored —
+;; an unknown/typo binding must NOT preventDefault and swallow the key.
+(def COMMAND-IDS :- Any
+  (let [s (Set.)]
+    (.forEach VIM-COMMANDS (fn [c] (.add s (.-id c))))
+    s))
+
+;; Effective command-id bound to `key`. overrides-raw is the raw pref string; ""
+;; (no custom binds — the common case) takes the pure-default fast path.
+(defn effective-command-id [key :- String overrides-raw :- String] :- Any
+  (if (= overrides-raw "")
+    (.get DEFAULT-KEYMAP key)
+    (try
+      (let [ov (JSON/parse overrides-raw)
+            v (get ov key)]
+        (if (= (typeof v) "undefined")
+          (.get DEFAULT-KEYMAP key)   ; not overridden → default
+          v))                          ; overridden id, or null = unbound
+      (catch Any _e (.get DEFAULT-KEYMAP key)))))
 (def EX-COMMANDS :- Any
   [{:name "group"      :description "Create a named folder at cursor"                    :takesArgs true}
    {:name "refile"     :description "Move cursor tab into a different group"             :takesArgs false}
@@ -519,11 +554,6 @@
         leader-timeout-ms (fn [] :- Int
           (pref-int "gjoa.keys.leader_timeout" 1500))
 
-        binding-pref-name (fn [key] :- String
-          (cond
-            (= key ":") "colon"
-            (= key "`") "backtick"
-            :else key))
 
         which-key-ensure (fn []
           (if (some-> vs .-which-key-el .-isConnected)
@@ -534,8 +564,11 @@
               (set! (.-hidden el) true)
               (set! (.-textContent header) "leader")
               (.appendChild el header)
-              (.forEach LEADER-BINDINGS (fn [b]
-                (when (key-enabled (binding-pref-name (.-key b)))
+              (.forEach VIM-COMMANDS (fn [b]
+                ;; exCommand (":") is listed in the ": commands" section below, not
+                ;; the leader keymap. Guard by command-id (the gjoa.keys.<id>.enabled
+                ;; toggle). Shows the DEFAULT key; effective-key display lands with about:vim.
+                (when (and (not= (.-id b) "exCommand") (key-enabled (.-id b)))
                   (let [row (htm "div" "gjoa-wk-row")
                         k (htm "span" "gjoa-wk-key")
                         d (htm "span" "gjoa-wk-desc")]
@@ -606,53 +639,55 @@
             (set! (.-hidden (.-which-key-el vs)) true)))
 
 
+        ;; id → action. The one place each command's behavior lives; dispatch and
+        ;; (later) about:vim / :bind reference commands by id. `e` is the keydown.
+        command-handlers (fn [e id] :- Any
+          (cond
+            (= id "tabsPicker")    (open-tabs-picker "space")
+            (= id "tabsPickerAll") (open-tabs-picker "all")
+            (= id "exCommand")     (open-ex-command-picker)
+            (= id "closeTab")      (try (.removeTab gBrowser (.-selectedTab gBrowser)) (catch Any _e nil))
+            (= id "urlbar")        (activate-urlbar "current")
+            (= id "urlbarNewTab")  (activate-urlbar "newTab")
+            (= id "lastTab")       (toggle-last-tab)
+            (= id "back")          (try (.goBack (.-selectedBrowser gBrowser)) (catch Any _e nil))
+            (= id "forward")       (try (.goForward (.-selectedBrowser gBrowser)) (catch Any _e nil))
+            (= id "scrollDown")
+              (when (not (.-repeat e))
+                (try (some-> gBrowser .-selectedBrowser .-browsingContext .-currentWindowGlobal
+                       (.getActor "GjoaInput") (.sendAsyncMessage "GjoaInput:ScrollStart" {:dy 1}))
+                     (catch Any _e nil)))
+            (= id "scrollUp")
+              (when (not (.-repeat e))
+                (try (some-> gBrowser .-selectedBrowser .-browsingContext .-currentWindowGlobal
+                       (.getActor "GjoaInput") (.sendAsyncMessage "GjoaInput:ScrollStart" {:dy -1}))
+                     (catch Any _e nil)))
+            (= id "toggleCompact")
+              ;; #127: mode-aware. In COMPACT mode `e` toggles the overlay reveal
+              ;; (pin/unpin); in STATIC mode it hides the sidebar (switches to compact).
+              (let [sb (by-id "sidebar-main")]
+                (if (pref-bool "gjoa.sidebar.compact" false)
+                  (when sb
+                    (if (or (.hasAttribute sb "gjoa-pinned") (.hasAttribute sb "gjoa-has-hover"))
+                      (do (.removeAttribute sb "gjoa-pinned")
+                          (.removeAttribute sb "gjoa-has-hover"))
+                      (.setAttribute sb "gjoa-pinned" "true")))
+                  (do (when sb (.removeAttribute sb "gjoa-pinned"))
+                      (set-pref-bool! "gjoa.sidebar.compact" true))))
+            (= id "toggleStrip")   (toggle-h-sidebar-strip)
+            (= id "help")          (toggle-which-key)
+            :else nil))
+
         try-dispatch-binding (fn [e] :- Bool
+          ;; Registry dispatch: key → effective command-id (VIM-COMMANDS defaults
+          ;; overlaid by the gjoa.keys.bindings override pref) → run its handler.
+          ;; Nothing hardcoded; about:vim + `:bind` rebind by editing that one pref.
           (if (or (.-ctrlKey e) (.-altKey e) (.-metaKey e))
             false
-            (cond
-              (key= e "t") (dispatch-key e "t" (open-tabs-picker "space"))
-              (key= e "T") (dispatch-key e "T" (open-tabs-picker "all"))
-              (key= e ":") (dispatch-key e "colon" (open-ex-command-picker))
-              (key= e "x") (dispatch-key e "x"
-                (try (.removeTab gBrowser (.-selectedTab gBrowser)) (catch Any _e nil)))
-              (key= e "o") (dispatch-key e "o" (activate-urlbar "current"))
-              (key= e "O") (dispatch-key e "O" (activate-urlbar "newTab"))
-              (key= e "`") (dispatch-key e "backtick" (toggle-last-tab))
-              (key= e "h") (dispatch-key e "h"
-                (try (.goBack (.-selectedBrowser gBrowser)) (catch Any _e nil)))
-              (key= e "l") (dispatch-key e "l"
-                (try (.goForward (.-selectedBrowser gBrowser)) (catch Any _e nil)))
-              (key= e "j") (dispatch-key e "j"
-                (when (not (.-repeat e))
-                  (try (some-> gBrowser .-selectedBrowser .-browsingContext .-currentWindowGlobal
-                         (.getActor "GjoaInput") (.sendAsyncMessage "GjoaInput:ScrollStart" {:dy 1}))
-                       (catch Any _e nil))))
-              (key= e "k") (dispatch-key e "k"
-                (when (not (.-repeat e))
-                  (try (some-> gBrowser .-selectedBrowser .-browsingContext .-currentWindowGlobal
-                         (.getActor "GjoaInput") (.sendAsyncMessage "GjoaInput:ScrollStart" {:dy -1}))
-                       (catch Any _e nil))))
-              (key= e "e") (dispatch-key e "e"
-                ;; #127: mode-aware. In COMPACT/collapse mode, `e` toggles the overlay
-                ;; reveal over the page (pin/unpin) — mirrors mousing to the edge, without
-                ;; changing the mode. In STATIC mode, `e` hides the sidebar by switching to
-                ;; compact (its prior behavior). CSS reveals on [gjoa-pinned]; is-guarded
-                ;; keeps a pinned overlay open.
-                (let [sb (by-id "sidebar-main")]
-                  (if (pref-bool "gjoa.sidebar.compact" false)
-                    (when sb
-                      (if (or (.hasAttribute sb "gjoa-pinned") (.hasAttribute sb "gjoa-has-hover"))
-                        ;; currently revealed (pinned OR hovered) → dismiss: clear BOTH, else
-                        ;; a leftover gjoa-has-hover keeps the CSS reveal and e can't dismiss.
-                        (do (.removeAttribute sb "gjoa-pinned")
-                            (.removeAttribute sb "gjoa-has-hover"))
-                        ;; hidden → reveal, pinned until `e` again OR the user enters+leaves.
-                        (.setAttribute sb "gjoa-pinned" "true")))
-                    (do (when sb (.removeAttribute sb "gjoa-pinned"))
-                        (set-pref-bool! "gjoa.sidebar.compact" true)))))
-              (key= e "b") (dispatch-key e "b" (toggle-h-sidebar-strip))
-              (key= e "?") (dispatch-key e "question" (toggle-which-key))
-              :else false)))
+            (let [id (effective-command-id (.-key e) (pref-str "gjoa.keys.bindings" ""))]
+              (if (and id (.has COMMAND-IDS id))
+                (dispatch-key e id (command-handlers e id))
+                false))))
 
 
         focus-content (fn []

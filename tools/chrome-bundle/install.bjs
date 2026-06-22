@@ -20,7 +20,7 @@
 ;; can't accidentally activate dev mode.
 (ns gjoa.tools.chrome-bundle.install
   (:require [fs :refer [existsSync]]
-            [fs/promises :refer [rm symlink]]
+            [fs/promises :refer [rm symlink cp]]
             [path :refer [join]]))
 (define-mode strict)
 (declare-extern [process] Any)
@@ -38,6 +38,17 @@
 (def INSTALL-ROOT :- String (join MOZ-OBJDIR "dist" "bin"))
 (def GJOA-DEV :- String (join INSTALL-ROOT "gjoa-dev"))
 
+;; The LOOSE toolkit overlays (dark-mode actor + cosmetic actor + fixes JSON)
+;; live at engine/toolkit/, which the objdir symlinks into dist/bin/modules/.
+;; Only the heavy `gjoa import` refreshed them — `gjoa sync` (chrome:dist +
+;; THIS) refreshed ONLY chrome bundles, so any src edit to these rotted in the
+;; running mach binary until the next import. THAT is the recurring "youtube
+;; went light again" / "my cosmetic fix didn't take" class: a chrome change
+;; landed, a toolkit change silently didn't. Mirror them here so one `gjoa
+;; sync` keeps chrome AND toolkit overlays current.
+(def SRC-TOOLKIT :- String (join REPO-ROOT "src" "gjoa" "toolkit"))
+(def ENG-TOOLKIT :- String (join REPO-ROOT "engine" "toolkit"))
+
 (defn main! [] :- Any
   (when (not (existsSync DIST-CHROME))
     (console/error "✗ dist/chrome/ not built — run `bun run chrome:dist` first")
@@ -52,8 +63,15 @@
   (when (existsSync GJOA-DEV)
     (js/await (rm GJOA-DEV {:recursive true :force true})))
   (js/await (symlink DIST-CHROME GJOA-DEV "dir"))
-
   (console/log (str "✓ symlinked " DIST-CHROME " → " GJOA-DEV))
+
+  ;; Refresh the loose toolkit overlays src → engine (the objdir symlinks read
+  ;; them live). cp recursive+force MERGES into engine/toolkit, overwriting only
+  ;; the files present in src; the rest of engine/toolkit is untouched.
+  (when (existsSync SRC-TOOLKIT)
+    (js/await (cp SRC-TOOLKIT ENG-TOOLKIT {:recursive true :force true}))
+    (console/log (str "✓ synced loose toolkit overlays " SRC-TOOLKIT " → " ENG-TOOLKIT)))
+
   (console/log "\nLaunch:")
   (console/log (str "  " INSTALL-ROOT "/gjoa --no-remote --profile <profile_dir>"))
   (console/log "\nDaily loop: edit src/gjoa/chrome/bjs/* → `bun run chrome:dist` → restart gjoa."))

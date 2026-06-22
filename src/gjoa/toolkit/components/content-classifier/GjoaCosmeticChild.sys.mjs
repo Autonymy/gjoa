@@ -21,7 +21,9 @@ const COALESCE_MS = 250; // trailing-debounce window for the observer flush
 // adblock-rust without its css-validation feature, so validate HERE: a legitimate
 // element-hiding selector never contains these characters, so reject any that do
 // (a dropped over-clever rule is strictly safer than a CSS-injection breakout).
-const UNSAFE_SELECTOR = /[{}@<]/;
+// Also reject `*/` — a CSS comment-close that could terminate an enclosing comment
+// and resume attacker CSS — which `{ } @ <` alone miss (#121).
+const UNSAFE_SELECTOR = /[{}@<]|\*\//;
 function safeSelector(s) {
   return typeof s === "string" && s.length > 0 && !UNSAFE_SELECTOR.test(s);
 }

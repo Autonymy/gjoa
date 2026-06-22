@@ -51,6 +51,21 @@
                        " }"
                        " :host([expanded]) .bottom-actions {"
                        "   align-self: center !important;"
+                       " }"
+                       ;; Kill the startup overflow-flicker: the native sidebar's
+                       ;; IntersectionObserver mis-fires before the column reaches
+                       ;; full height → momentarily shows the `>>` chevron and
+                       ;; inline-`visibility:hidden`s the real tool buttons, which
+                       ;; then pop in. In the tall expanded vertical column these
+                       ;; few buttons always fit, so suppress the chevron and keep
+                       ;; the originals visible (overrides the inline hidden). Trade:
+                       ;; a genuinely-overflowing tool set (15+ ext, short window)
+                       ;; no longer collapses to `>>` — acceptable vs a per-launch flash.
+                       " :host([expanded]) [part='overflow-button'] {"
+                       "   display: none !important;"
+                       " }"
+                       " :host([expanded]) button-group.tools-and-extensions:not([part='overflow-button']) > moz-button {"
+                       "   visibility: visible !important;"
                        " }"))
                 (.push (.-adoptedStyleSheets sr) s)))))
 

@@ -768,6 +768,17 @@ Preserve these (security warnings):
   z-index: 10001 !important;
   /* Anchor the urlbar-results dropdown to our floating width. */
   --urlbar-width: var(--gjoa-floating-w) !important;
+  /* Subtle scale-in so the centered bar reads as a deliberate appearance, not a
+   * teleport. `scale` (individual property) composes with `transform: none`
+   * above — no conflict. Disabled under prefers-reduced-motion below. */
+  animation: gjoa-urlbar-float-in 120ms ease-out !important;
+}
+@keyframes gjoa-urlbar-float-in {
+  from { opacity: 0; scale: 0.97; }
+  to   { opacity: 1; scale: 1; }
+}
+@media (prefers-reduced-motion: reduce) {
+  :root[gjoa-urlbar-floating] #urlbar { animation: none !important; }
 }
 
 /* Pin width during breakout-extend (the in-sidebar selectors ALSO have

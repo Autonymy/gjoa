@@ -854,6 +854,18 @@
                       (pass "S" "security-critical patches persist (#120)"
                         (str (.-length sec-patches) " security-tagged patch(es) apply cleanly + all declared anchors resolve")))))))))))))
 
+;; Gate T — stewardship tapestry: every gate/file/script the docs/stewardship/
+;; docs name resolves, and the generated topology.md is current. The manifesto's
+;; "if a name here stops resolving, that is a bug" made mechanical; fails closed.
+(defn gateT [] :- Any
+  (try
+    (let [out (.toString (execSync "bun tools/stewardship/topology.mjs check 2>&1"))]
+      (pass "T" "stewardship tapestry intact (docs ↔ machinery)" (.trim out)))
+    (catch Any e
+      (fail "T" "stewardship tapestry intact (docs ↔ machinery)"
+            (.trim (if (.-stdout e) (.toString (.-stdout e)) (or (.-message e) "check failed")))
+            "a docs/stewardship/ ref dangled or topology.md is stale — `bun run stewardship:gen`, then commit"))))
+
 ;; ── Run + render ──────────────────────────────────────────────────────────
 (defn main! [] :- Any
   (console/log (bold "gjoa preflight"))
@@ -864,7 +876,7 @@
                ["E" gateE] ["F" gateF] ["G" gateG] ["H" gateH]
                ["I" gateI] ["J" gateJ] ["K" gateK] ["L" gateL] ["M" gateM]
                ["N" gateN] ["O" gateO] ["P" gateP] ["Q" gateQ]
-               ["R" gateR] ["S" gateS]]]
+               ["R" gateR] ["S" gateS] ["T" gateT]]]
     (doseq [gate gates]
       (let [fn (aget gate 1)]
         (try (fn)

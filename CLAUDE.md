@@ -134,7 +134,7 @@ tax that compounds. We hold it **lean, robust, comprehensive, fast** and we
 Every test carries a `budgetMs` + category in `configs/test-budgets.json`; the
 profiler grades actual-vs-budget from history and gates on regressions.
 
-- **Policy + procedure:** [`docs/test-stewardship.md`](docs/test-stewardship.md) —
+- **Policy + procedure:** [`docs/stewardship/testing.md`](docs/stewardship/testing.md) —
   read it before adding/editing tests. No test enters un-budgeted; prefer a unit
   test (ms) over a browser boot; fixed `(sleep N)` is a smell — `await-true` a
   real condition.
@@ -147,7 +147,7 @@ profiler grades actual-vs-budget from history and gates on regressions.
 - [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) — map, rebuild ladder, decision tree
 - [`docs/daily-loop.md`](docs/daily-loop.md) — command cheatsheet
 - [`docs/nix-dev-options.md`](docs/nix-dev-options.md) — when mach vs nix
-- [`docs/test-stewardship.md`](docs/test-stewardship.md) — test suite hygiene policy + profiler
+- [`docs/stewardship/testing.md`](docs/stewardship/testing.md) — test suite hygiene policy + profiler
 - [`BUILD-LEDGER.md`](BUILD-LEDGER.md) — every build's outcome + postmortems
 - `bun run status` / `gjoa status` — operational dashboard
 - `bun run preflight` / `gjoa preflight` — mandatory before any rebuild

@@ -1,5 +1,5 @@
 {
-  "_doc": "Per-test budgets + tiers. Policy: docs/test-stewardship.md. Maintained by `bun run test:audit`. budgetMs=lean target wall time; tier=smoke|fast|slow|network for modular/locality runs.",
+  "_doc": "Per-test budgets + tiers. Policy: docs/stewardship/testing.md. Maintained by `bun run test:audit`. budgetMs=lean target wall time; tier=smoke|fast|slow|network for modular/locality runs.",
   "suiteBudgetMs": 134250,
   "lastAudit": {
     "date": "2026-06-22",

@@ -891,33 +891,50 @@ Preserve these (security warnings):
 /* Default state: hidden off-screen.
  * --gjoa-toolbox-height is set by JS when the toolbox is above the sidebar
  * (collapsed vertical or horizontal layout), so compact mode doesn't overlap it. */
+/* The hover-reveal is a FLOATING CARD that slides out to the STATIC sidebar's
+ * resting position — inset from the window edge by --gjoa-card-gap, rounded +
+ * shadowed like the static card — and floats OVER the content (position:fixed,
+ * z-index above the page), so it never pushes or resizes the page. Only the
+ * reveal LOCATION changed (was flush at the screen edge); the hover trigger and
+ * reveal mechanics are unchanged. */
 #sidebar-main[data-gjoa-compact] {
   position: fixed !important;
-  top: var(--gjoa-toolbox-height, 0px) !important;
-  height: calc(100vh - var(--gjoa-toolbox-height, 0px)) !important;
+  top: calc(var(--gjoa-toolbox-height, 0px) + var(--gjoa-card-gap)) !important;
+  height: calc(100vh - var(--gjoa-toolbox-height, 0px) - 2 * var(--gjoa-card-gap)) !important;
   z-index: 10 !important;
   pointer-events: none !important;
+  border-radius: var(--gjoa-card-radius) !important;
+  box-shadow: var(--gjoa-card-shadow) !important;
+  background-color: var(--gjoa-bg) !important;
   transition: transform var(--gjoa-transition-duration) var(--gjoa-transition-easing) !important;
 }
 
-/* Slide direction depends on which side the sidebar is anchored to. */
+/* Resting inset + slide direction depend on which side the sidebar is anchored to.
+ * Hidden state slides FULLY off-screen (clears the inset + the card shadow). */
 @media -moz-pref("sidebar.position_start") {
   #sidebar-main[data-gjoa-compact] {
-    left: 0 !important;
-    transform: translateX(-100%) !important;
+    left: var(--gjoa-card-gap) !important;
+    transform: translateX(calc(-100% - var(--gjoa-card-gap) - 16px)) !important;
   }
 }
 @media not -moz-pref("sidebar.position_start") {
   #sidebar-main[data-gjoa-compact] {
-    right: 0 !important;
-    transform: translateX(100%) !important;
+    right: var(--gjoa-card-gap) !important;
+    transform: translateX(calc(100% + var(--gjoa-card-gap) + 16px)) !important;
   }
 }
 
-/* Visible when hovered (gjoa-has-hover set by JS) */
+/* Visible when hovered (gjoa-has-hover set by JS) — lands at the inset resting spot. */
 #sidebar-main[data-gjoa-compact][gjoa-has-hover] {
   transform: translateX(0) !important;
   pointer-events: auto !important;
+}
+
+/* Round the card cleanly: the moved-in toolbox / nav-bar paint transparent so the
+ * card's own rounded --gjoa-bg shows at the corners (mirrors the static card). */
+#sidebar-main[data-gjoa-compact] #navigator-toolbox,
+#sidebar-main[data-gjoa-compact] #nav-bar {
+  background-color: transparent !important;
 }
 
 /* We remove popover="manual" from the urlbar in compact mode (JS) so it

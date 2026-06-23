@@ -3,6 +3,13 @@
 ;; engine/ has its own .git initialized inside it (see ensureEngineGit), and
 ;; we record applied patches in engine/.gjoa-applied-patches so re-runs skip.
 ;;
+;; Each record is `<name>\t<sha256-of-patch-file>`. A patch is skipped ONLY when
+;; its name is recorded AND the recorded hash matches the patch file's current
+;; hash. A CHANGED patch (same name, new content) hashes differently, so it is
+;; re-applied instead of silently skipped (which once nearly shipped a stale
+;; 0008). Backward-compatible: an old record with no tab/hash → unknown content
+;; → treated as needs-recheck (re-hash + re-apply).
+;;
 ;; We use git apply rather than git am because mozilla-central's tree isn't
 ;; commit-aware in the way we'd need — we just want a plain patch application.
 (ns gjoa.tools.prep.patches
@@ -15,6 +22,16 @@
 (declare-extern [Bun process] Any)
 
 (def APPLIED-LOG :- String ".gjoa-applied-patches")
+
+;; Hex SHA-256 of a patch file's bytes (Bun runtime — same hasher download.bjs
+;; uses). This is the identity we record/compare so a changed patch (same name,
+;; new content) is detected and re-applied instead of silently skipped.
+(defn sha256OfFile [path :- String] :- Any
+  (let [file (.file Bun path)
+        buf (js/await (.arrayBuffer file))
+        hash (Bun.CryptoHasher. "sha256")]
+    (.update hash buf)
+    (.digest hash "hex")))
 
 ;; Run a command in `cwd`, inheriting stdio. Returns the exit code.
 (defn run-git [args :- Any cwd :- String] :- Any
@@ -35,19 +52,34 @@
       (js/await (run-git ["git" "-c" "user.email=prep@gjoa" "-c" "user.name=prep"
                           "commit" "-q" "-m" "vanilla mozilla-central"] ENGINE-DIR)))))
 
+;; Read the applied-patches log into a Map of name -> recorded-hash. Each line is
+;; `<name>\t<hash>`. A legacy line with no tab (old format, name only) yields a
+;; nil hash — which the apply loop reads as "content unknown, re-check" and
+;; re-applies (then records the real hash going forward).
 (defn readApplied [] :- Any
-  (let [path (join ENGINE-DIR APPLIED-LOG)]
+  (let [path (join ENGINE-DIR APPLIED-LOG)
+        applied (Map.)]
     (if (not (existsSync path))
-      (Set.)
+      applied
       (let [text (js/await (.text (.file Bun path)))
-            entries (.filter (.map (.split text "\n") (fn [s] (.trim s)))
-                             (fn [s] (.-length s)))]
-        (Set. entries)))))
+            lines (.filter (.split text "\n") (fn [s] (.-length (.trim s))))]
+        (.forEach lines
+          (fn [line :- String]
+            (let [tab (.indexOf line "\t")]
+              (if (< tab 0)
+                ;; Legacy record: name only, no hash → nil (needs recheck).
+                (.set applied (.trim line) nil)
+                (.set applied (.trim (.slice line 0 tab))
+                              (.trim (.slice line (+ tab 1))))))))
+        applied))))
 
+;; Persist the applied-patches log from a Map of name -> hash, sorted by name,
+;; one `<name>\t<hash>` line each.
 (defn recordApplied [applied :- Any] :- Any
   (let [path (join ENGINE-DIR APPLIED-LOG)
-        sorted (.sort (Array/from applied))]
-    (js/await (.write Bun path (str (.join sorted "\n") "\n")))))
+        names (.sort (Array/from (.keys applied)))
+        body (.join (.map names (fn [n :- String] (str n "\t" (.get applied n)))) "\n")]
+    (js/await (.write Bun path (str body "\n")))))
 
 ;; Patch-header lint. Non-fatal — we always apply patches regardless, but a
 ;; missing header surfaces immediately so future maintainers (read: the user,
@@ -110,9 +142,17 @@
                     (js/await (recordApplied applied))
                     (.ok log (str "applied " newCount " new patch" (if (= newCount 1) "" "es")))))
                 (let [name (aget allPatches i)]
-                  (if (.has applied name)
-                    (recur (+ i 1) newCount)
-                    (do
-                      (js/await (applyOne name))
-                      (.add applied name)
-                      (recur (+ i 1) (+ newCount 1))))))))))))))
+                  (let [curHash (js/await (sha256OfFile (join PATCHES-DIR name)))
+                        recordedHash (.get applied name)]
+                    ;; Skip ONLY when the name is recorded AND its hash matches the
+                    ;; patch file's current content. A missing record OR a nil hash
+                    ;; (legacy name-only entry) OR a hash mismatch (changed patch)
+                    ;; all fall through to re-apply — closing the stale-patch hole.
+                    (if (and (.has applied name) (= recordedHash curHash))
+                      (recur (+ i 1) newCount)
+                      (do
+                        (when (and (.has applied name) (not= recordedHash curHash))
+                          (.step log (str "patch " name " changed since last apply — re-applying")))
+                        (js/await (applyOne name))
+                        (.set applied name curHash)
+                        (recur (+ i 1) (+ newCount 1)))))))))))))))

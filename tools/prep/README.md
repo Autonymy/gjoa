@@ -54,8 +54,12 @@ substitution table needs updating.
 
 Drop a `*.patch` file into `patches/`. Filenames are applied in
 alphabetical order (prefix with `0010-`, `0020-` etc. if order matters).
-Re-run `bun run import`. The tool records applied patches in
-`engine/.gjoa-applied-patches` so re-runs skip already-applied ones.
+Re-run `bun run import`. The tool records each applied patch in
+`engine/.gjoa-applied-patches` as `<name>\t<sha256-of-patch-file>`, and a
+patch is skipped on re-run ONLY when its name is recorded AND the recorded
+hash matches the patch file's current content. Editing an existing patch
+(same name, new bytes) therefore re-applies it instead of silently skipping
+(which once nearly shipped a stale `0008`).
 
 ## Adding a new source overlay
 

@@ -1,0 +1,85 @@
+#lang beagle/js
+;; The "does vim ever activate at the wrong time?" matrix. For EVERY focus context
+;; — every input type, textarea/select, contentEditable variants, designMode, the
+;; ARIA editable roles, readonly/disabled, OPEN and CLOSED shadow DOM, and same-doc
+;; iframes — load a page that focuses that element and assert the GjoaInput actor's
+;; _gjoaEditable verdict (which chrome reads at every keydown to yield-or-fire).
+;;
+;; Editable => vim YIELDS (you can type). Non-editable/unfocusable => vim is LIVE.
+;; A wrong verdict here is exactly the "misfire" class — a failing row is a real
+;; detector bug, and this is the permanent regression guard for it.
+;;
+;; Mechanics mirror vim-content-focus (the proven path): a chrome addTab of a data:
+;; page, the focus target rendered position:fixed top-left so it's really focusable
+;; headless (autofocus / inline .focus() on an unrendered element does NOT fire), and
+;; _gjoaEditable read from chrome after the actor's focusin→parent round-trip.
+(ns gjoa.tests.integration.vim-yield-matrix
+  (:require [gjoa.tests.dsl :refer [deftest chrome-eval await-true expect wait-for sleep]]))
+(define-mode strict)
+
+(def FX :- String "position:fixed;left:0;top:0") ;; render the target so it can focus
+
+;; {:name :html :editable}. Inputs use autofocus; divs/shadow/iframe focus inline.
+(def CASES :- Any
+  [{:name "input-text"      :html (str "<input type=text autofocus style='" FX "'>")           :editable true}
+   {:name "input-search"    :html (str "<input type=search autofocus style='" FX "'>")         :editable true}
+   {:name "input-email"     :html (str "<input type=email autofocus style='" FX "'>")          :editable true}
+   {:name "input-url"       :html (str "<input type=url autofocus style='" FX "'>")            :editable true}
+   {:name "input-tel"       :html (str "<input type=tel autofocus style='" FX "'>")            :editable true}
+   {:name "input-password"  :html (str "<input type=password autofocus style='" FX "'>")       :editable true}
+   {:name "input-number"    :html (str "<input type=number autofocus style='" FX "'>")         :editable true}
+   {:name "input-date"      :html (str "<input type=date autofocus style='" FX "'>")           :editable true}
+   {:name "input-dtlocal"   :html (str "<input type=datetime-local autofocus style='" FX "'>") :editable true}
+   {:name "input-month"     :html (str "<input type=month autofocus style='" FX "'>")          :editable true}
+   {:name "input-week"      :html (str "<input type=week autofocus style='" FX "'>")           :editable true}
+   {:name "input-time"      :html (str "<input type=time autofocus style='" FX "'>")           :editable true}
+   {:name "textarea"        :html (str "<textarea autofocus style='" FX "'></textarea>")       :editable true}
+   {:name "select"          :html (str "<select autofocus style='" FX "'><option>a</option></select>") :editable true}
+   {:name "contenteditable"    :html (str "<div contenteditable=true tabindex=0 id=t style='" FX "'>x</div><script>onload=()=>t.focus()</script>") :editable true}
+   {:name "contenteditable-pt" :html (str "<div contenteditable=plaintext-only tabindex=0 id=t style='" FX "'>x</div><script>onload=()=>t.focus()</script>") :editable true}
+   {:name "designmode"      :html (str "<div style='" FX "'>edit</div><script>onload=()=>{document.designMode='on';document.body.focus()}</script>") :editable true}
+   {:name "role-textbox"    :html (str "<div role=textbox tabindex=0 id=t style='" FX "'>x</div><script>onload=()=>t.focus()</script>")   :editable true}
+   {:name "role-searchbox"  :html (str "<div role=searchbox tabindex=0 id=t style='" FX "'>x</div><script>onload=()=>t.focus()</script>") :editable true}
+   {:name "role-combobox"   :html (str "<div role=combobox tabindex=0 id=t style='" FX "'>x</div><script>onload=()=>t.focus()</script>")  :editable true}
+   {:name "role-application" :html (str "<div role=application tabindex=0 id=t style='" FX "'>x</div><script>onload=()=>t.focus()</script>") :editable true}
+   {:name "shadow-open"     :html (str "<div id=h style='" FX "'></div><script>onload=()=>{var s=h.attachShadow({mode:'open'});var i=document.createElement('input');s.appendChild(i);i.focus()}</script>")   :editable true}
+   {:name "shadow-closed"   :html (str "<div id=h style='" FX "'></div><script>onload=()=>{var s=h.attachShadow({mode:'closed'});var i=document.createElement('input');s.appendChild(i);i.focus()}</script>") :editable true}
+   {:name "iframe-input"    :html (str "<iframe id=f style='" FX "' srcdoc='<input autofocus>'></iframe><script>onload=()=>setTimeout(()=>{f.contentWindow.focus();f.contentDocument.querySelector('input').focus()},40)</script>") :editable true}
+   {:name "input-button"    :html (str "<input type=button value=b autofocus style='" FX "'>") :editable false}
+   {:name "input-checkbox"  :html (str "<input type=checkbox autofocus style='" FX "'>")       :editable false}
+   {:name "input-radio"     :html (str "<input type=radio autofocus style='" FX "'>")          :editable false}
+   {:name "input-submit"    :html (str "<input type=submit autofocus style='" FX "'>")         :editable false}
+   {:name "input-file"      :html (str "<input type=file autofocus style='" FX "'>")           :editable false}
+   {:name "input-color"     :html (str "<input type=color autofocus style='" FX "'>")          :editable false}
+   {:name "input-readonly"  :html (str "<input type=text readonly autofocus style='" FX "'>")  :editable false}
+   {:name "input-disabled"  :html (str "<input type=text disabled style='" FX "'>")            :editable false}
+   {:name "link"            :html (str "<a href=# id=t style='" FX "'>l</a><script>onload=()=>t.focus()</script>")             :editable false}
+   {:name "button-el"       :html (str "<button autofocus style='" FX "'>b</button>")                                          :editable false}
+   {:name "role-button"     :html (str "<div role=button tabindex=0 id=t style='" FX "'>b</div><script>onload=()=>t.focus()</script>") :editable false}
+   {:name "div-tabindex"    :html (str "<div tabindex=0 id=t style='" FX "'>d</div><script>onload=()=>t.focus()</script>")     :editable false}
+   {:name "nothing-focused" :html "<p>plain text, no focus target</p>"                                                         :editable false}])
+
+(def editable-js :- String "return gBrowser.selectedBrowser._gjoaEditable === true;")
+(def on-data-js :- String "return gBrowser.selectedBrowser.currentURI.spec.indexOf('data:')===0;")
+
+(js/export (def tests :- Any
+  [(deftest "vim yield matrix: editable contexts yield, everything else stays live" [mn]
+     (await-true "return !!(window.gjoaTest && window.gjoaTest.vim && document.getElementById('gjoa-tab-panel'));" 10000)
+     ;; run EVERY case, collect mismatches, assert once — so one run shows the whole
+     ;; gap surface instead of stopping at the first wrong row.
+     (let [fails []]
+       (doseq [c CASES]
+         ;; fresh tab per case → fresh _gjoaEditableFrames set (vim-content-focus path)
+         (chrome-eval (str "var t=gBrowser.addTab('data:text/html,'+encodeURIComponent('<!DOCTYPE html><body style=\"height:2000px\">'+"
+                           (JSON/stringify (.-html c))
+                           "+'</body>'),{triggeringPrincipal:Services.scriptSecurityManager.getSystemPrincipal()});gBrowser.selectedTab=t;return 1;"))
+         (await-true on-data-js 8000)
+         (js/await (sleep 1200))
+         (let [verdict (chrome-eval editable-js)]
+           (when (not= verdict (.-editable c))
+             (.push fails (str (.-name c) " (want " (.-editable c) ", got " verdict ")")))))
+       (expect (= 0 (.-length fails))
+         (str "vim activated at the wrong time for " (.-length fails)
+              " context(s): " (.join fails "; ")))))]))
+
+(js/export-default tests)

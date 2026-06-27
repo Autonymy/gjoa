@@ -302,6 +302,13 @@
       "note": "[bloated] 2000ms of fixed sleeps (400+1000+600) plus a 10000ms readiness ceiling and two 8000ms data:-URL load ceilings. The `(sle",
       "estSavingsMs": 1600
     },
+    "vim-yield-matrix": {
+      "category": "tabs",
+      "tier": "slow",
+      "budgetMs": 53000,
+      "note": "Comprehensive insert-mode/editable matrix (38 contexts: all input types, contentEditable, designMode, ARIA roles, readonly/disabled, open+closed shadow DOM, iframe). One tab/case; await-true _gjoaEditable for editable rows, 800ms settle for non-editable. Permanent regression guard for vim-activates-at-wrong-time.",
+      "estSavingsMs": 0
+    },
     "vim-hotkeys": {
       "category": "tabs",
       "tier": "fast",

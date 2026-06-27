@@ -1,16 +1,16 @@
 {
-  "_comment": "Per-patch SHA-256 manifest (#104a). Records the expected hash of every patches/*.patch so silent drift is caught: preflight Gate P recomputes each patch's SHA-256 and FAILS if it differs from the value here. Editing a patch REQUIRES updating its hash in this file (review-gated), which is the whole point — a patch can't change unreviewed. This is DISTINCT from the aggregate `gjoa.build.engine-patch-hash` baked into the binary by tools/prep/fingerprint.bjs (a 12-char fold-hash computed at build time for provenance); this file is the per-patch, tracked, drift-gating record. Regenerate with: cd patches && for f in $(ls *.patch | sort); do echo \"$f $(sha256sum \"$f\" | cut -d' ' -f1)\"; done",
+  "_comment": "Per-patch SHA-256 manifest (#104a). Records the expected hash of every patches/*.patch so silent drift is caught: preflight Gate P recomputes each patch's SHA-256 and FAILS if it differs from the value here. Editing a patch REQUIRES updating its hash in this file (review-gated), which is the whole point \u2014 a patch can't change unreviewed. This is DISTINCT from the aggregate `gjoa.build.engine-patch-hash` baked into the binary by tools/prep/fingerprint.bjs (a 12-char fold-hash computed at build time for provenance); this file is the per-patch, tracked, drift-gating record. Regenerate with: cd patches && for f in $(ls *.patch | sort); do echo \"$f $(sha256sum \"$f\" | cut -d' ' -f1)\"; done",
   "algorithm": "sha256",
   "patches": {
     "0001-browser-components-mozbuild-include-gjoa.patch": "8e749716e47f910b646505072d07b16b35286d8a1f93a8a8b7d58f35d3d53d63",
     "0002-browser-glue-import-gjoa-loader.patch": "2f6ae37659aff8b29bedd47336c8d800c6a9ce169d8f7bb1368fd1e604681db9",
+    "0003-newtab-redirector-gjoa.patch": "556b014511a16c996f4a2eefd4650e9cf9487343e97c07ec20651a67b489f63e",
     "0007-enable-sqlite-fts5.patch": "1407c9049294c558f2d7a96c447503868b90d642d03126319c5f04b6e3311c05",
     "0008-content-classifier-cosmetic-filtering.patch": "a227bb98f5c5aabe4bd1629538fce4098ab34d21eaa09240d2a701232d0b2d89",
     "0009-dark-mode-engine-color-inversion.patch": "1eada44c5d90fa33bee66697990d5a1a0911cfd0e624321fa5ab9bef9f3c5624",
     "0010-dark-mode-island-scrim.patch": "69d287b6b04b928d85b7a9862f70eacc993b6424627b73495f2282818fb0f805",
-    "0003-newtab-redirector-gjoa.patch": "556b014511a16c996f4a2eefd4650e9cf9487343e97c07ec20651a67b489f63e",
     "0012-dark-mode-role-resolver.patch": "a76f124386c1709ad66f1317335d5c1e2afc1047bbf45fb2bb1cc3c3d81c09ad",
-    "0013-dark-mode-text-solve.patch": "ec84450a838e134b0d01485d05f3279ec4087f434029c80d25a969fbee567457",
+    "0013-dark-mode-text-solve.patch": "421dd6e4f3c3fa65859bb56a7e1ea94c8d566218c19c4c4fc05a55e2cd771a28",
     "0014-dark-mode-tier0.patch": "8463bb02b29b487104b30a6afa51db5b6c94605f1a610c2aa948ed351325e041"
   }
 }

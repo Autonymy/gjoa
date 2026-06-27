@@ -36,6 +36,8 @@
 ## Health
 
 - domains: 5 (README, churn, performance, security, testing)
-- file references: 76 (76 resolve, 0 dangling)
-- script references: 12 (12 resolve)
+- file references: 78 (77 resolve, 1 dangling)
+- script references: 12 (10 resolve)
 - gates: 23 (23 documented, 0 undocumented)
+- **DANGLING file refs**: docs/darkmode-v2.md
+- **DANGLING script refs**: test:profile, test:audit

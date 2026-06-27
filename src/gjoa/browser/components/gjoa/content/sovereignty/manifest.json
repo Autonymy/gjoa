@@ -1,8 +1,8 @@
 {
   "claim": "This build makes 1 unattended network call: the Firefox version check.",
   "gjoaVersion": "0.4.1",
-  "auditedCommit": "817d0d8",
-  "generated": "2026-06-21",
+  "auditedCommit": "5f0a811",
+  "generated": "2026-06-27",
   "method": "static AST audit of all authored chrome (.sys.mjs + emitted .bjs + content .js), every source parsed",
   "ownCode": {
     "unattendedExternal": [
@@ -42,7 +42,7 @@
         "endpoint": "chrome://gjoa/content/settings/registry.json",
         "what": "fetch call",
         "file": "src/gjoa/browser/components/gjoa/content/settings/settings.js",
-        "line": 217,
+        "line": 388,
         "basis": "endpoint"
       },
       {
@@ -65,7 +65,7 @@
         "endpoint": "(dynamic)",
         "what": "resource load",
         "file": "src/gjoa/toolkit/components/content-classifier/GjoaDarkmodeChild.sys.mjs",
-        "line": 686,
+        "line": 860,
         "basis": "unproven"
       }
     ]

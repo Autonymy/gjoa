@@ -13,7 +13,7 @@
 ;; no inversion), "off". Legacy about:config ids fold in: hybrid/auto -> dark, engine ->
 ;; uniform, filter -> the legacy compositor invert (about:config-only).
 (ns gjoa.dark-mode.index
-  (:require [gjoa.macros :refer [html-new attr! rmattr! pref-bool pref-str
+  (:require [gjoa.macros :refer [html-new attr! rmattr! pref-bool pref-str pref-int
                                  set-pref-bool! set-pref-str! set-pref-int! on1!]]))
 (define-mode strict)
 
@@ -28,6 +28,10 @@
 (def PREF-CONTENT-OVERRIDE :- String "layout.css.prefers-color-scheme.content-override")
 ;; gjoa engine-level dark mode flag (read by nsPresContext::UpdateColorInversion).
 (def PREF-INVERT :- String "gjoa.darkmode.invert.enabled")
+;; "Darkness" knob (the bgLightness floor) + a one-shot marker to heal profiles stuck
+;; on the pre-cutover backwards knob (see migrate-darkness!).
+(def PREF-BGLIGHTNESS :- String "gjoa.darkmode.invert.bgLightness")
+(def PREF-DARKNESS-MIGRATED :- String "gjoa.darkmode.invert.darkness-knob-migrated-v1")
 ;; Per-site override host-lists (active in "dark" mode, via GjoaDarkmodeParent).
 (def PREF-FORCE-NATIVE :- String "gjoa.darkmode.user.force-native")
 (def PREF-FORCE-INVERT :- String "gjoa.darkmode.user.force-invert")
@@ -220,6 +224,20 @@
     (catch Any e
       (console/error "gjoa-darkmode: migrate-mode! failed" e))))
 
+;; The "Darkness" knob shipped backwards: titled "Darkness" but bound straight to
+;; bgLightness (higher = LIGHTER), so dragging "Darkness" up LIGHTENED the page. The
+;; knob now reads correctly (settings.js `invert`); heal profiles stuck on a light
+;; value — bgLightness > 50 is a near-white page in dark mode, a knob-direction
+;; mistake, never a real preference. Reset to the dark default exactly once.
+(defn migrate-darkness! [] :- Any
+  (try
+    (when (not (pref-bool PREF-DARKNESS-MIGRATED false))
+      (when (> (pref-int PREF-BGLIGHTNESS 16) 50)
+        (set-pref-int! PREF-BGLIGHTNESS 16))
+      (set-pref-bool! PREF-DARKNESS-MIGRATED true))
+    (catch Any e
+      (console/error "gjoa-darkmode: migrate-darkness! failed" e))))
+
 (defn destroy! [] :- Any
   (let [u (.-unsub state)]
     (when u (u)))
@@ -229,6 +247,7 @@
 
 (defn init-! [] :- Any
   (set-darkmode-defaults!)
+  (migrate-darkness!)
   ;; (migrate-mode!) intentionally NOT called. The default moved to "dark"
   ;; (unconditional — see set-darkmode-defaults!), so default-branch users land
   ;; on dark with no migration. Tradeoff (accepted): a user who explicitly stored

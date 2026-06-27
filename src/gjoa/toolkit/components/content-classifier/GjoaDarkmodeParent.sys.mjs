@@ -249,11 +249,19 @@ export class GjoaDarkmodeParent extends JSWindowActorParent {
     if (!this.#hybridActive()) {
       return { override: "none", css: "", inject: "" };
     }
-    const L = await this.#paintedMedianLstar(data?.w | 0, data?.h | 0);
+    let L = null;
+    try {
+      L = await this.#paintedMedianLstar(data?.w | 0, data?.h | 0);
+    } catch (e) {
+      L = null;
+    }
     if (L === null) {
-      // Snapshot unavailable — fall back to the child's computed-style read (fooled on
-      // color-scheme sites, but better than fighting the engine blind).
-      return { override: data?.hasNativeDark ? "inactive" : "none", css: "", inject: "" };
+      // Snapshot unavailable/failed. Under force-every-site-dark we must NOT accept the
+      // native theme blind: a heavy light SPA (YouTube's logged-in home feed) whose
+      // snapshot keeps failing was silently left LIGHT by the old "hasNativeDark ?
+      // inactive" fallback (reproduced with a real logged-in profile). The user
+      // chose force-every-site-dark, so force the inversion rather than leave it light.
+      return { override: "active", css: "", inject: "" };
     }
     // A curated Tier-2 fix (override:"auto") is a "this site's dark is bad" signal, so it
     // LOWERS the force bar (FIX_FORCE_LSTAR) — yet still yields to a site that painted

@@ -93,13 +93,20 @@
         const wrap = el("div", "control-slider");
         const range = document.createElement("input");
         range.type = "range"; range.className = "slider-range";
-        range.min = String(s.min); range.max = String(s.max); range.value = String(cur);
-        const out = el("span", "slider-val", String(cur));
+        // `invert: true` — the pref is a LIGHTNESS (higher = lighter) but the knob
+        // reads as its intuitive opposite ("Darkness", higher = darker). Map the
+        // slider position to the complement so dragging up darkens; the stored pref
+        // keeps its lightness meaning (the engine reads it unchanged).
+        const toDisp = (p) => (s.invert ? (s.min + s.max - p) : p);
+        const toPref = (d) => (s.invert ? (s.min + s.max - d) : d);
+        range.min = String(s.min); range.max = String(s.max);
+        range.value = String(toDisp(cur));
+        const out = el("span", "slider-val", String(toDisp(cur)));
         range.addEventListener("input", () => { out.textContent = String(range.value); });
         range.addEventListener("change", () => {
-          const v = clamp(parseInt(range.value, 10));
-          range.value = String(v); out.textContent = String(v);
-          setInt(s.pref, v); rerender();
+          const d = clamp(parseInt(range.value, 10));
+          range.value = String(d); out.textContent = String(d);
+          setInt(s.pref, toPref(d)); rerender();
         });
         wrap.appendChild(range);
         wrap.appendChild(out);

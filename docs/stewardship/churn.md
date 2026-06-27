@@ -77,10 +77,10 @@ This is strictly finer than the release-tag forecast: baseline-anchored, works a
 Once a patch's baseline is a content OID instead of a version string, each layer reuses git's existing machinery for a compounding win:
 
 1. **Provable skip-set** (shipped) — most patches are untouched on any given bump; prove it and shrink the audit to the truly-affected set.
-2. **Hunk-anchor precision** (next) — hash only the lines a hunk's context depends on, not the whole file: a file edited *elsewhere* than where we cut stays provably-safe (kills false positives).
+2. **Hunk-anchor precision** (shipped) — per touched file, each patch hunk's baseline old-side line span is hashed at the FF tag (`configs/upstream-provenance.json` → `{oid, hunks:[{header,range,hash}]}`); a file whose whole-file OID moved is still provably apply-safe when every hunk's context is byte-identical (an edit *elsewhere* than where we cut no longer false-flags). 39 files, 68 hunk anchors @ 152.0.1.
 3. **Blame-locator** (shipped, file-level) — `provenance check <ref> --blame` runs `git log <baseline>..<ref> -- <file>` on the FF clone for every changed file, so a conflict stops being "this file changed" and becomes "Mozilla commit abc123 (bug …) touched it — here's why." Validated against the real 152.0.1→153.0b1 bump: it flags `0008` (adblock) sitting in code Mozilla is actively refactoring (Bug 2041767 move-list-building-off-main-thread, Bug 2035584 generalize-ContentClassifierService) and `0009` (dark-mode) with mostly incidental refactors — a commit-level pre-rebase briefing, no build. (L2 sharpens it from file to anchor.)
-4. **3-way at the anchor** — the lock hands you the baseline blob for free (`git cat-file <oid>`); with baseline + new-upstream + our-patched, an anchor-local 3-way merge is mechanical, escalating to human only on real conflict.
-5. **Baked provenance identity + security cross-check** — fold the lock's aggregate hash into the binary (supply-chain: built against *unmodified* Mozilla blobs); and cross-reference the `# security:` manifest — if upstream's blob at a mitigation's anchor changed, Mozilla may have fixed it themselves (drop the patch) or refactored around it (re-verify). That's the rebase-survivability question from the resilience audit, answered by lookup.
+4. **3-way at the anchor** (next) — the lock hands you the baseline blob for free (`git cat-file <oid>`); with baseline + new-upstream + our-patched, an anchor-local 3-way merge is mechanical, escalating to human only on real conflict.
+5. **Baked provenance identity + security cross-check** (shipped, local — the binary-bake is build-gated) — `aggregate-digest` is one sha256 over every locked blob OID + hunk hash → `configs/provenance-identity.json` (the supply-chain coordinate the build *would* stamp into the binary: built against *unmodified* Mozilla blobs). `check --security` cross-references each `# security:`-tagged patch's anchor → `configs/provenance-security-findings.json`; if upstream's blob at a mitigation's anchor changed, Mozilla may have fixed it themselves (drop the patch) or refactored around it (re-verify). Empty findings today = honest baseline (no `# security:` patches).
 
 We are not building a hashing system — we are harvesting the one Mozilla already maintains. "Is this patch still valid?" becomes a lookup; "what changed and why?" becomes a graph walk.
 
@@ -139,6 +139,6 @@ Beyond the churn-specific levers above, preflight runs a band of build-integrity
 - `docs/why-beagle.md` — code-as-claims, the projector, the call graph
 - `tools/prep/patch-cost.bjs` (`bun run cost`), `tools/prep/conflict-forecast.bjs` (`bun run forecast`)
 - `tools/prep/patch-order.bjs` (ordering/batching analyzer + minimal renumber)
-- `tools/prep/upstream-provenance.bjs` + `configs/upstream-provenance.json` (per-file upstream blob-OID lock)
+- `tools/prep/upstream-provenance.bjs` + `configs/upstream-provenance.json` (whole-file blob OID **+ L2 hunk anchors**) · `configs/provenance-identity.json` (L4 baked digest) · `configs/provenance-security-findings.json` (L5 `check --security` cross-check)
 - `tools/scripts/preflight.bjs` Gate L (surface contracts), Gate M (beagle-currency), Gate S (security-critical patches persist), Gate U (patch numbering coherence)
 - `private-docs/build-logs/` — the postmortems that motivated each gate

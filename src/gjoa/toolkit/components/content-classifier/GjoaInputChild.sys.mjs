@@ -24,10 +24,14 @@
 // Attribution — heuristics referenced (independent reimplementation, NOT their
 // code; included here in the spirit of their licenses):
 //   - Vimium    — MIT          — github.com/philc/vimium (lib/dom_utils.js
-//                                 isSelectable/isEditable; mode_insert.js)
+//                                 isSelectable/isEditable, simulateClick full
+//                                 event sequence, getVisibleClientRect occlusion;
+//                                 content_scripts/link_hints.js; mode_insert.js)
 //   - Tridactyl — Apache-2.0    — github.com/tridactyl/tridactyl (src/lib/dom.ts
-//                                 isTextEditable: readOnly, role=application,
-//                                 SVG-safe contentEditable)
+//                                 isTextEditable + isVisible occlusion + rounded-
+//                                 border offset; src/lib/visual.ts selection dir)
+// gjoa's fork edge over both (content-script tools): link hints pierce CLOSED
+// shadow roots and find/visual use Firefox's own findbar + Selection engine.
 
 const UNSELECTABLE_INPUT_TYPES = new Set([
   "button", "checkbox", "color", "file", "hidden", "image", "radio", "reset", "submit",
@@ -140,48 +144,134 @@ function generateHintLabels(count) {
   return out;
 }
 
-// Visible, in-viewport clickables/focusables of the top document. Single-pass; no
-// shadow-root piercing yet (a known v1 limit — closed-shadow traversal like the
-// editable detector's is a follow-on). Skips offscreen, zero-area, and hidden.
-function collectHintTargets(win, doc) {
-  const sel =
-    "a[href], button, input:not([type=hidden]):not([disabled]), select:not([disabled])," +
-    " textarea:not([disabled]), summary, [role=button], [role=link], [role=tab]," +
-    " [role=checkbox], [role=menuitem], [onclick], [tabindex]:not([tabindex='-1']), label[for]";
-  const out = [];
-  let nodes;
+// Static hintable selector. Web Components' internal controls are reached via the
+// shadow-root recursion below (which pierces CLOSED roots — the fork advantage).
+const HINT_SELECTOR =
+  "a[href], button, input:not([type=hidden]):not([disabled]), select:not([disabled])," +
+  " textarea:not([disabled]), summary, [role=button], [role=link], [role=tab]," +
+  " [role=checkbox], [role=menuitem], [onclick], [tabindex]:not([tabindex='-1']), label[for]";
+
+// Gather candidate elements from a root (document or shadow root), descending
+// through OPEN *and CLOSED* shadow roots — the privileged-actor advantage an
+// extension can't have (openOrClosedShadowRoot is [ChromeOnly], same lever the
+// editable detector uses). This is what surfaces hints inside Lit/Polymer/closed
+// Web Components. Budget-bounded so a pathological DOM can't hang hint mode.
+// (cursor:pointer-styled clickables + largest-child remapping are deferred v2
+// polish — they need a per-element getComputedStyle scan we skip for now.)
+function collectCandidates(root, out, budget) {
+  let matches;
   try {
-    nodes = doc.querySelectorAll(sel);
+    matches = root.querySelectorAll(HINT_SELECTOR);
   } catch (_) {
-    return out;
+    matches = [];
+  }
+  for (const el of matches) {
+    out.add(el);
+  }
+  let all;
+  try {
+    all = root.querySelectorAll("*");
+  } catch (_) {
+    all = [];
+  }
+  for (const el of all) {
+    if (--budget.n <= 0) {
+      return;
+    }
+    let sr = null;
+    try {
+      sr = el.openOrClosedShadowRoot || el.shadowRoot;
+    } catch (_) {}
+    if (sr) {
+      collectCandidates(sr, out, budget);
+    }
+  }
+}
+
+// Is the element really hittable: non-trivial size, in the viewport, painted, and
+// NOT occluded by an overlay (modal / cookie-banner / popover). The occlusion test
+// samples the rect via elementFromPoint at points nudged inside any border-radius
+// curve — ceil(r·(1−sin45°)), Tridactyl's hard-won offset — and queries the
+// element's OWN root, so a shadow child compares against its shadow tree, not the
+// host. Returns the rect when hittable, else null. (Vimium/Tridactyl lesson.)
+function isHintVisible(el, win) {
+  let rect;
+  try {
+    rect = el.getBoundingClientRect();
+  } catch (_) {
+    return null;
+  }
+  if (!rect || rect.width < 2 || rect.height < 2) {
+    return null;
   }
   const W = win.innerWidth,
     H = win.innerHeight;
-  for (const el of nodes) {
-    let rect;
-    try {
-      rect = el.getBoundingClientRect();
-    } catch (_) {
-      continue;
-    }
-    if (!rect || rect.width < 1 || rect.height < 1) {
-      continue;
-    }
-    if (rect.bottom < 0 || rect.top > H || rect.right < 0 || rect.left > W) {
-      continue; // outside the viewport
-    }
-    let st;
-    try {
-      st = win.getComputedStyle(el);
-    } catch (_) {
-      continue;
-    }
-    if (!st || st.visibility === "hidden" || st.display === "none" || st.opacity === "0") {
-      continue;
-    }
-    out.push({ el, rect });
+  if (rect.bottom < 2 || rect.top > H - 2 || rect.right < 2 || rect.left > W - 2) {
+    return null;
   }
-  return out;
+  let st;
+  try {
+    st = win.getComputedStyle(el);
+  } catch (_) {
+    return null;
+  }
+  if (!st || st.visibility === "hidden" || st.display === "none" || st.opacity === "0") {
+    return null;
+  }
+  let r = 0;
+  try {
+    r = parseFloat(st.borderTopLeftRadius) || 0;
+  } catch (_) {}
+  const off = Math.max(2, Math.ceil(r * (1 - Math.sin(Math.PI / 4))));
+  const root = el.getRootNode();
+  const pick = root && root.elementFromPoint ? root : el.ownerDocument;
+  const pts = [
+    [rect.left + rect.width / 2, rect.top + rect.height / 2],
+    [rect.left + off, rect.top + off],
+    [rect.right - off, rect.top + off],
+    [rect.left + off, rect.bottom - off],
+    [rect.right - off, rect.bottom - off],
+  ];
+  for (const [x, y] of pts) {
+    let hit;
+    try {
+      hit = pick.elementFromPoint(x, y);
+    } catch (_) {
+      hit = null;
+    }
+    if (hit && (hit === el || el.contains(hit) || hit.contains(el))) {
+      return rect; // a sample reaches the element => not occluded
+    }
+  }
+  return null;
+}
+
+// Visible, hittable hint targets across the document AND its shadow trees, with
+// wrapper false-positives culled (a generic span/div/li whose hint just duplicates
+// a clickable child — Vimium's possibleFalsePositive lesson).
+function collectHintTargets(win, doc) {
+  const set = new Set();
+  collectCandidates(doc, set, { n: 8000 });
+  const targets = [];
+  for (const el of set) {
+    const tag = el.nodeName ? el.nodeName.toLowerCase() : "";
+    if ((tag === "span" || tag === "div" || tag === "li") && !el.hasAttribute("onclick")) {
+      let child;
+      try {
+        child = el.querySelector(HINT_SELECTOR);
+      } catch (_) {
+        child = null;
+      }
+      if (child && set.has(child)) {
+        continue; // the real control is already hinted
+      }
+    }
+    const rect = isHintVisible(el, win);
+    if (rect) {
+      targets.push({ el, rect });
+    }
+  }
+  return targets;
 }
 
 export class GjoaInputChild extends JSWindowActorChild {
@@ -330,13 +420,23 @@ export class GjoaInputChild extends JSWindowActorChild {
     try {
       const tag = (el.tagName || "").toLowerCase();
       if (tag === "input" || tag === "textarea" || tag === "select") {
-        el.focus();
+        el.focus(); // a dropdown / edit field needs focus FIRST (Vimium)
         return;
       }
       try {
         el.focus({ preventScroll: true });
       } catch (_) {}
-      el.click();
+      // Full pointer/mouse sequence, not a bare el.click(): many sites bind to
+      // mousedown/mouseup (React, drag UIs, payment flows) and never see a lone
+      // click() — they break silently. (Vimium/Tridactyl lesson.)
+      const win = el.ownerGlobal || this.contentWindow;
+      for (const type of [
+        "pointerover", "mouseover", "pointerdown", "mousedown", "pointerup", "mouseup", "click",
+      ]) {
+        try {
+          el.dispatchEvent(new win.MouseEvent(type, { view: win, bubbles: true, cancelable: true }));
+        } catch (_) {}
+      }
     } catch (_) {}
   }
 

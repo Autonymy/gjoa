@@ -7,7 +7,7 @@
     "0003-newtab-redirector-gjoa.patch": "556b014511a16c996f4a2eefd4650e9cf9487343e97c07ec20651a67b489f63e",
     "0007-enable-sqlite-fts5.patch": "1407c9049294c558f2d7a96c447503868b90d642d03126319c5f04b6e3311c05",
     "0008-content-classifier-cosmetic-filtering.patch": "a227bb98f5c5aabe4bd1629538fce4098ab34d21eaa09240d2a701232d0b2d89",
-    "0009-dark-mode-engine-color-inversion.patch": "1eada44c5d90fa33bee66697990d5a1a0911cfd0e624321fa5ab9bef9f3c5624",
+    "0009-dark-mode-engine-color-inversion.patch": "bcac7bb253224a86a835135dfc57a723174aa7d79e0a87b3e149903e59b299d5",
     "0010-dark-mode-island-scrim.patch": "69d287b6b04b928d85b7a9862f70eacc993b6424627b73495f2282818fb0f805",
     "0012-dark-mode-role-resolver.patch": "a76f124386c1709ad66f1317335d5c1e2afc1047bbf45fb2bb1cc3c3d81c09ad",
     "0013-dark-mode-text-solve.patch": "421dd6e4f3c3fa65859bb56a7e1ea94c8d566218c19c4c4fc05a55e2cd771a28",

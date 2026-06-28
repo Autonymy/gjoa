@@ -301,6 +301,7 @@ export class GjoaDarkmodeChild extends JSWindowActorChild {
     if (!/^https?:/.test(url)) {
       return;
     }
+    this.#forceOpaqueRoot(win, doc);
     // Tier-1 "did we get dark?" is decided by the PARENT from a drawSnapshot of the
     // real painted pixels (the scorer's coverage), because getComputedStyle(body) is
     // fooled by system Canvas colors under color-scheme:dark (reports dark while the
@@ -438,6 +439,40 @@ export class GjoaDarkmodeChild extends JSWindowActorChild {
           }
         } catch (e) {}
       }, 1400);
+    } catch (e) {}
+  }
+
+  // When the engine inverts THIS document, pin html/body to opaque white — the engine
+  // inverts white to the dark floor, giving an opaque dark root. Closes the transparent-
+  // root desktop-bleed (Wikipedia <html> = rgba(0,0,0,0)). Mirrors Dark Reader's forced
+  // UA root sheet; gated on a black probe rendering light, so native-dark pages untouched.
+  #forceOpaqueRoot(win, doc) {
+    try {
+      if (this._rootSheet && this._rootSheet.isConnected) {
+        return;
+      }
+      if (!doc.body) {
+        return;
+      }
+      const pr = doc.createElement("span");
+      pr.style.cssText = "color:#000;position:fixed;left:-9999px;top:0";
+      doc.body.appendChild(pr);
+      const cs = win.getComputedStyle(pr).color;
+      const c = (cs.match(/[\d.]+/g) || []).map(Number);
+      // Computed color may serialize as oklch (L in 0..1) or rgb (0..255); an inverted
+      // black probe renders LIGHT either way.
+      const inverted = /okl|lab|lch/i.test(cs)
+        ? c.length >= 1 && c[0] > 0.5
+        : c.length >= 3 && c[0] + c[1] + c[2] > 300;
+      pr.remove();
+      if (!inverted) {
+        return;
+      }
+      const s = doc.createElement("style");
+      s.id = "gjoa-darkmode-root-opaque";
+      s.textContent = "html,body{background-color:#fff!important}";
+      (doc.head || doc.documentElement).appendChild(s);
+      this._rootSheet = s;
     } catch (e) {}
   }
 

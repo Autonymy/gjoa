@@ -460,7 +460,7 @@ index 7ed8c2c7a1..54ffa6f483 100644
 diff --git a/servo/components/style/values/specified/color.rs b/servo/components/style/values/specified/color.rs
 --- a/servo/components/style/values/specified/color.rs
 +++ b/servo/components/style/values/specified/color.rs
-@@ -860,6 +860,49 @@
+@@ -860,6 +860,52 @@
      }
  }
  
@@ -482,10 +482,13 @@ diff --git a/servo/components/style/values/specified/color.rs b/servo/components
 +    let oklch = color.to_color_space(ColorSpace::Oklch);
 +    let l_in = oklch.c0().unwrap_or(0.0);
 +    let l_out = (ceiling - l_in * (ceiling - floor)).clamp(0.0, 1.0);
-+    // Rebuild in OKLCH holding chroma (c1) and hue (c2); preserve missing
-+    // components and alpha. The cascade resolves the OKLCH value like any other
-+    // absolute color (serialized/painted via to_color_space(Srgb)).
-+    AbsoluteColor::new(ColorSpace::Oklch, l_out, oklch.c1(), oklch.c2(), oklch.alpha())
++    // Shed chroma proportional to the lightness drop so the inverted (L,C,H) stays in
++    // sRGB gamut. Without this, darkening a saturated color pushes (L,C) out of gamut and
++    // the convert-back clamps it — skidding blue->purple and orange->mud (the HN banner).
++    // Lightening keeps chroma (ratio capped at 1) so neutral dark text stays neutral.
++    let c_in = oklch.c1().unwrap_or(0.0);
++    let c_out = if l_in > 1e-4 { c_in * (l_out / l_in).min(1.0) } else { c_in };
++    AbsoluteColor::new(ColorSpace::Oklch, l_out, c_out, oklch.c2(), oklch.alpha())
 +}
 +
 +/// gjoa dark mode: WCAG relative luminance (0..1) of a color, used to decide

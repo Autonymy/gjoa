@@ -144,7 +144,15 @@ jobs:
         run: bun run import
 
       - name: Verify JS projector + claim-docs
-        run: bun run projector:test
+        run: |
+          bun run projector:test || {
+            echo "::group::projector failure diagnostics — which emitted bundle has the bad char"
+            for f in dist/chrome/JS/*.uc.js; do echo "-- $f --"; node --check "$f" 2>&1 | head -3 || true; done
+            echo "--- grep @ ---"; grep -n '@' dist/chrome/JS/*.uc.js | head -40 || true
+            echo "--- locale ---"; locale 2>&1 | head -3 || true
+            echo "::endgroup::"
+            exit 1
+          }
 
       - name: Write mozconfig
         run: |

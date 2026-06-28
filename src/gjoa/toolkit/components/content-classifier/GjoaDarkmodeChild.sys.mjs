@@ -470,7 +470,12 @@ export class GjoaDarkmodeChild extends JSWindowActorChild {
       }
       const s = doc.createElement("style");
       s.id = "gjoa-darkmode-root-opaque";
-      s.textContent = "html,body{background-color:#fff!important}";
+      // Root: force opaque (engine inverts white->dark floor). Native text controls:
+      // give them an opaque bg the engine inverts to dark (Dark Reader tones the same
+      // set) — NO !important so page-styled controls keep their own (inverted) look.
+      s.textContent =
+        "html,body{background-color:#fff!important}" +
+        "input:not([type=button]):not([type=submit]):not([type=reset]):not([type=checkbox]):not([type=radio]):not([type=range]):not([type=color]):not([type=file]):not([type=image]),textarea,select{background-color:#fff}";
       (doc.head || doc.documentElement).appendChild(s);
       this._rootSheet = s;
     } catch (e) {}

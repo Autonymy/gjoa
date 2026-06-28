@@ -1,0 +1,27 @@
+# Fast-iteration subset (~25): one site per known failure-class + diversity.
+# Iterate here each cycle; final acceptance is the full configs/dark-mode-200.txt.
+https://news.ycombinator.com/
+https://github.com/
+https://www.amazon.com/
+https://en.wikipedia.org/wiki/2026_Venezuela_earthquakes
+https://www.reddit.com/
+https://www.nytimes.com/
+https://www.cnn.com/
+https://www.chase.com/
+https://www.notion.so/
+https://www.figma.com/
+https://www.walmart.com/
+https://www.target.com/
+https://stackoverflow.com/
+https://developer.mozilla.org/en-US/
+https://www.youtube.com/
+https://x.com/
+https://www.linkedin.com/
+https://www.netflix.com/
+https://www.forbes.com/
+https://www.theverge.com/
+https://www.shopify.com/
+https://www.canva.com/
+https://medium.com/
+https://www.bestbuy.com/
+https://www.bankofamerica.com/
